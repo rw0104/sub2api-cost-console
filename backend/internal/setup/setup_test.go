@@ -226,6 +226,53 @@ func TestWriteConfigFileIncludesRedisUsername(t *testing.T) {
 	}
 }
 
+func TestWriteConfigFileIncludesDesktopCORSInDesktopMode(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	t.Setenv("SUB2API_DESKTOP", "1")
+
+	if err := writeConfigFile(&SetupConfig{}); err != nil {
+		t.Fatalf("writeConfigFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(GetConfigFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	config := string(data)
+
+	for _, origin := range []string{
+		"http://tauri.localhost",
+		"https://tauri.localhost",
+		"tauri://localhost",
+	} {
+		if !strings.Contains(config, origin) {
+			t.Fatalf("desktop config missing CORS origin %q, got:\n%s", origin, config)
+		}
+	}
+	if !strings.Contains(config, "allow_credentials: true") {
+		t.Fatalf("desktop config missing credentialed CORS, got:\n%s", config)
+	}
+}
+
+func TestWriteConfigFileOmitsDesktopCORSOutsideDesktopMode(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	t.Setenv("SUB2API_DESKTOP", "")
+
+	if err := writeConfigFile(&SetupConfig{}); err != nil {
+		t.Fatalf("writeConfigFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(GetConfigFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	config := string(data)
+
+	if strings.Contains(config, "tauri.localhost") || strings.Contains(config, "tauri://localhost") {
+		t.Fatalf("non-desktop config unexpectedly contains desktop CORS origins, got:\n%s", config)
+	}
+}
+
 func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	cfg := &DatabaseConfig{
 		Host:     "db",

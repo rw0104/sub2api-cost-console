@@ -75,6 +75,7 @@
         <div><span>平台</span><strong>{{ account.platform }}</strong></div>
         <div><span>账号类型</span><strong>{{ account.type }}</strong></div>
         <div><span>配置来源</span><strong>{{ resolved.source === 'custom' ? '自定义' : '套餐默认' }}</strong></div>
+        <div><span>算法版本</span><strong>v{{ resolved.algorithm_version }}</strong></div>
       </section>
     </div>
 
@@ -95,6 +96,7 @@ import { Clock3, LoaderCircle, Save, X } from '@lucide/vue'
 import type { Account } from '@/types'
 import {
   DEFAULT_MONTHLY_PRICES_CNY,
+  COST_ALGORITHM_VERSION,
   accruedCost,
   elapsedHours,
   formatMoney,
@@ -157,6 +159,7 @@ const resolved = computed(() => props.account ? resolveCostProfile(props.account
   billing_cycle: 'monthly' as BillingCycle,
   started_at: new Date().toISOString(),
   source: 'default' as const,
+  algorithm_version: COST_ALGORITHM_VERSION,
 })
 const joinedAtLocal = computed(() => props.account ? toLocalInput(props.account.created_at) : '')
 const draftProfile = computed<CostProfile>(() => ({
@@ -165,6 +168,7 @@ const draftProfile = computed<CostProfile>(() => ({
   billing_cycle: form.billing_cycle,
   started_at: props.account ? maxStartTime(toIso(form.started_at, props.account.created_at), props.account.created_at) : new Date().toISOString(),
   source: 'custom',
+  algorithm_version: COST_ALGORITHM_VERSION,
 }))
 const currentAccrued = computed(() => accruedCost(draftProfile.value, props.now))
 const currentHourly = computed(() => hourlyRate(draftProfile.value))

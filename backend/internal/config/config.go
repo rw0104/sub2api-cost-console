@@ -1750,6 +1750,14 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
 	cfg.Dashboard.KeyPrefix = strings.TrimSpace(cfg.Dashboard.KeyPrefix)
 	cfg.CORS.AllowedOrigins = normalizeStringSlice(cfg.CORS.AllowedOrigins)
+	if desktopModeEnabled() {
+		cfg.CORS.AllowedOrigins = appendMissingStrings(cfg.CORS.AllowedOrigins,
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"tauri://localhost",
+		)
+		cfg.CORS.AllowCredentials = true
+	}
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
 	cfg.Security.CSP.Policy = strings.TrimSpace(cfg.Security.CSP.Policy)
@@ -1834,6 +1842,31 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendMissingStrings(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	result := append([]string(nil), values...)
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func configureConfigSource(setConfigFile, addConfigPath func(string)) {

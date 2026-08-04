@@ -36,6 +36,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/src-tauri/target/
 frontend/src-tauri/gen/
+frontend/src-tauri/.signing/
+frontend/src-tauri/binaries/*.exe
+frontend/release-assets/
 *.local
 *.tsbuildinfo
 vite.config.d.ts
@@ -123,6 +126,8 @@ tests
 CLAUDE.md
 .claude
 scripts
+!frontend/scripts/
+!frontend/scripts/*.mjs
 !backend/scripts/
 !backend/scripts/resolve-version.sh
 .code-review-state

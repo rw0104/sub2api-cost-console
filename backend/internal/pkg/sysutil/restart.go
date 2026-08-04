@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,15 @@ import (
 //   - Linux OS with systemd
 //   - Service configured with Restart=always in systemd unit file
 func RestartService() error {
+	if desktopModeEnabled() {
+		log.Println("Desktop supervisor requested; exiting so the managed backend can restart")
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return nil
+	}
+
 	if runtime.GOOS != "linux" {
 		log.Println("Service restart via exit only works on Linux with systemd")
 		return nil
@@ -36,6 +46,15 @@ func RestartService() error {
 	}()
 
 	return nil
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // RestartServiceAsync is a fire-and-forget version of RestartService.

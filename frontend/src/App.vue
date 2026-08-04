@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from 'vue-router'
-import { onMounted, onBeforeUnmount, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
@@ -9,6 +9,9 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import { isDesktopRuntime } from '@/api/url'
+import DesktopBackendGate from '@/features/desktop/DesktopBackendGate.vue'
+import DesktopUpdateCenter from '@/features/desktop/DesktopUpdateCenter.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,6 +21,7 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+const desktopBackendReady = ref(!isDesktopRuntime())
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -114,9 +118,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })
 
-onMounted(async () => {
-  window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
-
+async function initializeApplication() {
   // Check if setup is needed
   try {
     const status = await getSetupStatus()
@@ -133,13 +135,29 @@ onMounted(async () => {
 
   // Re-resolve document title now that site settings are available
   updateDocumentTitle()
+}
+
+async function onDesktopBackendReady() {
+  desktopBackendReady.value = true
+  await initializeApplication()
+}
+
+onMounted(async () => {
+  window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
+  if (desktopBackendReady.value) {
+    await initializeApplication()
+  }
 })
 </script>
 
 <template>
-  <NavigationProgress />
-  <RouterView />
-  <Toast />
-  <AnnouncementPopup />
-  <AdminComplianceDialog />
+  <DesktopBackendGate v-if="!desktopBackendReady" @ready="onDesktopBackendReady" />
+  <template v-else>
+    <NavigationProgress />
+    <RouterView />
+    <Toast />
+    <AnnouncementPopup />
+    <AdminComplianceDialog />
+    <DesktopUpdateCenter />
+  </template>
 </template>

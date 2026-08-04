@@ -503,6 +503,7 @@ import { ref, reactive, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { testDatabase, testRedis, install, type InstallRequest } from '@/api/setup'
 import { buildGatewayUrl } from '@/api/client'
+import { isDesktopRuntime } from '@/api/url'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -531,6 +532,9 @@ const serviceReady = ref(false)
 
 // Default server port
 const getCurrentPort = (): number => {
+  if (isDesktopRuntime()) {
+    return 18765
+  }
   const port = window.location.port
   if (port) {
     return parseInt(port, 10)

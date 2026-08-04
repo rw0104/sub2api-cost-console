@@ -750,7 +750,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ### 19.1 桌面端显示 Network error
 
-先检查后端是否运行：
+正式安装包会自动启动受管 Go 内核。启动阶段先观察“本地内核”引导页，再检查：
 
 ```powershell
 Test-NetConnection 127.0.0.1 -Port 18765
@@ -759,8 +759,9 @@ Invoke-WebRequest http://127.0.0.1:18765/health -UseBasicParsing
 
 如果端口不可达：
 
-- 启动 Go 后端。
-- 确认 `SERVER_PORT=18765`。
+- 在启动引导页点击“重新启动内核”。
+- 确认安装目录包含 `sub2api-backend.exe`。
+- 查看引导页展示的内核日志和用户数据目录。
 - 检查 Windows 防火墙和端口占用。
 
 如果健康检查成功但桌面仍失败：
@@ -848,23 +849,21 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 
 ### 21.1 当前限制
 
-- 后端、PostgreSQL 和 Redis 需要单独运行。
+- Go 后端已由桌面端作为 sidecar 管理；PostgreSQL 和 Redis 仍需本机或远程提供。
 - 默认汇率是固定值，不是实时金融汇率。
 - 部分账号级失败/恢复信息是由账号状态字段推导，不是完整事件流。
 - 默认套餐价格是项目级常量，不是后台全局配置。
-- `bundle.active` 关闭，只生成 EXE。
-- 未集成自动更新和签名。
+- Windows Authenticode 证书需由发布者额外购买和配置；当前已提供 Tauri/Minisign 更新签名和 SHA-256 清单。
 
 ### 21.2 建议路线
 
-1. 增加桌面连接设置页和后端健康检查。
+1. 增加 PostgreSQL/Redis 一键安装助手和更完整的连接诊断。
 2. 将套餐成本配置迁移到后端数据库和管理员设置。
 3. 增加汇率服务及历史汇率快照。
 4. 增加号码成本预算、超限提醒和月度报表。
 5. 增加账号成本与 API 收益的毛利分析。
-6. 增加 NSIS 安装器、代码签名和自动更新。
-7. 评估将 Go 后端作为 Tauri sidecar 的可行性。
-8. 为三套工作区增加端到端视觉回归测试。
+6. 配置受信任的 Windows Authenticode EV/OV 证书，进一步降低 SmartScreen 告警。
+7. 为三套工作区增加端到端视觉回归测试。
 
 ---
 
@@ -891,6 +890,8 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 - [ ] 账号探测可用。
 - [ ] Ops 关闭时页面可以降级运行。
 - [ ] 自动刷新和快捷键可用。
+- [ ] 首次启动自动进入初始化向导，初始化后受管内核自动重启。
+- [ ] 内核更新失败时自动回滚上一版。
 
 ### 安全与发布
 
@@ -899,6 +900,8 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 - [ ] 图标和版本号正确。
 - [ ] EXE 人工启动测试通过。
 - [ ] 外部发布版本已签名。
+- [ ] `latest.json`、`core-channel/core-update.json` 及各自签名可下载。
+- [ ] `INSTALLER_SHA256SUMS.txt`、`CORE_SHA256SUMS.txt` 与 Release 资产一致。
 - [ ] 安装器/升级/回滚流程已验证。
 
 ---
@@ -982,3 +985,178 @@ Get-Item src-tauri/target/release/sub2api-cost-console.exe
 ```
 
 完成以上配置后，Sub2API Cost Console 会以 Windows 桌面应用形式连接本地 `18765` 端口的 Sub2API 后端，并在管理员登录后提供完整的资产质量、上游账号和 OAuth 号池成本视图。
+
+---
+
+## 26. 受管内核与注册链路
+
+桌面版不再假设用户已经手工启动 Go 后端。Tauri 启动时执行以下流程：
+
+1. 探测 `127.0.0.1:18765`；若已有 Sub2API 服务则直接连接，不重复启动进程。
+2. 若端口未占用，启动安装包中的 `sub2api-backend.exe`。
+3. 为受管内核设置 `DATA_DIR`、`SERVER_HOST=127.0.0.1`、`SERVER_PORT=18765` 和 `SUB2API_DESKTOP=1`。
+4. 轮询 `/setup/status`，就绪前显示原生风格启动诊断页，不进入注册页。
+5. 全新安装自动导航到 `/setup`，连接 PostgreSQL、Redis 并创建初始管理员。
+6. 安装完成后后端主动退出；Tauri 监督器检测到退出并自动以正式模式重新启动。
+7. 正式服务就绪后才开放登录、注册和成本面板。
+
+首次安装服务器与正式服务器在桌面模式都会精确允许：
+
+```text
+http://tauri.localhost
+https://tauri.localhost
+tauri://localhost
+```
+
+不得使用 `*` 替代这些来源。受管配置位于 Windows 用户应用数据目录，不写入 Program Files，也不会随升级被覆盖。
+
+关键文件：
+
+```text
+backend/cmd/server/main.go                         # 首次安装 CORS
+backend/internal/config/config.go                 # 正式模式桌面 CORS
+backend/internal/pkg/sysutil/restart.go           # 桌面监督器重启协议
+frontend/src-tauri/src/desktop_runtime.rs         # sidecar 生命周期、健康检查和回滚
+frontend/src/features/desktop/DesktopBackendGate.vue
+frontend/scripts/prepare-desktop-sidecar.mjs      # Windows 内核构建
+```
+
+冒烟测试至少应验证：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18765/setup/status
+
+$headers = @{
+  Origin = 'http://tauri.localhost'
+  'Access-Control-Request-Method' = 'POST'
+  'Access-Control-Request-Headers' = 'content-type'
+}
+Invoke-WebRequest -Method Options `
+  http://127.0.0.1:18765/setup/install `
+  -Headers $headers -UseBasicParsing
+```
+
+预检必须返回 `204`，并包含 `Access-Control-Allow-Origin: http://tauri.localhost`。
+
+## 27. 双通道自动更新
+
+### 27.1 版本边界
+
+系统维护三个独立版本：
+
+| 字段 | 来源 | 作用 |
+|---|---|---|
+| `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
+| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 本地 API 内核 |
+| `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
+
+版本面板同时显示三者。不能仅根据桌面版本推断算法规则。
+
+### 27.2 桌面通道
+
+Tauri updater 在启动后延迟检查，并每 6 小时检查一次：
+
+```text
+https://github.com/renqw2023/sub2api-cost-console/releases/latest/download/latest.json
+```
+
+发现新版本后展示版本、Release Notes 和下载进度。安装包签名通过 Tauri 公钥校验后安装，完成后调用 `relaunch()` 安全重启。
+
+### 27.3 内核通道
+
+独立内核更新使用固定入口：
+
+```text
+https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json
+https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json.sig
+sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe
+sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe.sig
+```
+
+`core-channel` 是固定的 GitHub prerelease 通道，不参与 GitHub 的 `latest` 稳定版选择；因此发布内核不会遮蔽桌面 updater 使用的 `latest.json`。版本化内核资产先上传，签名后的通道清单最后替换，使客户端只会看到完整旧版本或完整新版本。桌面壳保持原版本，只在内核安装、签名和 SHA-256 校验完成后调用 `relaunch()`；重启时切换内核，不运行桌面安装器。
+
+安全顺序：
+
+1. 下载并校验签名后的 `core-update.json`。
+2. 仅接受 HTTPS 资产地址和更高的 SemVer。
+3. 下载内核到 `pending`，实时报告字节进度。
+4. 同时验证资产 Minisign/Tauri 签名和 SHA-256。
+5. 保留当前内核到 `previous`，重启时原子激活 `pending`。
+6. 新内核必须在 30 秒内通过 `/setup/status` 健康检查。
+7. 验证失败时停止新内核、恢复 `previous` 并重新启动。
+8. 用户也可从版本面板手动回滚上一版内核。
+
+更新程序绝不对源码目录执行 `git pull`，也不直接运行未签名的 Release 资产。
+
+### 27.4 算法可追溯性
+
+每条 `account.extra.cost_profile` 保存：
+
+```json
+{
+  "amount": 140,
+  "currency": "CNY",
+  "billing_cycle": "monthly",
+  "started_at": "2026-08-04T10:00:00.000Z",
+  "algorithm_version": "1.0.0"
+}
+```
+
+旧数据缺少版本时显示 `legacy-unversioned`，不会被静默归类为当前算法。修改 730 小时、汇率、起算边界或累计公式时必须：
+
+1. 提升 `frontend/ALGORITHM_VERSION`。
+2. 更新成本模型测试。
+3. 在 Release Notes 中说明规则变化和生效边界。
+4. 不回写历史成本档案的算法版本。
+
+## 28. GitHub Release 与签名 CI
+
+桌面工作流为 `.github/workflows/desktop-release.yml`，在推送 `v*` 标签或手工触发时运行。Windows runner 执行：
+
+1. 固定 pnpm、Go 1.26.5 和 Rust 工具链。
+2. 构建后端嵌入 Web UI。
+3. 编译 Windows x86_64 Go sidecar。
+4. 使用 `TAURI_SIGNING_PRIVATE_KEY` 为内核和内核清单签名。
+5. 通过 `tauri-apps/tauri-action` 构建 NSIS 安装包和 `latest.json`。
+6. 将桌面安装器、`.sig`、`latest.json` 和 `INSTALLER_SHA256SUMS.txt` 上传到稳定 Release。
+7. 将版本化内核、签名清单和 `CORE_SHA256SUMS.txt` 更新到独立 `core-channel` prerelease。
+8. 将同一批资产保存为 GitHub Actions Artifact。
+
+只发布内核时使用 `.github/workflows/core-release.yml`。它不编译或发布 Tauri 安装包，只执行 Web 嵌入、Go 内核构建、双重校验材料生成和 `core-channel` 原子更新。发布前必须提交新的 `frontend/CORE_VERSION`；若成本公式有变化，还必须同时提交新的 `frontend/ALGORITHM_VERSION` 和测试。
+
+私钥只允许保存在以下 GitHub Actions Secrets：
+
+```text
+TAURI_SIGNING_PRIVATE_KEY
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+仓库和日志只能包含公钥。若要增加 Windows Authenticode 签名，应在 CI 中配置受信任的 PFX/证书服务；这与 Tauri updater 的 Minisign 签名是两层不同的信任机制，不能互相替代。
+
+发布命令：
+
+```powershell
+# 使用 tauri.conf.json 中的版本创建 Release
+gh workflow run desktop-release.yml --repo renqw2023/sub2api-cost-console
+
+# 或推送同版本标签
+git tag v0.2.0
+git push cost-console v0.2.0
+
+# 只发布 CORE_VERSION 对应的内核；桌面端不升级，只在安装内核后自动重启
+gh workflow run core-release.yml --repo renqw2023/sub2api-cost-console `
+  -f notes='修复成本采样与账号生命周期计算'
+
+# 或用可追溯标签触发，标签必须与 frontend/CORE_VERSION 一致
+git tag core-v0.2.1
+git push cost-console core-v0.2.1
+```
+
+发布后验证：
+
+```powershell
+gh release view v0.2.0 --repo renqw2023/sub2api-cost-console
+gh release download v0.2.0 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view core-channel --repo renqw2023/sub2api-cost-console
+gh release download core-channel --repo renqw2023/sub2api-cost-console --pattern CORE_SHA256SUMS.txt
+```

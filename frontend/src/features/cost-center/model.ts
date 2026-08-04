@@ -1,4 +1,5 @@
 import type { Account } from '@/types'
+import algorithmVersionSource from '../../../ALGORITHM_VERSION?raw'
 
 export type BillingCycle = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
 export type CostCurrency = 'CNY' | 'USD'
@@ -11,6 +12,7 @@ export interface CostProfile {
   billing_cycle: BillingCycle
   started_at: string
   source: CostSource
+  algorithm_version: string
 }
 
 export type CostAccount = Pick<Account, 'created_at' | 'extra' | 'credentials' | 'parent_plan_type'>
@@ -18,6 +20,16 @@ export type DateInput = string | number | Date
 
 export const CNY_PER_USD = 7.2
 export const USD_TO_CNY_RATE = CNY_PER_USD
+export const COST_ALGORITHM_VERSION = algorithmVersionSource.trim()
+export const LEGACY_COST_ALGORITHM_VERSION = 'legacy-unversioned'
+
+export const COST_ALGORITHM_MANIFEST = Object.freeze({
+  version: COST_ALGORITHM_VERSION,
+  monthly_hours: 730,
+  cny_per_usd: CNY_PER_USD,
+  accrual: 'linear_elapsed_milliseconds',
+  start_boundary: 'account_created_at',
+})
 
 export const DEFAULT_MONTHLY_PRICES_CNY: Readonly<Record<CostPlan, number>> = {
   free: 0,
@@ -132,6 +144,9 @@ function customCostProfile(account: CostAccount): CostProfile | null {
   const billingCycle = normalizeBillingCycle(rawProfile.billing_cycle)
   const requestedStart = typeof rawProfile.started_at === 'string' ? rawProfile.started_at.trim() : ''
   const requestedStartMs = requestedStart ? timestamp(requestedStart) : null
+  const algorithmVersion = typeof rawProfile.algorithm_version === 'string' && rawProfile.algorithm_version.trim()
+    ? rawProfile.algorithm_version.trim()
+    : LEGACY_COST_ALGORITHM_VERSION
 
   if (
     typeof amount !== 'number' ||
@@ -155,6 +170,7 @@ function customCostProfile(account: CostAccount): CostProfile | null {
     billing_cycle: billingCycle,
     started_at: startedAt,
     source: 'custom',
+    algorithm_version: algorithmVersion,
   }
 }
 
@@ -169,6 +185,7 @@ export function resolveCostProfile(account: CostAccount): CostProfile {
     billing_cycle: 'monthly',
     started_at: account.created_at,
     source: 'default',
+    algorithm_version: COST_ALGORITHM_VERSION,
   }
 }
 

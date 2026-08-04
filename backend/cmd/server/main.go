@@ -97,7 +97,16 @@ func main() {
 func runSetupServer() {
 	r := gin.New()
 	r.Use(middleware.Recovery())
-	r.Use(middleware.CORS(config.CORSConfig{}))
+	setupCORS := config.CORSConfig{}
+	if desktopModeEnabled() {
+		setupCORS.AllowedOrigins = []string{
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"tauri://localhost",
+		}
+		setupCORS.AllowCredentials = true
+	}
+	r.Use(middleware.CORS(setupCORS))
 	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: config.DefaultCSPPolicy}, nil))
 
 	// Register setup routes
@@ -128,6 +137,15 @@ func runSetupServer() {
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Failed to start setup server: %v", err)
+	}
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }
 

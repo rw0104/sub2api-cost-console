@@ -5,7 +5,7 @@
         <div class="cost-brand-block">
           <span class="cost-eyebrow">SUB2API / DESKTOP ECONOMICS</span>
           <h1>{{ panelTitle }}</h1>
-          <p>{{ panelDescription }}</p>
+          <p>{{ panelDescription }} · 算法 v{{ COST_ALGORITHM_VERSION }}</p>
         </div>
 
         <nav class="cost-workspaces" aria-label="成本中心工作区">
@@ -285,6 +285,7 @@ import CostLineChart from '@/features/cost-center/components/CostLineChart.vue'
 import CostProfileInspector from '@/features/cost-center/components/CostProfileInspector.vue'
 import {
   accruedCost,
+  COST_ALGORITHM_VERSION,
   convertCurrency,
   elapsedHours,
   formatMoney,

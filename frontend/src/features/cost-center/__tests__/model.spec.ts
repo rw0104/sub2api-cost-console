@@ -7,6 +7,8 @@ import {
   hourlyRate,
   inferPlan,
   resolveCostProfile,
+  COST_ALGORITHM_VERSION,
+  LEGACY_COST_ALGORITHM_VERSION,
   type CostAccount,
   type CostProfile,
 } from '../model'
@@ -30,6 +32,7 @@ function profile(overrides: Partial<CostProfile> = {}): CostProfile {
     billing_cycle: 'monthly',
     started_at: JOINED_AT,
     source: 'default',
+    algorithm_version: COST_ALGORITHM_VERSION,
     ...overrides,
   }
 }
@@ -98,7 +101,23 @@ describe('cost center model', () => {
       currency: 'USD',
       billing_cycle: 'weekly',
       source: 'custom',
+      algorithm_version: LEGACY_COST_ALGORITHM_VERSION,
     })
+  })
+
+  it('persists an explicit algorithm version for auditable cost rules', () => {
+    const resolved = resolveCostProfile(account({
+      extra: {
+        cost_profile: {
+          amount: 140,
+          currency: 'CNY',
+          billing_cycle: 'monthly',
+          started_at: JOINED_AT,
+          algorithm_version: '1.0.0',
+        },
+      },
+    }))
+    expect(resolved.algorithm_version).toBe('1.0.0')
   })
 
   it('falls back through credential and parent plan fields', () => {

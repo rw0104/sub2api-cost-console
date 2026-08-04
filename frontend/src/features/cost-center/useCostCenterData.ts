@@ -155,6 +155,7 @@ export function useCostCenterData() {
             currency: profile.currency,
             billing_cycle: profile.billing_cycle,
             started_at: profile.started_at,
+            algorithm_version: profile.algorithm_version,
           },
         },
       })

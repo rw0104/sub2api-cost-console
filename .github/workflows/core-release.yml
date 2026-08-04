@@ -1,0 +1,108 @@
+name: Managed Core Release
+
+on:
+  push:
+    tags:
+      - 'core-v*'
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Optional core release notes
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: managed-core-release
+  cancel-in-progress: false
+
+jobs:
+  windows-core:
+    name: Publish signed Windows core
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: corepack pnpm@9 install --frozen-lockfile
+
+      - name: Build embedded backend UI
+        working-directory: frontend
+        run: corepack pnpm@9 build
+
+      - name: Build managed Sub2API core
+        working-directory: frontend
+        run: node scripts/prepare-desktop-sidecar.mjs
+
+      - name: Prepare and sign core channel assets
+        id: core-assets
+        shell: pwsh
+        working-directory: frontend
+        env:
+          SUB2API_CORE_RELEASE_NOTES: ${{ inputs.notes }}
+        run: |
+          $version = (Get-Content -Raw CORE_VERSION).Trim()
+          $algorithmVersion = (Get-Content -Raw ALGORITHM_VERSION).Trim()
+          $expectedTag = "core-v$version"
+          if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_name }}" -ne $expectedTag) {
+            throw "Tag ${{ github.ref_name }} does not match CORE_VERSION $expectedTag"
+          }
+          node scripts/prepare-core-release.mjs
+          "core_version=$version" >> $env:GITHUB_OUTPUT
+          "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
+          "core_channel=core-channel" >> $env:GITHUB_OUTPUT
+
+      - name: Publish core channel atomically
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $channel = "${{ steps.core-assets.outputs.core_channel }}"
+          $title = "Sub2API managed core channel"
+          $notes = "Current core: v${{ steps.core-assets.outputs.core_version }}; algorithm: v${{ steps.core-assets.outputs.algorithm_version }}; source: ${{ github.sha }}."
+          gh release view $channel --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $channel --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title $title --notes $notes
+          } else {
+            gh release edit $channel --repo "${{ github.repository }}" --prerelease --title $title --notes $notes
+          }
+
+          # Upload immutable, versioned assets before replacing the signed channel manifest.
+          # Clients therefore see either the complete old release or the complete new one.
+          $payload = Get-ChildItem -File release-assets | Where-Object { $_.Name -notlike 'core-update.json*' } | ForEach-Object { $_.FullName }
+          if ($payload.Count -eq 0) { throw "No versioned core assets were generated" }
+          gh release upload $channel --repo "${{ github.repository }}" $payload --clobber
+          gh release upload $channel --repo "${{ github.repository }}" `
+            (Resolve-Path release-assets/core-update.json) `
+            (Resolve-Path release-assets/core-update.json.sig) --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: sub2api-core-${{ steps.core-assets.outputs.core_version }}-windows
+          if-no-files-found: error
+          path: frontend/release-assets/*
