@@ -13,7 +13,7 @@ import {
   shouldMarkUserUIRequest,
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
-import { getAPIBaseURL } from './url'
+import { getAPIBaseURL, isDesktopRuntime, redirectToAppPath } from './url'
 export { buildApiUrl, buildGatewayUrl } from './url'
 
 // ==================== Axios Instance Configuration ====================
@@ -132,7 +132,7 @@ apiClient.interceptors.response.use(
         }
 
         if (window.location.pathname.startsWith('/admin/ops')) {
-          window.location.href = '/admin/settings'
+          redirectToAppPath('/admin/settings')
         }
 
         return Promise.reject({
@@ -208,7 +208,7 @@ apiClient.interceptors.response.use(
             sessionStorage.setItem('auth_expired', '1')
 
             if (!window.location.pathname.includes('/login')) {
-              window.location.href = '/login'
+              redirectToAppPath('/login')
             }
 
             return Promise.reject({
@@ -239,7 +239,7 @@ apiClient.interceptors.response.use(
         }
         // Only redirect if not already on login page
         if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login'
+          redirectToAppPath('/login')
         }
       }
 
@@ -254,10 +254,14 @@ apiClient.interceptors.response.use(
       })
     }
 
-    // Network error
+    // Network error. Desktop builds use a local Go backend, so surface the
+    // actual endpoint and the CORS prerequisite instead of a generic browser hint.
+    const networkMessage = isDesktopRuntime()
+      ? `无法连接 Sub2API 后端（${getAPIBaseURL()}）。请先启动后端，并将 http://tauri.localhost 加入 CORS 白名单。`
+      : 'Network error. Please check your connection.'
     return Promise.reject({
       status: 0,
-      message: 'Network error. Please check your connection.'
+      message: networkMessage
     })
   }
 )

@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:desktop": "vue-tsc -b && vite build --mode desktop",
     "preview": "vite preview",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
     "lint:check": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
     "typecheck": "vue-tsc --noEmit",
@@ -17,8 +20,10 @@
   "dependencies": {
     "@airwallex/components-sdk": "^1.30.2",
     "@lobehub/icons": "^4.0.2",
+    "@lucide/vue": "^1.28.0",
     "@stripe/stripe-js": "^9.0.1",
     "@tanstack/vue-virtual": "^3.13.23",
+    "@tauri-apps/api": "^2.11.1",
     "@vueuse/core": "^10.7.0",
     "axios": "^1.18.0",
     "chart.js": "^4.4.1",
@@ -37,6 +42,7 @@
   },
   "devDependencies": {
     "@intlify/message-compiler": "9.14.5",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/dompurify": "^3.0.5",
     "@types/file-saver": "^2.0.7",
     "@types/mdx": "^2.0.13",

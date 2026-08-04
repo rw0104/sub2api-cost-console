@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sub2API Cost Console",
+  "version": "0.1.0",
+  "identifier": "com.sub2api.cost-console",
+  "build": {
+    "beforeDevCommand": "corepack pnpm@9 dev --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:3000",
+    "beforeBuildCommand": "corepack pnpm@9 build:desktop",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Sub2API · Cost Operations Console",
+        "url": "index.html#/admin/cost-center?desktop=1",
+        "width": 1600,
+        "height": 980,
+        "minWidth": 1180,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}

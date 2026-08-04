@@ -3,7 +3,7 @@
  * Defines all application routes with lazy loading and navigation guards
  */
 
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
@@ -414,6 +414,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/cost-center',
+    name: 'AdminCostCenter',
+    component: () => import('@/views/admin/CostCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Cost Operations Console',
+      titleKey: 'admin.costCenter.title',
+      descriptionKey: 'admin.costCenter.description'
+    }
+  },
+  {
     path: '/admin/ops',
     name: 'AdminOps',
     component: () => import('@/views/admin/ops/OpsDashboard.vue'),
@@ -716,8 +728,10 @@ const routes: RouteRecordRaw[] = [
 /**
  * Create router instance
  */
+const isDesktopRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in (window as any)
+
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: isDesktopRuntime ? createWebHashHistory() : createWebHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior(_to, _from, savedPosition) {
     // Scroll to saved position when using browser back/forward

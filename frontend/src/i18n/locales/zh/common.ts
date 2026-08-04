@@ -150,6 +150,7 @@ export default {
 
   // Navigation
   nav: {
+    costCenter: '成本作战台',
     dashboard: '仪表盘',
     announcements: '公告',
     apiKeys: 'API 密钥',
