@@ -39,7 +39,10 @@ if (!existsSync(signaturePath)) {
 }
 
 const signature = readFileSync(signaturePath, 'utf8').trim()
-const encodedAssetName = encodeURIComponent(installerName)
+// GitHub normalizes spaces in uploaded release asset names to periods.
+// Build the update URL and checksum labels from the resulting remote name.
+const releaseAssetName = installerName.replace(/\s+/g, '.')
+const encodedAssetName = encodeURIComponent(releaseAssetName)
 const downloadUrl = `https://github.com/${repository}/releases/download/v${version}/${encodedAssetName}`
 const platform = { signature, url: downloadUrl }
 const latest = {
@@ -60,8 +63,12 @@ function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
-const checksums = [installerPath, signaturePath, latestPath]
-  .map(path => `${sha256(path)}  ${path.split(/[\\/]/).at(-1)}`)
+const checksums = [
+  [installerPath, releaseAssetName],
+  [signaturePath, `${releaseAssetName}.sig`],
+  [latestPath, 'latest.json'],
+]
+  .map(([path, name]) => `${sha256(path)}  ${name}`)
   .sort()
 const checksumPath = resolve(releaseDirectory, 'INSTALLER_SHA256SUMS.txt')
 writeFileSync(checksumPath, `${checksums.join('\n')}\n`, 'utf8')
@@ -69,6 +76,7 @@ writeFileSync(checksumPath, `${checksums.join('\n')}\n`, 'utf8')
 console.log(JSON.stringify({
   version,
   installerName,
+  releaseAssetName,
   installerPath,
   signaturePath,
   latestPath,
