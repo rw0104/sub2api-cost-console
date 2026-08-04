@@ -108,16 +108,8 @@ jobs:
           args: --bundles nsis
 
       - name: Generate release checksums
-        shell: pwsh
         working-directory: frontend
-        run: |
-          $checksumPath = "release-assets/INSTALLER_SHA256SUMS.txt"
-          $files = Get-ChildItem -File src-tauri/target/release/bundle/nsis
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
-            "$hash  $($file.Name)"
-          }
-          $lines | Sort-Object | Set-Content -Encoding utf8NoBOM -LiteralPath $checksumPath
+        run: node scripts/prepare-desktop-release.mjs
 
       - name: Upload installer checksums
         shell: pwsh
