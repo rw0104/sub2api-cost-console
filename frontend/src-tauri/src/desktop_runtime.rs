@@ -415,6 +415,10 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
         .env("SERVER_HOST", BACKEND_HOST)
         .env("SERVER_PORT", BACKEND_PORT.to_string())
         .env("SUB2API_DESKTOP", "1")
+        .env(
+            "SUB2API_DESKTOP_RETURN_URL",
+            "http://tauri.localhost/index.html#/admin/cost-center?desktop=1",
+        )
         .spawn()
         .map_err(|error| format!("无法启动 Sub2API 内核: {error}"))?;
 
@@ -600,6 +604,22 @@ fn stop_backend_internal(supervisor: &BackendSupervisor, shutting_down: bool) {
     if let Some(child) = child {
         let _ = child.kill();
     }
+}
+
+/// Stop the managed sidecar and wait until its listening socket is released.
+/// Tauri's `relaunch` can otherwise race child shutdown on Windows.
+#[tauri::command]
+pub async fn desktop_backend_prepare_relaunch(
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<(), String> {
+    stop_backend_internal(&supervisor, false);
+    for _ in 0..50 {
+        if !port_is_open() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    Err("本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
 }
 
 pub fn shutdown_backend(app: &AppHandle) {

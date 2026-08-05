@@ -213,8 +213,29 @@ func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
 	// Apply custom branding before the browser paints the static defaults.
 	result = injectSiteTitle(result, settingsJSON)
 	result = injectSiteFavicon(result, settingsJSON)
+	result = injectDesktopReturnBanner(result)
 
 	return result
+}
+
+// injectDesktopReturnBanner keeps the embedded upstream UI usable when it is
+// opened from the desktop shell. The cost console is the shell's primary
+// interface, so users need an explicit way back instead of being stranded on
+// the upstream page.
+func injectDesktopReturnBanner(html []byte) []byte {
+	if strings.TrimSpace(os.Getenv("SUB2API_DESKTOP")) == "" {
+		return html
+	}
+	returnURL := strings.TrimSpace(os.Getenv("SUB2API_DESKTOP_RETURN_URL"))
+	if returnURL == "" {
+		returnURL = "http://tauri.localhost/index.html#/admin/cost-center?desktop=1"
+	}
+	banner := []byte(`<style nonce="` + NonceHTMLPlaceholder + `">#sub2api-desktop-return{position:fixed;z-index:2147483647;left:16px;bottom:16px;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid #9acb45;border-radius:8px;background:#111811ef;color:#e8f5d0;font:600 13px/1.2 Segoe UI,sans-serif;box-shadow:0 8px 24px #0008}#sub2api-desktop-return a{color:#c9f27b;text-decoration:none}#sub2api-desktop-return a:hover{text-decoration:underline}</style><div id="sub2api-desktop-return" role="navigation" aria-label="Desktop console"><span>桌面成本控制台</span><a href="` + []byte(htmlpkg.EscapeString(returnURL)) + `">返回成本控制台</a></div>`)
+	bodyClose := []byte("</body>")
+	if bytes.Contains(html, bodyClose) {
+		return bytes.Replace(html, bodyClose, append(banner, bodyClose...), 1)
+	}
+	return append(html, banner...)
 }
 
 // injectSiteFavicon replaces the static favicon with a configured, browser-safe image URL.

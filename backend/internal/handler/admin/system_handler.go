@@ -71,6 +71,10 @@ func (h *SystemHandler) GetVersion(c *gin.Context) {
 // CheckUpdates checks for available updates
 // GET /api/v1/admin/system/check-updates
 func (h *SystemHandler) CheckUpdates(c *gin.Context) {
+	if sysutil.IsDesktopMode() {
+		response.Error(c, http.StatusConflict, "Desktop builds use the Cost Console updater. Return to the desktop console and open Version & Updates.")
+		return
+	}
 	force := c.Query("force") == "true"
 	info, err := h.updateSvc.CheckUpdate(c.Request.Context(), force)
 	if err != nil {
@@ -83,6 +87,10 @@ func (h *SystemHandler) CheckUpdates(c *gin.Context) {
 // PerformUpdate downloads and applies the update
 // POST /api/v1/admin/system/update
 func (h *SystemHandler) PerformUpdate(c *gin.Context) {
+	if sysutil.IsDesktopMode() {
+		response.Error(c, http.StatusConflict, "In-place updates are disabled in the desktop build. Use the signed core update in the Cost Console.")
+		return
+	}
 	operationID := buildSystemOperationID(c, "update")
 	payload := gin.H{"operation_id": operationID}
 	executeAdminIdempotentJSON(c, "admin.system.update", payload, service.DefaultSystemOperationIdempotencyTTL(), func(ctx context.Context) (any, error) {
@@ -147,6 +155,10 @@ func (h *SystemHandler) GetRollbackVersions(c *gin.Context) {
 // installs that specific release (must be one of the recent rollback versions).
 // POST /api/v1/admin/system/rollback
 func (h *SystemHandler) Rollback(c *gin.Context) {
+	if sysutil.IsDesktopMode() {
+		response.Error(c, http.StatusConflict, "In-place rollback is disabled in the desktop build. Use Version & Updates in the Cost Console.")
+		return
+	}
 	var req struct {
 		Version string `json:"version"`
 	}

@@ -57,6 +57,13 @@ func desktopModeEnabled() bool {
 	}
 }
 
+// IsDesktopMode reports whether the backend is supervised by the Tauri
+// desktop shell. Desktop builds must not use the server's in-place updater;
+// the shell owns signed core updates and the restart lifecycle.
+func IsDesktopMode() bool {
+	return desktopModeEnabled()
+}
+
 // RestartServiceAsync is a fire-and-forget version of RestartService.
 // It logs errors instead of returning them, suitable for goroutine usage.
 func RestartServiceAsync() {

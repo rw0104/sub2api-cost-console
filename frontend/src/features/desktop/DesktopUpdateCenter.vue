@@ -28,6 +28,10 @@
         <div><dt>成本算法</dt><dd>v{{ algorithmVersion }}</dd></div>
       </dl>
 
+      <p class="desktop-update__managed-note">
+        桌面版内核与成本算法只从这里更新；上游原生页面的整包更新已关闭，避免绕过签名校验和桌面回滚机制。
+      </p>
+
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
         <div><span>{{ progressMessage }}</span><b>{{ progressPercent }}%</b></div>
         <p><i :style="{ width: `${progressPercent}%` }"></i></p>
@@ -201,6 +205,7 @@ async function installCore() {
     const result = await invoke<{ version: string; algorithm_version: string }>('install_core_update')
     progressStage.value = 'ready'
     progressMessage.value = `内核 v${result.version} 已验证，正在安全重启`
+    await invoke('desktop_backend_prepare_relaunch')
     await relaunch()
   } catch (error) {
     errorMessage.value = messageOf(error)
@@ -229,6 +234,7 @@ async function installDesktop() {
         progressMessage.value = '桌面更新已安装，正在重启'
       }
     })
+    await invoke('desktop_backend_prepare_relaunch')
     await relaunch()
   } catch (error) {
     errorMessage.value = messageOf(error)
@@ -245,6 +251,7 @@ async function rollbackCore() {
     const result = await invoke<{ version: string }>('prepare_core_rollback')
     progressStage.value = 'ready'
     progressMessage.value = `已准备回滚到内核 v${result.version}，正在重启`
+    await invoke('desktop_backend_prepare_relaunch')
     await relaunch()
   } catch (error) {
     errorMessage.value = messageOf(error)
@@ -293,6 +300,7 @@ onBeforeUnmount(() => {
 .desktop-update__versions div:last-child { border-right: 0; }
 .desktop-update__versions dt { color: #718078; font-size: 10px; }
 .desktop-update__versions dd { margin: 5px 0 0; color: #dce6dd; font: 12px 'Cascadia Mono', monospace; }
+.desktop-update__managed-note { margin: 12px 16px 0; padding: 9px 10px; color: #9da99f; border-left: 2px solid #789d3e; background: #172016; font-size: 10px; line-height: 1.55; }
 .desktop-update__progress { padding: 15px 18px; border-bottom: 1px solid #29332b; background: #171d18; }
 .desktop-update__progress > div { display: flex; justify-content: space-between; color: #aab5ac; font-size: 11px; }
 .desktop-update__progress b { color: #b9e55a; font-family: 'Cascadia Mono', monospace; }
