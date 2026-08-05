@@ -664,4 +664,268 @@ button:active { transform: translateY(1px); }
 @media (max-width: 1180px) { .cost-toolbar { position: relative; grid-template-columns: 1fr; }.cost-workspaces { min-height: 56px; order: 3; border-top: 1px solid var(--cost-line); }.cost-toolbar__actions { position: absolute; top: 10px; right: 0; }.cost-quality-strip { grid-template-columns: repeat(2, 1fr); }.cost-quality-strip__intro { grid-column: 1 / -1; }.cost-assets-row { grid-template-columns: 1fr 1fr; }.cost-metric-grid { grid-column: 1 / -1; border-top: 1px solid var(--cost-line); border-left: 0; }.cost-bottom-row, .cost-chart-row { grid-template-columns: 1fr; }.cost-chart-panel { border-right: 0; border-bottom: 1px solid var(--cost-line); }.cost-oauth-header { grid-template-columns: 1fr; }.cost-pool-summary { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 760px) { .cost-workspace { padding: 12px; }.cost-brand-block { padding-right: 12px; }.cost-toolbar__actions { position: static; flex-wrap: wrap; justify-content: flex-start; border-top: 1px solid var(--cost-line); }.cost-workspaces { overflow: auto; }.cost-workspaces button { flex: 1; min-width: 120px; }.cost-quality-strip, .cost-assets-row, .cost-metric-grid, .cost-bottom-row, .cost-oauth-kpis, .cost-pool-summary { grid-template-columns: 1fr; }.cost-quality-strip__intro, .cost-metric-grid { grid-column: auto; }.cost-donut-wrap { padding: 20px; }.cost-table-tools { flex-wrap: wrap; }.cost-search { width: 100%; margin-left: 0; }.cost-refresh-stamp { order: 3; width: 100%; }.cost-pool-heading-row { grid-template-columns: 1fr; }.cost-page-heading { align-items: flex-start; flex-direction: column; }.cost-distribution-panel__body { grid-template-columns: 1fr; }.cost-donut--small { margin: 0 auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* Apple-inspired spatial tuning: preserve the dark/lime palette while making
+   the console calmer, denser and easier to scan at desktop sizes. */
+.cost-console {
+  --cost-radius-sm: 9px;
+  --cost-radius-md: 13px;
+  --cost-radius-lg: 16px;
+}
+
+.cost-console main {
+  width: min(100%, 2048px);
+  margin: 0 auto;
+}
+
+.cost-console button,
+.cost-console select,
+.cost-console input,
+.cost-console .cost-data-table-wrap,
+.cost-console .cost-pool-table-wrap,
+.cost-console .cost-quality-strip,
+.cost-console .cost-assets-row,
+.cost-console .cost-chart-row,
+.cost-console .cost-bottom-row,
+.cost-console .cost-oauth-kpis,
+.cost-console .cost-pool-summary {
+  border-radius: var(--cost-radius-md);
+}
+
+.cost-console button {
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.cost-console button:hover:not(:disabled) {
+  border-color: #60715f;
+  box-shadow: 0 5px 16px rgb(0 0 0 / 18%);
+}
+
+.cost-console button:active:not(:disabled) {
+  transform: translateY(1px) scale(.985);
+  box-shadow: none;
+}
+
+.cost-toolbar {
+  min-height: 82px;
+  grid-template-columns: minmax(280px, .95fr) auto minmax(360px, 1fr);
+  gap: 12px;
+  padding: 8px 14px 8px 18px;
+  border-bottom-color: rgb(66 77 67 / 82%);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 16%);
+}
+
+.cost-brand-block {
+  padding: 10px 4px;
+}
+
+.cost-brand-block h1 {
+  font-size: clamp(20px, 1.45vw, 25px);
+  letter-spacing: -.025em;
+}
+
+.cost-workspaces {
+  align-self: center;
+  height: 52px;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--cost-line-strong);
+  border-radius: var(--cost-radius-md);
+  background: rgb(18 23 19 / 84%);
+}
+
+.cost-workspaces button {
+  min-width: 116px;
+  height: 42px;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--cost-radius-sm);
+  background: transparent;
+}
+
+.cost-workspaces button:last-child { border-right: 0; }
+.cost-workspaces button.active { box-shadow: 0 4px 14px rgb(185 229 90 / 14%); }
+
+.cost-workspaces kbd {
+  border-radius: 5px;
+}
+
+.cost-toolbar__actions {
+  gap: 7px;
+  padding: 8px 0 8px 8px;
+}
+
+.cost-select-label select,
+.cost-tool-button,
+.cost-icon-button,
+.cost-primary-button {
+  height: 40px;
+  border-radius: var(--cost-radius-sm);
+}
+
+.cost-select-label select { padding-right: 28px; }
+.cost-icon-button { width: 40px; }
+.cost-primary-button { padding-inline: 15px; }
+
+.cost-workspace {
+  padding: 20px 24px 32px;
+}
+
+.cost-quality-strip {
+  min-height: 102px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 12%);
+}
+
+.cost-quality-strip__intro {
+  padding: 16px 18px;
+}
+
+.cost-quality-strip__intro h2 {
+  font-size: clamp(18px, 1.35vw, 22px);
+  letter-spacing: -.018em;
+}
+
+.cost-metric-cell {
+  padding: 12px 14px;
+}
+
+.cost-metric-cell > strong {
+  margin-top: 5px;
+  font-size: clamp(17px, 1.25vw, 20px);
+}
+
+.cost-assets-row {
+  min-height: 216px;
+  margin-top: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 10%);
+}
+
+.cost-section-heading {
+  padding: 18px;
+}
+
+.cost-section-heading h2 {
+  margin-top: 6px;
+  font-size: clamp(20px, 1.5vw, 25px);
+  letter-spacing: -.02em;
+}
+
+.cost-donut {
+  width: 126px;
+  height: 126px;
+}
+
+.cost-donut > div {
+  width: 92px;
+  height: 92px;
+}
+
+.cost-metric-grid { overflow: hidden; }
+
+.cost-chart-row,
+.cost-bottom-row {
+  margin-top: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 9%);
+}
+
+.cost-chart-panel,
+.cost-distribution-panel {
+  padding: 15px 16px 13px;
+}
+
+.cost-panel-heading strong { font-size: 12px; letter-spacing: -.01em; }
+
+.cost-page-heading {
+  min-height: 94px;
+  padding: 8px 4px 18px;
+}
+
+.cost-page-heading h2 {
+  font-size: clamp(24px, 2vw, 31px);
+  letter-spacing: -.03em;
+}
+
+.cost-platform-tabs {
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--cost-radius-md);
+  background: rgb(18 23 19 / 84%);
+}
+
+.cost-platform-tabs button {
+  min-width: 94px;
+  height: 36px;
+  padding-inline: 14px;
+  border: 0;
+  border-radius: 7px;
+}
+
+.cost-platform-tabs button:last-child { border-right: 0; }
+
+.cost-search,
+.cost-error button,
+.cost-tag,
+.cost-score,
+.cost-actions-cell button {
+  border-radius: var(--cost-radius-sm);
+}
+
+.cost-data-table-wrap,
+.cost-pool-table-wrap {
+  overflow: auto;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 9%);
+}
+
+.cost-data-table th,
+.cost-pool-table th {
+  height: 42px;
+}
+
+.cost-data-table td { height: 66px; }
+.cost-data-table tbody tr { transition: background-color 160ms ease; }
+.cost-data-table tbody tr:hover { background: rgb(35 46 34 / 84%); }
+
+.cost-tag {
+  padding: 4px 7px;
+}
+
+.cost-actions-cell button {
+  width: 32px;
+  height: 32px;
+}
+
+.cost-oauth-header { gap: 16px; }
+.cost-pool-heading-row { gap: 16px; margin-top: 16px; }
+
+.cost-pool-summary {
+  min-height: 146px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 9%);
+}
+
+.cost-pool-output { padding: 15px 16px; }
+.cost-pool-table-wrap { margin-top: 16px; }
+
+@media (max-width: 1180px) {
+  .cost-toolbar { padding: 8px 14px; }
+  .cost-toolbar__actions { padding-left: 0; }
+}
+
+@media (max-width: 760px) {
+  .cost-workspace { padding: 14px 12px 24px; }
+  .cost-toolbar { gap: 8px; padding: 8px 12px; }
+  .cost-workspaces { height: 50px; }
+  .cost-workspaces button { min-width: 108px; height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cost-console button,
+  .cost-console tbody tr {
+    transition: none !important;
+  }
+}
 </style>
