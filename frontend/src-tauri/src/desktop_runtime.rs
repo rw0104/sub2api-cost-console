@@ -25,6 +25,7 @@ const CORE_MANIFEST_SIGNATURE_URL: &str =
 const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFQThBQjkyM0FBMEUyMTEKUldRUjRxQTZrcXVvenN6ZjJmK1JhWUFiaFlKS1NNdVRGc1JlRUtFdVhoTWwrUmdEYTdOd2RXc0QK";
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
+pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +45,7 @@ pub struct BackendStatus {
     pub data_dir: String,
     pub core_version: String,
     pub algorithm_version: String,
+    pub upstream_commit: String,
     pub message: String,
     pub last_log: String,
 }
@@ -58,6 +60,7 @@ impl BackendStatus {
             data_dir: data_dir.display().to_string(),
             core_version: versions.current_version.clone(),
             algorithm_version: versions.current_algorithm_version.clone(),
+            upstream_commit: versions.upstream_commit.clone(),
             message: "正在启动本地 Sub2API 内核".into(),
             last_log: String::new(),
         }
@@ -112,6 +115,8 @@ struct CoreVersionRecord {
     version: String,
     algorithm_version: String,
     sha256: String,
+    #[serde(default)]
+    upstream_commit: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -127,6 +132,7 @@ struct CoreState {
 pub struct CoreVersions {
     current_version: String,
     current_algorithm_version: String,
+    upstream_commit: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -142,6 +148,8 @@ pub struct CoreUpdateManifest {
     pub schema: u32,
     pub version: String,
     pub algorithm_version: String,
+    #[serde(default)]
+    pub upstream_commit: String,
     pub published_at: String,
     pub notes: String,
     pub platforms: std::collections::HashMap<String, CoreArtifact>,
@@ -152,6 +160,7 @@ pub struct CoreUpdateCheck {
     pub available: bool,
     pub current_version: String,
     pub current_algorithm_version: String,
+    pub upstream_commit: String,
     pub update: Option<CoreUpdateManifest>,
     pub previous_version: Option<String>,
 }
@@ -160,6 +169,7 @@ pub struct CoreUpdateCheck {
 pub struct CoreInstallResult {
     pub version: String,
     pub algorithm_version: String,
+    pub upstream_commit: String,
     pub restart_required: bool,
 }
 
@@ -255,11 +265,17 @@ fn current_core_versions(app: &AppHandle) -> CoreVersions {
         return CoreVersions {
             current_version: active.version,
             current_algorithm_version: active.algorithm_version,
+            upstream_commit: if active.upstream_commit.is_empty() {
+                UPSTREAM_SUB2API_COMMIT.to_string()
+            } else {
+                active.upstream_commit
+            },
         };
     }
     CoreVersions {
         current_version: CORE_VERSION.to_string(),
         current_algorithm_version: ALGORITHM_VERSION.to_string(),
+        upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
     }
 }
 
@@ -279,6 +295,7 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
                 version: CORE_VERSION.to_string(),
                 algorithm_version: ALGORITHM_VERSION.to_string(),
                 sha256: String::new(),
+                upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
             });
             state.previous = Some(previous);
             state.active = Some(pending);
@@ -306,6 +323,7 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
         version: CORE_VERSION.to_string(),
         algorithm_version: ALGORITHM_VERSION.to_string(),
         sha256: String::new(),
+        upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
     });
     let current_path = if active_path.is_file() {
         active_path.clone()
@@ -549,6 +567,7 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
             supervisor.update_status(|status| {
                 status.core_version = versions.current_version;
                 status.algorithm_version = versions.current_algorithm_version;
+                status.upstream_commit = versions.upstream_commit;
                 status.phase = BackendPhase::Starting;
                 status.message = failure.clone();
             });
@@ -750,6 +769,7 @@ pub async fn check_core_update(app: AppHandle) -> Result<CoreUpdateCheck, String
         available: remote_version > current_version,
         current_version: current.current_version,
         current_algorithm_version: current.current_algorithm_version,
+        upstream_commit: current.upstream_commit,
         update: Some(manifest),
         previous_version,
     })
@@ -867,6 +887,7 @@ pub async fn install_core_update(
         version: manifest.version.clone(),
         algorithm_version: manifest.algorithm_version.clone(),
         sha256: actual_sha256,
+        upstream_commit: manifest.upstream_commit.clone(),
     });
     state.last_error = None;
     save_core_state(&app, &state)?;
@@ -880,6 +901,7 @@ pub async fn install_core_update(
     Ok(CoreInstallResult {
         version: manifest.version,
         algorithm_version: manifest.algorithm_version,
+        upstream_commit: manifest.upstream_commit,
         restart_required: true,
     })
 }
@@ -906,6 +928,7 @@ pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String
     Ok(CoreInstallResult {
         version: previous.version,
         algorithm_version: previous.algorithm_version,
+        upstream_commit: previous.upstream_commit,
         restart_required: true,
     })
 }

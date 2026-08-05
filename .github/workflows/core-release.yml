@@ -66,6 +66,7 @@ jobs:
         run: |
           $version = (Get-Content -Raw CORE_VERSION).Trim()
           $algorithmVersion = (Get-Content -Raw ALGORITHM_VERSION).Trim()
+          $upstreamCommit = (Get-Content -Raw UPSTREAM_SUB2API_COMMIT).Trim()
           $expectedTag = "core-v$version"
           if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_name }}" -ne $expectedTag) {
             throw "Tag ${{ github.ref_name }} does not match CORE_VERSION $expectedTag"
@@ -73,6 +74,7 @@ jobs:
           node scripts/prepare-core-release.mjs
           "core_version=$version" >> $env:GITHUB_OUTPUT
           "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
+          "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
           "core_channel=core-channel" >> $env:GITHUB_OUTPUT
 
       - name: Publish core channel atomically
@@ -83,7 +85,7 @@ jobs:
         run: |
           $channel = "${{ steps.core-assets.outputs.core_channel }}"
           $title = "Sub2API managed core channel"
-          $notes = "Current core: v${{ steps.core-assets.outputs.core_version }}; algorithm: v${{ steps.core-assets.outputs.algorithm_version }}; source: ${{ github.sha }}."
+          $notes = "Upstream baseline: v${{ steps.core-assets.outputs.core_version }}; upstream commit: ${{ steps.core-assets.outputs.upstream_commit }}; cost algorithm: v${{ steps.core-assets.outputs.algorithm_version }}; console source: ${{ github.sha }}."
           gh release view $channel --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $channel --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title $title --notes $notes

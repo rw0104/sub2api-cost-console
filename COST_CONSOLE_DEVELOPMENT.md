@@ -1,7 +1,7 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
 > 文档版本：1.0  
-> 桌面应用版本：0.1.0  
+> 桌面应用版本：0.2.1
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`renqw2023/sub2api-cost-console`](https://github.com/renqw2023/sub2api-cost-console)
@@ -1047,10 +1047,11 @@ Invoke-WebRequest -Method Options `
 | 字段 | 来源 | 作用 |
 |---|---|---|
 | `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
-| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 本地 API 内核 |
+| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.170-21-g825ca7b1` |
+| `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
-版本面板同时显示三者。不能仅根据桌面版本推断算法规则。
+版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。当前桌面包不升级内核，因此不会把上游最新发布版本伪装成已安装版本；用户可在版本面板手动检查并安装更新来验证独立内核通道。
 
 ### 27.2 桌面通道
 
@@ -1122,7 +1123,7 @@ sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe.sig
 7. 将版本化内核、签名清单和 `CORE_SHA256SUMS.txt` 更新到独立 `core-channel` prerelease。
 8. 将同一批资产保存为 GitHub Actions Artifact。
 
-只发布内核时使用 `.github/workflows/core-release.yml`。它不编译或发布 Tauri 安装包，只执行 Web 嵌入、Go 内核构建、双重校验材料生成和 `core-channel` 原子更新。发布前必须提交新的 `frontend/CORE_VERSION`；若成本公式有变化，还必须同时提交新的 `frontend/ALGORITHM_VERSION` 和测试。
+只发布内核时使用 `.github/workflows/core-release.yml`。它不编译或发布 Tauri 安装包，只执行 Web 嵌入、Go 内核构建、双重校验材料生成和 `core-channel` 原子更新。发布前必须提交新的 `frontend/CORE_VERSION`，并同步更新 `frontend/UPSTREAM_SUB2API_COMMIT`，两者必须描述同一个实际绑定的上游基线；若成本公式有变化，还必须同时提交新的 `frontend/ALGORITHM_VERSION` 和测试。不要把上游最新标签写入这两个文件来“预告”尚未安装的内核。
 
 私钥只允许保存在以下 GitHub Actions Secrets：
 
@@ -1140,23 +1141,23 @@ TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 gh workflow run desktop-release.yml --repo renqw2023/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.0
-git push cost-console v0.2.0
+git tag v0.2.1
+git push cost-console v0.2.1
 
 # 只发布 CORE_VERSION 对应的内核；桌面端不升级，只在安装内核后自动重启
 gh workflow run core-release.yml --repo renqw2023/sub2api-cost-console `
   -f notes='修复成本采样与账号生命周期计算'
 
 # 或用可追溯标签触发，标签必须与 frontend/CORE_VERSION 一致
-git tag core-v0.2.1
-git push cost-console core-v0.2.1
+git tag core-v0.1.170-21-g825ca7b1
+git push cost-console core-v0.1.170-21-g825ca7b1
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.0 --repo renqw2023/sub2api-cost-console
-gh release download v0.2.0 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.1 --repo renqw2023/sub2api-cost-console
+gh release download v0.2.1 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 gh release view core-channel --repo renqw2023/sub2api-cost-console
 gh release download core-channel --repo renqw2023/sub2api-cost-console --pattern CORE_SHA256SUMS.txt
 ```

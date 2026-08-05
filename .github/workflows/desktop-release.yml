@@ -74,6 +74,7 @@ jobs:
           $version = [string]$config.version
           $coreVersion = (Get-Content -Raw CORE_VERSION).Trim()
           $algorithmVersion = (Get-Content -Raw ALGORITHM_VERSION).Trim()
+          $upstreamCommit = (Get-Content -Raw UPSTREAM_SUB2API_COMMIT).Trim()
           $tag = "v$version"
           if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_name }}" -ne $tag) {
             throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $tag"
@@ -82,6 +83,7 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "core_version=$coreVersion" >> $env:GITHUB_OUTPUT
           "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
+          "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
           "core_channel=core-channel" >> $env:GITHUB_OUTPUT
 
       - name: Build and publish Tauri installer
@@ -96,7 +98,7 @@ jobs:
             Windows 成本运维桌面工具。
 
             - 桌面版本：v${{ steps.core-assets.outputs.version }}
-            - 内核版本：v${{ steps.core-assets.outputs.core_version }}
+            - 上游内核基线：v${{ steps.core-assets.outputs.core_version }}（${{ steps.core-assets.outputs.upstream_commit }}）
             - 成本算法：v${{ steps.core-assets.outputs.algorithm_version }}
             - 包含签名更新清单、独立内核签名与 SHA-256 校验文件。
           releaseDraft: false
@@ -128,7 +130,7 @@ jobs:
         run: |
           $channel = "${{ steps.core-assets.outputs.core_channel }}"
           $title = "Sub2API managed core channel"
-          $notes = "Current core: v${{ steps.core-assets.outputs.core_version }}; algorithm: v${{ steps.core-assets.outputs.algorithm_version }}."
+          $notes = "Upstream baseline: v${{ steps.core-assets.outputs.core_version }}; upstream commit: ${{ steps.core-assets.outputs.upstream_commit }}; cost algorithm: v${{ steps.core-assets.outputs.algorithm_version }}."
           gh release view $channel --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $channel --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title $title --notes $notes

@@ -24,7 +24,7 @@
 
       <dl class="desktop-update__versions">
         <div><dt>桌面端</dt><dd>v{{ appVersion }}</dd></div>
-        <div><dt>内核</dt><dd>v{{ coreVersion }}</dd></div>
+        <div><dt>Sub2API 上游基线</dt><dd :title="`上游提交 ${upstreamCommit}`">v{{ coreVersion }}</dd></div>
         <div><dt>成本算法</dt><dd>v{{ algorithmVersion }}</dd></div>
       </dl>
 
@@ -35,8 +35,8 @@
 
       <section v-if="coreUpdate?.available" class="desktop-update__release desktop-update__release--primary">
         <div class="desktop-update__release-title">
-          <div><span>内核更新</span><strong>v{{ coreUpdate.update?.version }}</strong></div>
-          <em>算法 v{{ coreUpdate.update?.algorithm_version }}</em>
+          <div><span>上游内核更新</span><strong>v{{ coreUpdate.update?.version }}</strong></div>
+          <em>算法 v{{ coreUpdate.update?.algorithm_version }} · 提交 {{ coreUpdate.update?.upstream_commit || '未提供' }}</em>
         </div>
         <p>{{ coreUpdate.update?.notes || '稳定性、成本核算与本地服务更新。' }}</p>
         <button type="button" :disabled="isBusy" @click="installCore">
@@ -94,11 +94,13 @@ import { isDesktopRuntime } from '@/api/url'
 interface BackendStatus {
   core_version: string
   algorithm_version: string
+  upstream_commit: string
 }
 
 interface CoreManifest {
   version: string
   algorithm_version: string
+  upstream_commit?: string
   notes: string
 }
 
@@ -106,6 +108,7 @@ interface CoreUpdateCheck {
   available: boolean
   current_version: string
   current_algorithm_version: string
+  upstream_commit: string
   update: CoreManifest | null
   previous_version: string | null
 }
@@ -122,6 +125,7 @@ const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
 const algorithmVersion = ref('1.0.0')
+const upstreamCommit = ref('unknown')
 const appUpdate = ref<Update | null>(null)
 const coreUpdate = ref<CoreUpdateCheck | null>(null)
 const checking = ref(false)
@@ -155,6 +159,7 @@ async function loadRuntimeVersions() {
   const backend = await invoke<BackendStatus>('desktop_backend_status')
   coreVersion.value = backend.core_version
   algorithmVersion.value = backend.algorithm_version
+  upstreamCommit.value = backend.upstream_commit
 }
 
 async function checkAll(silent = true) {
@@ -174,6 +179,7 @@ async function checkAll(silent = true) {
       coreUpdate.value = coreResult.value
       coreVersion.value = coreResult.value.current_version
       algorithmVersion.value = coreResult.value.current_algorithm_version
+      upstreamCommit.value = coreResult.value.upstream_commit
     } else {
       failures.push(`内核更新：${messageOf(coreResult.reason)}`)
     }

@@ -13,7 +13,7 @@
       <dl v-if="status" class="desktop-gate__facts">
         <div><dt>连接方式</dt><dd>{{ status.managed ? '安装包受管内核' : '本机现有服务' }}</dd></div>
         <div><dt>服务地址</dt><dd>127.0.0.1:{{ status.port }}</dd></div>
-        <div><dt>内核 / 算法</dt><dd>v{{ status.core_version }} / v{{ status.algorithm_version }}</dd></div>
+        <div><dt>Sub2API 上游基线 / 成本算法</dt><dd>v{{ status.core_version }} / v{{ status.algorithm_version }}</dd></div>
       </dl>
 
       <div v-if="status?.phase === 'error'" class="desktop-gate__error" role="alert">
@@ -26,6 +26,9 @@
 
       <p v-if="status" class="desktop-gate__path" :title="status.data_dir">
         数据目录：{{ status.data_dir }}
+      </p>
+      <p v-if="status?.upstream_commit" class="desktop-gate__path" :title="status.upstream_commit">
+        上游提交：{{ status.upstream_commit }}
       </p>
     </section>
   </main>
@@ -46,6 +49,7 @@ interface BackendStatus {
   data_dir: string
   core_version: string
   algorithm_version: string
+  upstream_commit: string
   message: string
   last_log: string
 }
@@ -83,6 +87,7 @@ async function refreshStatus() {
       data_dir: '',
       core_version: 'unknown',
       algorithm_version: 'unknown',
+      upstream_commit: 'unknown',
       message: '无法读取桌面内核状态',
       last_log: error instanceof Error ? error.message : String(error),
     }

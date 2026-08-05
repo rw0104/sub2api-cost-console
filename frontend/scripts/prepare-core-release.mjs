@@ -24,19 +24,24 @@ const sourceCore = resolve(
 )
 const coreVersion = readFileSync(resolve(frontendDirectory, 'CORE_VERSION'), 'utf8').trim()
 const algorithmVersion = readFileSync(resolve(frontendDirectory, 'ALGORITHM_VERSION'), 'utf8').trim()
+const upstreamCommit = readFileSync(resolve(frontendDirectory, 'UPSTREAM_SUB2API_COMMIT'), 'utf8').trim()
 const repository = (process.env.GITHUB_REPOSITORY || 'renqw2023/sub2api-cost-console').trim()
 const channel = (process.env.SUB2API_CORE_CHANNEL || 'core-channel').trim()
 const sourceCommit = (process.env.GITHUB_SHA || 'local').trim()
 const notes = (process.env.SUB2API_CORE_RELEASE_NOTES || '').trim()
-  || `受管 Sub2API 内核 ${coreVersion}；成本规则版本 ${algorithmVersion}。`
+  || `受管 Sub2API 上游基线 ${coreVersion}（${upstreamCommit}）；成本规则版本 ${algorithmVersion}。`
 
 for (const [name, value] of [
   ['CORE_VERSION', coreVersion],
   ['ALGORITHM_VERSION', algorithmVersion],
+  ['UPSTREAM_SUB2API_COMMIT', upstreamCommit],
 ]) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)) {
     throw new Error(`${name} must be SemVer, received ${JSON.stringify(value)}`)
   }
+}
+if (!/^[0-9a-f]{40}$/i.test(upstreamCommit)) {
+  throw new Error(`UPSTREAM_SUB2API_COMMIT must be a full Git SHA, received ${JSON.stringify(upstreamCommit)}`)
 }
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
   throw new Error(`Invalid GITHUB_REPOSITORY ${JSON.stringify(repository)}`)
@@ -80,6 +85,7 @@ const manifest = {
   algorithm_version: algorithmVersion,
   published_at: new Date().toISOString(),
   source_commit: sourceCommit,
+  upstream_commit: upstreamCommit,
   notes,
   platforms: {
     'windows-x86_64': {
