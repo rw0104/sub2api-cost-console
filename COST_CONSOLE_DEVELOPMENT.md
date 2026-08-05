@@ -899,9 +899,9 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 - [ ] 构建产物不包含密钥。
 - [ ] 图标和版本号正确。
 - [ ] EXE 人工启动测试通过。
-- [ ] 外部发布版本已签名。
-- [ ] `latest.json`、`core-channel/core-update.json` 及各自签名可下载。
-- [ ] `INSTALLER_SHA256SUMS.txt`、`CORE_SHA256SUMS.txt` 与 Release 资产一致。
+- [ ] 对外安装包提供 SHA-256；正式公开分发时配置 Authenticode。
+- [ ] `Wei-Shaw/sub2api` 最新 Release API、`checksums.txt` 和 Windows x64 资产可匿名访问。
+- [ ] 安装器允许选择安装目录和桌面快捷方式。
 - [ ] 安装器/升级/回滚流程已验证。
 
 ---
@@ -1038,7 +1038,7 @@ Invoke-WebRequest -Method Options `
 
 预检必须返回 `204`，并包含 `Access-Control-Allow-Origin: http://tauri.localhost`。
 
-## 27. 双通道自动更新
+## 27. 桌面版本与上游内核更新
 
 ### 27.1 版本边界
 
@@ -1051,43 +1051,38 @@ Invoke-WebRequest -Method Options `
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
-版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。当前桌面包不升级内核，因此不会把上游最新发布版本伪装成已安装版本；用户可在版本面板手动检查并安装更新来验证独立内核通道。
+版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。桌面版本只显示本机安装值，不参与在线检查；用户仍从同一个“版本与更新”面板扫描和安装上游内核。
 
-### 27.2 桌面通道
+### 27.2 桌面版本边界
 
-Tauri updater 在启动后延迟检查，并每 6 小时检查一次：
+`0.2.5` 起删除 Tauri updater 插件、权限和 endpoint，`createUpdaterArtifacts=false`。客户端不会访问 `renqw2023/sub2api-cost-console` 的 `latest.json`，也不会把仓库 Token 写入桌面程序。
 
-```text
-https://github.com/renqw2023/sub2api-cost-console/releases/latest/download/latest.json
-```
-
-发现新版本后展示版本、Release Notes 和下载进度。安装包签名通过 Tauri 公钥校验后安装，完成后调用 `relaunch()` 安全重启。
+桌面升级通过新的 NSIS 安装包完成。安装器采用 `currentUser` 模式，显示原生安装目录页，并在完成页允许用户选择是否创建桌面快捷方式。
 
 ### 27.3 内核通道
 
-独立内核更新使用固定入口：
+内核扫描使用固定的官方公开入口：
 
 ```text
-https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json
-https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json.sig
-sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe
-sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe.sig
+https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest
+https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/checksums.txt
+https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_windows_amd64.zip
 ```
 
-`core-channel` 是固定的 GitHub prerelease 通道，不参与 GitHub 的 `latest` 稳定版选择；因此发布内核不会遮蔽桌面 updater 使用的 `latest.json`。版本化内核资产先上传，签名后的通道清单最后替换，使客户端只会看到完整旧版本或完整新版本。桌面壳保持原版本，只在内核安装、签名和 SHA-256 校验完成后调用 `relaunch()`；重启时切换内核，不运行桌面安装器。
+该仓库公开可匿名读取，不需要用户登录 GitHub。启动约 2 秒后自动扫描，此后每 6 小时扫描；手动“检查更新”调用同一服务。发现新版后由用户确认下载，避免工作中被强制重启。
 
 安全顺序：
 
-1. 下载并校验签名后的 `core-update.json`。
-2. 仅接受 HTTPS 资产地址和更高的 SemVer。
-3. 下载内核到 `pending`，实时报告字节进度。
-4. 同时验证资产 Minisign/Tauri 签名和 SHA-256。
-5. 保留当前内核到 `previous`，重启时原子激活 `pending`。
-6. 新内核必须在 30 秒内通过 `/setup/status` 健康检查。
-7. 验证失败时停止新内核、恢复 `previous` 并重新启动。
+1. 解析官方最新 Release，要求严格的 `v<semver>` 标签和 Windows x64 资产。
+2. 只接受固定 `Wei-Shaw/sub2api` 仓库的 HTTPS 下载路径。
+3. 读取官方 `checksums.txt`，下载 ZIP 到 `pending` 并实时报告字节进度。
+4. 校验 ZIP 的 SHA-256，只提取根目录 `sub2api.exe`，拒绝异常大小和异常路径。
+5. 执行待更新内核 `--version`，核对 Release 版本和真实十六进制提交号。
+6. 保留当前内核到 `previous`，重启时原子激活 `pending`。
+7. 新内核必须在 30 秒内通过健康检查；失败时恢复 `previous`。
 8. 用户也可从版本面板手动回滚上一版内核。
 
-更新程序绝不对源码目录执行 `git pull`，也不直接运行未签名的 Release 资产。
+更新程序绝不对源码目录执行 `git pull`，也不接受其他仓库或缺少官方校验文件的 Release 资产。
 
 ### 27.4 算法可追溯性
 
@@ -1095,11 +1090,11 @@ sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe.sig
 
 ```json
 {
-  "amount": 140,
-  "currency": "CNY",
+  "amount": 20,
+  "currency": "USD",
   "billing_cycle": "monthly",
   "started_at": "2026-08-04T10:00:00.000Z",
-  "algorithm_version": "1.0.0"
+  "algorithm_version": "1.1.0"
 }
 ```
 
@@ -1110,56 +1105,52 @@ sub2api-core-<core_version>-x86_64-pc-windows-msvc.exe.sig
 3. 在 Release Notes 中说明规则变化和生效边界。
 4. 不回写历史成本档案的算法版本。
 
-## 28. GitHub Release 与签名 CI
+## 28. 安装包分发与未来 CI
 
-桌面工作流为 `.github/workflows/desktop-release.yml`，在推送 `v*` 标签或手工触发时运行。Windows runner 执行：
+GitHub 账号限制期间，直接分发本地构建的 NSIS 安装包，不需要把源码发给普通用户。构建命令：
+
+```powershell
+cd frontend
+corepack pnpm@9 desktop:build
+```
+
+输出目录：
+
+```text
+frontend/src-tauri/target/release/bundle/nsis/
+```
+
+分享时同时提供安装包 SHA-256、版本号、上游版权和 LGPL 源码获取地址。`createUpdaterArtifacts=false`，所以构建不需要 `TAURI_SIGNING_PRIVATE_KEY`；这不等同于 Authenticode，未配置 Windows 代码签名证书时系统仍可能提示“未知发布者”。
+
+仓库恢复后可继续使用 `.github/workflows/desktop-release.yml` 生成 GitHub Release，但当前客户端仍不会自动检查桌面版本。未来流水线至少应：
 
 1. 固定 pnpm、Go 1.26.5 和 Rust 工具链。
 2. 构建后端嵌入 Web UI。
 3. 编译 Windows x86_64 Go sidecar。
-4. 使用 `TAURI_SIGNING_PRIVATE_KEY` 为内核和内核清单签名。
-5. 通过 `tauri-apps/tauri-action` 构建 NSIS 安装包和 `latest.json`。
-6. 将桌面安装器、`.sig`、`latest.json` 和 `INSTALLER_SHA256SUMS.txt` 上传到稳定 Release。
-7. 将版本化内核、签名清单和 `CORE_SHA256SUMS.txt` 更新到独立 `core-channel` prerelease。
-8. 将同一批资产保存为 GitHub Actions Artifact。
+4. 构建 NSIS 安装包并生成安装包 SHA-256。
+5. 可选执行 Authenticode 代码签名。
+6. 将安装器、校验文件、许可证与源代码获取说明上传到稳定 Release。
+7. 将同一批资产保存为 GitHub Actions Artifact。
 
-只发布内核时使用 `.github/workflows/core-release.yml`。它不编译或发布 Tauri 安装包，只执行 Web 嵌入、Go 内核构建、双重校验材料生成和 `core-channel` 原子更新。发布前必须提交新的 `frontend/CORE_VERSION`，并同步更新 `frontend/UPSTREAM_SUB2API_COMMIT`，两者必须描述同一个实际绑定的上游基线；若成本公式有变化，还必须同时提交新的 `frontend/ALGORITHM_VERSION` 和测试。不要把上游最新标签写入这两个文件来“预告”尚未安装的内核。
-
-私钥只允许保存在以下 GitHub Actions Secrets：
-
-```text
-TAURI_SIGNING_PRIVATE_KEY
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-```
-
-仓库和日志只能包含公钥。若要增加 Windows Authenticode 签名，应在 CI 中配置受信任的 PFX/证书服务；这与 Tauri updater 的 Minisign 签名是两层不同的信任机制，不能互相替代。
+不再发布本项目自定义 `core-channel`；内核版本和校验材料由 `Wei-Shaw/sub2api` 官方 Release 提供。本项目只负责固定来源验证、下载、切换和回滚。
 
 发布命令：
 
 ```powershell
-# 使用 tauri.conf.json 中的版本创建 Release
+# 仓库恢复后，使用 tauri.conf.json 中的版本创建安装包 Release
 gh workflow run desktop-release.yml --repo renqw2023/sub2api-cost-console
 
 # 或推送同版本标签
 git tag v0.2.1
 git push cost-console v0.2.1
 
-# 只发布 CORE_VERSION 对应的内核；桌面端不升级，只在安装内核后自动重启
-gh workflow run core-release.yml --repo renqw2023/sub2api-cost-console `
-  -f notes='修复成本采样与账号生命周期计算'
-
-# 或用可追溯标签触发，标签必须与 frontend/CORE_VERSION 一致
-git tag core-v0.1.170-21-g825ca7b1
-git push cost-console core-v0.1.170-21-g825ca7b1
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.1 --repo renqw2023/sub2api-cost-console
-gh release download v0.2.1 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
-gh release view core-channel --repo renqw2023/sub2api-cost-console
-gh release download core-channel --repo renqw2023/sub2api-cost-console --pattern CORE_SHA256SUMS.txt
+gh release view v0.2.5 --repo renqw2023/sub2api-cost-console
+gh release download v0.2.5 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

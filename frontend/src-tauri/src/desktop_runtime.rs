@@ -1,40 +1,35 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use minisign_verify::{PublicKey, Signature};
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
+    io::Write,
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
-use tokio::{io::AsyncWriteExt, sync::Mutex as AsyncMutex, time::sleep};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::Mutex as AsyncMutex,
+    time::{sleep, timeout},
+};
 
 const BACKEND_HOST: &str = "127.0.0.1";
 const BACKEND_PORT: u16 = 18_765;
 const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
-const DEFAULT_CORE_MANIFEST_URL: &str =
-    "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json";
-const DEFAULT_CORE_MANIFEST_SIGNATURE_URL: &str =
-    "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json.sig";
-const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5RTdCNTVENUMxNzNFMkIKUldRclBoZGNYYlhuR1VaK1dVS3hDUUlVRVBFUlVOaEVtTCt2aTV4Tm1YR2lVd0hYREdaNmRBZnQK";
+const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest";
+const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
+const UPSTREAM_CHECKSUM_ASSET: &str = "checksums.txt";
+const MAX_CORE_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
-
-fn core_manifest_url() -> &'static str {
-    option_env!("SUB2API_CORE_MANIFEST_URL").unwrap_or(DEFAULT_CORE_MANIFEST_URL)
-}
-
-fn core_manifest_signature_url() -> &'static str {
-    option_env!("SUB2API_CORE_MANIFEST_SIGNATURE_URL")
-        .unwrap_or(DEFAULT_CORE_MANIFEST_SIGNATURE_URL)
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,7 +142,7 @@ pub struct CoreVersions {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreArtifact {
     pub url: String,
-    pub signature_url: String,
+    pub archive_name: String,
     pub sha256: String,
     pub size: u64,
 }
@@ -161,7 +156,25 @@ pub struct CoreUpdateManifest {
     pub upstream_commit: String,
     pub published_at: String,
     pub notes: String,
-    pub platforms: std::collections::HashMap<String, CoreArtifact>,
+    pub release_url: String,
+    pub platforms: HashMap<String, CoreArtifact>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    published_at: String,
+    #[serde(default)]
+    body: String,
+    html_url: String,
+    assets: Vec<GitHubReleaseAsset>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -661,26 +674,6 @@ fn restore_previous_core(app: &AppHandle, reason: &str) -> Result<(), String> {
     save_core_state(app, &state)
 }
 
-fn verify_tauri_signature(data: &[u8], encoded_signature: &str) -> Result<(), String> {
-    let public_key_text = BASE64
-        .decode(UPDATE_PUBLIC_KEY.trim())
-        .map_err(|error| format!("更新公钥不是有效 Base64: {error}"))?;
-    let public_key_text = std::str::from_utf8(&public_key_text)
-        .map_err(|error| format!("更新公钥不是 UTF-8: {error}"))?;
-    let public_key =
-        PublicKey::decode(public_key_text).map_err(|error| format!("无法读取更新公钥: {error}"))?;
-    let signature_text = BASE64
-        .decode(encoded_signature.trim())
-        .map_err(|error| format!("更新签名不是有效 Base64: {error}"))?;
-    let signature_text = std::str::from_utf8(&signature_text)
-        .map_err(|error| format!("更新签名不是 UTF-8: {error}"))?;
-    let signature =
-        Signature::decode(signature_text).map_err(|error| format!("无法读取更新签名: {error}"))?;
-    public_key
-        .verify(data, &signature, true)
-        .map_err(|error| format!("更新签名验证失败: {error}"))
-}
-
 fn validate_https_url(value: &str) -> Result<Url, String> {
     let url = Url::parse(value).map_err(|error| format!("更新地址无效: {error}"))?;
     if url.scheme() != "https" {
@@ -689,54 +682,136 @@ fn validate_https_url(value: &str) -> Result<Url, String> {
     Ok(url)
 }
 
+fn validate_upstream_asset_url(value: &str, tag: &str, filename: &str) -> Result<Url, String> {
+    let url = validate_https_url(value)?;
+    let expected_path = format!("/{UPSTREAM_REPOSITORY}/releases/download/{tag}/{filename}");
+    if url.host_str() != Some("github.com") || url.path() != expected_path {
+        return Err(format!(
+            "上游资产地址不属于固定仓库 {UPSTREAM_REPOSITORY}: {value}"
+        ));
+    }
+    Ok(url)
+}
+
+fn checksum_for_asset(checksums: &str, filename: &str) -> Result<String, String> {
+    for line in checksums.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(checksum) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        if name.trim_start_matches('*') == filename {
+            let normalized = checksum.trim().to_ascii_lowercase();
+            if normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Ok(normalized);
+            }
+            return Err(format!("{filename} 的上游 SHA-256 格式无效"));
+        }
+    }
+    Err(format!("上游 checksums.txt 未包含 {filename}"))
+}
+
+fn build_upstream_manifest(
+    release: GitHubRelease,
+    checksums: &str,
+) -> Result<CoreUpdateManifest, String> {
+    let version = release.tag_name.trim_start_matches('v').trim().to_string();
+    Version::parse(&version).map_err(|error| format!("上游内核版本号无效: {error}"))?;
+    if version.is_empty() || release.tag_name != format!("v{version}") {
+        return Err(format!(
+            "上游 Release 标签格式不受支持: {}",
+            release.tag_name
+        ));
+    }
+
+    let archive_name = format!("sub2api_{version}_windows_amd64.zip");
+    let archive = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == archive_name)
+        .ok_or_else(|| format!("上游 Release 缺少 Windows x64 资产 {archive_name}"))?;
+    validate_upstream_asset_url(
+        &archive.browser_download_url,
+        &release.tag_name,
+        &archive_name,
+    )?;
+    if archive.size == 0 || archive.size > MAX_CORE_ARCHIVE_BYTES {
+        return Err(format!("上游内核压缩包大小异常: {} 字节", archive.size));
+    }
+
+    let sha256 = checksum_for_asset(checksums, &archive_name)?;
+    let mut platforms = HashMap::new();
+    platforms.insert(
+        "windows-x86_64".to_string(),
+        CoreArtifact {
+            url: archive.browser_download_url.clone(),
+            archive_name,
+            sha256,
+            size: archive.size,
+        },
+    );
+
+    Ok(CoreUpdateManifest {
+        schema: 1,
+        version,
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        upstream_commit: String::new(),
+        published_at: release.published_at,
+        notes: release.body,
+        release_url: release.html_url,
+        platforms,
+    })
+}
+
 fn update_client() -> Result<Client, String> {
     Client::builder()
-        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(10 * 60))
         .user_agent("Sub2API-Cost-Console-Updater")
         .build()
         .map_err(|error| format!("无法创建更新客户端: {error}"))
 }
 
-async fn fetch_verified_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
-    let manifest_response = client
-        .get(core_manifest_url())
+async fn fetch_upstream_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
+    let release = client
+        .get(UPSTREAM_RELEASE_API)
+        .header("Cache-Control", "no-cache")
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|error| format!("无法扫描 Wei-Shaw/sub2api 上游 Release: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Wei-Shaw/sub2api Release API 返回错误: {error}"))?
+        .json::<GitHubRelease>()
+        .await
+        .map_err(|error| format!("无法解析 Wei-Shaw/sub2api Release: {error}"))?;
+
+    let checksums_asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == UPSTREAM_CHECKSUM_ASSET)
+        .ok_or_else(|| "上游 Release 缺少 checksums.txt，已拒绝更新".to_string())?;
+    let checksums_url = validate_upstream_asset_url(
+        &checksums_asset.browser_download_url,
+        &release.tag_name,
+        UPSTREAM_CHECKSUM_ASSET,
+    )?;
+    let checksums = client
+        .get(checksums_url)
         .header("Cache-Control", "no-cache")
         .send()
         .await
-        .map_err(|error| format!("无法获取内核更新清单: {error}"))?;
-    if manifest_response.status() == StatusCode::NOT_FOUND {
-        return Err(format!(
-            "内核更新源暂不可用：更新清单通过匿名访问返回 404（{}）。当前内核继续运行，请恢复 Release 公网访问或配置公开更新镜像。",
-            core_manifest_url()
-        ));
-    }
-    let manifest_response = manifest_response
+        .map_err(|error| format!("无法获取上游 checksums.txt: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("内核更新清单返回错误: {error}"))?;
-    let manifest_bytes = manifest_response
-        .bytes()
-        .await
-        .map_err(|error| format!("无法读取内核更新清单: {error}"))?;
-    let signature = client
-        .get(core_manifest_signature_url())
-        .header("Cache-Control", "no-cache")
-        .send()
-        .await
-        .map_err(|error| format!("无法获取内核清单签名: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("内核清单签名返回错误: {error}"))?
+        .map_err(|error| format!("上游 checksums.txt 返回错误: {error}"))?
         .text()
         .await
-        .map_err(|error| format!("无法读取内核清单签名: {error}"))?;
-    verify_tauri_signature(&manifest_bytes, &signature)?;
-    let manifest: CoreUpdateManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|error| format!("内核更新清单格式无效: {error}"))?;
-    if manifest.schema != 1 {
-        return Err(format!("不支持的内核更新清单版本: {}", manifest.schema));
-    }
-    Version::parse(manifest.version.trim_start_matches('v'))
-        .map_err(|error| format!("内核版本号无效: {error}"))?;
-    Ok(manifest)
+        .map_err(|error| format!("无法读取上游 checksums.txt: {error}"))?;
+
+    build_upstream_manifest(release, &checksums)
 }
 
 fn platform_key() -> Result<&'static str, String> {
@@ -746,6 +821,83 @@ fn platform_key() -> Result<&'static str, String> {
     }
     #[allow(unreachable_code)]
     Err("当前平台暂不支持独立内核更新".into())
+}
+
+async fn extract_upstream_core(archive_path: PathBuf, target_path: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let archive_file = fs::File::open(&archive_path)
+            .map_err(|error| format!("无法打开上游内核压缩包: {error}"))?;
+        let mut archive = zip::ZipArchive::new(archive_file)
+            .map_err(|error| format!("上游内核压缩包格式无效: {error}"))?;
+        let mut entry = archive
+            .by_name("sub2api.exe")
+            .map_err(|_| "上游 Windows 压缩包中缺少 sub2api.exe".to_string())?;
+        if entry.is_dir() || entry.size() == 0 || entry.size() > MAX_CORE_ARCHIVE_BYTES {
+            return Err(format!("上游 sub2api.exe 大小异常: {} 字节", entry.size()));
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("无法创建待更新内核目录: {error}"))?;
+        }
+        let mut output = fs::File::create(&target_path)
+            .map_err(|error| format!("无法创建待验证内核: {error}"))?;
+        let copied = std::io::copy(&mut entry, &mut output)
+            .map_err(|error| format!("无法解压上游内核: {error}"))?;
+        output
+            .flush()
+            .map_err(|error| format!("无法写入待验证内核: {error}"))?;
+        if copied != entry.size() {
+            return Err(format!(
+                "上游内核解压大小不一致：期望 {}，实际 {copied}",
+                entry.size()
+            ));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("内核解压任务失败: {error}"))?
+}
+
+fn parse_verified_core_build(output: &str, expected_version: &str) -> Result<String, String> {
+    let version_marker = format!("Sub2API {expected_version} ");
+    if !output.contains(&version_marker) {
+        return Err(format!(
+            "下载的内核版本与上游 Release 不一致，期望 {expected_version}"
+        ));
+    }
+    let commit = output
+        .split("commit:")
+        .nth(1)
+        .and_then(|value| value.split([',', ')']).next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "下载的内核未报告真实上游提交号".to_string())?;
+    if commit.len() < 7 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("下载的内核报告了无效的上游提交号".into());
+    }
+    Ok(commit.to_string())
+}
+
+async fn verify_upstream_core_build(path: &Path, expected_version: &str) -> Result<String, String> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = timeout(Duration::from_secs(15), command.output())
+        .await
+        .map_err(|_| "验证上游内核版本超时".to_string())?
+        .map_err(|error| format!("无法执行待验证内核: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("待验证内核退出码异常: {}", output.status));
+    }
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_verified_core_build(&combined, expected_version)
 }
 
 fn emit_core_progress(
@@ -794,7 +946,7 @@ pub fn desktop_backend_stop(supervisor: tauri::State<'_, BackendSupervisor>) -> 
 #[tauri::command]
 pub async fn check_core_update(app: AppHandle) -> Result<CoreUpdateCheck, String> {
     let client = update_client()?;
-    let manifest = fetch_verified_manifest(&client).await?;
+    let manifest = fetch_upstream_manifest(&client).await?;
     let current = current_core_versions(&app);
     let current_version = Version::parse(current.current_version.trim_start_matches('v'))
         .map_err(|error| format!("当前内核版本无效: {error}"))?;
@@ -818,8 +970,14 @@ pub async fn install_core_update(
 ) -> Result<CoreInstallResult, String> {
     let _guard = supervisor.update_lock.lock().await;
     let client = update_client()?;
-    emit_core_progress(&app, "checking", 0, None, "正在验证内核更新清单");
-    let manifest = fetch_verified_manifest(&client).await?;
+    emit_core_progress(
+        &app,
+        "checking",
+        0,
+        None,
+        "正在扫描上游 Release 与 checksums",
+    );
+    let manifest = fetch_upstream_manifest(&client).await?;
     let current = current_core_versions(&app);
     let current_version = Version::parse(current.current_version.trim_start_matches('v'))
         .map_err(|error| format!("当前内核版本无效: {error}"))?;
@@ -834,18 +992,11 @@ pub async fn install_core_update(
         .get(platform_key()?)
         .ok_or_else(|| "更新清单不包含当前 Windows 架构".to_string())?
         .clone();
-    let artifact_url = validate_https_url(&artifact.url)?;
-    let signature_url = validate_https_url(&artifact.signature_url)?;
-    let signature = client
-        .get(signature_url)
-        .send()
-        .await
-        .map_err(|error| format!("无法获取内核签名: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("内核签名返回错误: {error}"))?
-        .text()
-        .await
-        .map_err(|error| format!("无法读取内核签名: {error}"))?;
+    let artifact_url = validate_upstream_asset_url(
+        &artifact.url,
+        &format!("v{}", manifest.version),
+        &artifact.archive_name,
+    )?;
 
     let mut response = client
         .get(artifact_url)
@@ -855,7 +1006,7 @@ pub async fn install_core_update(
         .error_for_status()
         .map_err(|error| format!("内核下载返回错误: {error}"))?;
     let total = response.content_length().or(Some(artifact.size));
-    if total.is_some_and(|value| value > 300 * 1024 * 1024) {
+    if total.is_some_and(|value| value > MAX_CORE_ARCHIVE_BYTES) {
         return Err("内核更新文件超过 300 MB 安全上限".into());
     }
     let pending_path = pending_core_path(&app)?;
@@ -864,10 +1015,13 @@ pub async fn install_core_update(
             .await
             .map_err(|error| format!("无法创建待更新目录: {error}"))?;
     }
-    let temporary = pending_path.with_extension("exe.download");
-    let mut file = tokio::fs::File::create(&temporary)
+    let temporary_archive = pending_path.with_extension("zip.download");
+    let temporary_core = pending_path.with_extension("exe.download");
+    let _ = tokio::fs::remove_file(&temporary_archive).await;
+    let _ = tokio::fs::remove_file(&temporary_core).await;
+    let mut file = tokio::fs::File::create(&temporary_archive)
         .await
-        .map_err(|error| format!("无法创建内核下载文件: {error}"))?;
+        .map_err(|error| format!("无法创建内核压缩包下载文件: {error}"))?;
     let mut downloaded = 0_u64;
     let mut hasher = Sha256::new();
     while let Some(chunk) = response
@@ -876,54 +1030,82 @@ pub async fn install_core_update(
         .map_err(|error| format!("内核下载中断: {error}"))?
     {
         downloaded += chunk.len() as u64;
-        if downloaded > 300 * 1024 * 1024 {
+        if downloaded > MAX_CORE_ARCHIVE_BYTES {
             return Err("内核更新文件超过 300 MB 安全上限".into());
         }
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
             .map_err(|error| format!("无法写入内核下载文件: {error}"))?;
-        emit_core_progress(&app, "downloading", downloaded, total, "正在下载内核更新");
+        emit_core_progress(
+            &app,
+            "downloading",
+            downloaded,
+            total,
+            "正在下载上游 Windows 内核包",
+        );
     }
     file.flush()
         .await
         .map_err(|error| format!("无法刷新内核下载文件: {error}"))?;
     drop(file);
 
-    let actual_sha256 = hex::encode(hasher.finalize());
-    if !actual_sha256.eq_ignore_ascii_case(artifact.sha256.trim()) {
-        let _ = tokio::fs::remove_file(&temporary).await;
+    let archive_sha256 = hex::encode(hasher.finalize());
+    if !archive_sha256.eq_ignore_ascii_case(artifact.sha256.trim()) {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
         return Err(format!(
-            "内核 SHA-256 校验失败：期望 {}，实际 {}",
-            artifact.sha256, actual_sha256
+            "上游压缩包 SHA-256 校验失败：期望 {}，实际 {}",
+            artifact.sha256, archive_sha256
         ));
     }
-    let bytes = tokio::fs::read(&temporary)
-        .await
-        .map_err(|error| format!("无法读取待验证内核: {error}"))?;
-    verify_tauri_signature(&bytes, &signature)?;
+
+    emit_core_progress(
+        &app,
+        "extracting",
+        downloaded,
+        total,
+        "上游 SHA-256 已通过，正在提取 sub2api.exe",
+    );
+    if let Err(error) =
+        extract_upstream_core(temporary_archive.clone(), temporary_core.clone()).await
+    {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(error);
+    }
+    let upstream_commit = match verify_upstream_core_build(&temporary_core, &manifest.version).await
+    {
+        Ok(commit) => commit,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&temporary_archive).await;
+            let _ = tokio::fs::remove_file(&temporary_core).await;
+            return Err(error);
+        }
+    };
+    let core_sha256 = sha256_file(&temporary_core)?;
     emit_core_progress(
         &app,
         "verified",
         downloaded,
         total,
-        "签名与 SHA-256 校验通过",
+        "上游 checksums、内核版本与提交号验证通过",
     );
+    let _ = tokio::fs::remove_file(&temporary_archive).await;
 
     if pending_path.exists() {
         tokio::fs::remove_file(&pending_path)
             .await
             .map_err(|error| format!("无法清理旧的待更新内核: {error}"))?;
     }
-    tokio::fs::rename(&temporary, &pending_path)
+    tokio::fs::rename(&temporary_core, &pending_path)
         .await
         .map_err(|error| format!("无法暂存内核更新: {error}"))?;
     let mut state = load_core_state(&app);
     state.pending = Some(CoreVersionRecord {
         version: manifest.version.clone(),
         algorithm_version: manifest.algorithm_version.clone(),
-        sha256: actual_sha256,
-        upstream_commit: manifest.upstream_commit.clone(),
+        sha256: core_sha256,
+        upstream_commit: upstream_commit.clone(),
     });
     state.last_error = None;
     save_core_state(&app, &state)?;
@@ -937,7 +1119,7 @@ pub async fn install_core_update(
     Ok(CoreInstallResult {
         version: manifest.version,
         algorithm_version: manifest.algorithm_version,
-        upstream_commit: manifest.upstream_commit,
+        upstream_commit,
         restart_required: true,
     })
 }
@@ -977,6 +1159,60 @@ mod tests {
     fn rejects_non_https_update_urls() {
         assert!(validate_https_url("http://example.com/core.exe").is_err());
         assert!(validate_https_url("https://example.com/core.exe").is_ok());
+    }
+
+    #[test]
+    fn accepts_only_fixed_upstream_release_assets() {
+        let accepted = validate_upstream_asset_url(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.171/sub2api_0.1.171_windows_amd64.zip",
+            "v0.1.171",
+            "sub2api_0.1.171_windows_amd64.zip",
+        );
+        assert!(accepted.is_ok());
+        assert!(validate_upstream_asset_url(
+            "https://github.com/example/sub2api/releases/download/v0.1.171/sub2api_0.1.171_windows_amd64.zip",
+            "v0.1.171",
+            "sub2api_0.1.171_windows_amd64.zip",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn builds_windows_manifest_from_upstream_release_and_checksum() {
+        let archive_name = "sub2api_0.1.171_windows_amd64.zip";
+        let archive_url = format!(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.171/{archive_name}"
+        );
+        let manifest = build_upstream_manifest(
+            GitHubRelease {
+                tag_name: "v0.1.171".into(),
+                published_at: "2026-08-04T13:41:32Z".into(),
+                body: "release notes".into(),
+                html_url: "https://github.com/Wei-Shaw/sub2api/releases/tag/v0.1.171".into(),
+                assets: vec![GitHubReleaseAsset {
+                    name: archive_name.into(),
+                    browser_download_url: archive_url,
+                    size: 36_048_475,
+                }],
+            },
+            &format!("{}  {archive_name}", "a".repeat(64)),
+        )
+        .expect("manifest should be valid");
+
+        assert_eq!(manifest.version, "0.1.171");
+        assert_eq!(manifest.algorithm_version, ALGORITHM_VERSION);
+        assert_eq!(manifest.platforms["windows-x86_64"].sha256, "a".repeat(64));
+    }
+
+    #[test]
+    fn parses_version_and_real_commit_from_downloaded_core() {
+        let commit = parse_verified_core_build(
+            "Sub2API 0.1.171 (commit: f0e7a9c7a23a7d02fb159b62fa809621eb0475a6, built: 2026-08-04T13:31:28Z)",
+            "0.1.171",
+        )
+        .expect("version output should be accepted");
+        assert_eq!(commit, "f0e7a9c7a23a7d02fb159b62fa809621eb0475a6");
+        assert!(parse_verified_core_build("Sub2API 0.1.170 (commit: abcdef0)", "0.1.171").is_err());
     }
 
     #[test]

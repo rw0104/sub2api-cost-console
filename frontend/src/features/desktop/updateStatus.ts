@@ -18,17 +18,14 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function describeUpdateFailure(kind: 'desktop' | 'core', error: unknown): string {
+export function describeCoreUpdateFailure(error: unknown): string {
   const detail = errorText(error)
-  const isRelease404 = /404|valid release JSON|releases\/(download|latest)/i.test(detail)
+  const isRelease404 = /404/i.test(detail)
+    && /releases\/(download|latest)|api\.github\.com/i.test(detail)
 
-  if (kind === 'desktop' && isRelease404) {
-    return 'GitHub 网络可达，但当前发布仓库的 latest.json 不允许匿名访问（404）。这不是全局断网；当前桌面版本不受影响，请恢复该 Release 的公网访问或配置公开更新镜像。'
+  if (isRelease404) {
+    return 'Wei-Shaw/sub2api 上游 Release 暂时无法匿名读取。桌面端没有检查本项目版本，当前内核继续运行，请稍后重试。'
   }
 
-  if (kind === 'core' && isRelease404) {
-    return 'GitHub 网络可达，但当前发布仓库的 core-update.json 不允许匿名访问（404）。当前内核继续运行；上游公开仓库可匿名下载，不代表本仓库的受限 Release 也可访问。'
-  }
-
-  return `${kind === 'desktop' ? '桌面更新' : '内核更新'}检查失败：${detail}`
+  return `上游内核检查失败：${detail}`
 }

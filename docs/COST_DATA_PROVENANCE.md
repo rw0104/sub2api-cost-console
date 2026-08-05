@@ -7,7 +7,7 @@
 | 指标 | 来源 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | 请求数、Token | PostgreSQL `usage_logs` | 实测 | 由 Sub2API 完成请求后写入；观察窗口按真实时间范围聚合 |
-| API 账号成本 | `usage_logs.total_cost` / 账号今日统计 | 实测 | 上游模型标准成本口径 |
+| API 账号实算成本 | `COALESCE(account_stats_cost, total_cost) × account_rate_multiplier` / 账号今日统计 | 实测 | 日志含账号定价快照时使用实算值；旧快照缺失时回退标准成本 |
 | API 产出 | `usage_logs.actual_cost` / `user_cost` | 实测 | 用户实际计费金额；值为 `0` 时不会再回退成标准成本 |
 | TTFT、成功、失败、切号 | Ops 监控 | 实测 | Ops 未启用时显示不可用，不再用账号状态冒充请求事件 |
 | 单账号探测耗时 | `/admin/accounts/:id/test` SSE | 实测 | 会发送一次真实最小上游请求，展示端到端完成耗时，并可能产生少量调用成本 |
@@ -16,7 +16,7 @@
 | 预计月采购 | 当前筛选号池的小时采购费率 × 730 | 确定性预测 | 是当前现存账号合计，不是单账号值 |
 | 滚动平均 | 真实时间桶的移动平均 | 派生 | 只用于平滑趋势，界面明确标记为滚动平均 |
 | 剩余预期、月产出预期 | 当前实测速率线性外推 | 预测 | 不是已经发生的账单，不应视为结算值 |
-| 默认套餐成本 | 前端版本化常量 | 默认估算 | 没有自定义采购价时使用；不是采购凭证或官方实时价格 |
+| 默认套餐成本 | 美国官方公开订阅价的版本化快照 | 默认估算 | 没有自定义采购价时使用；用户实际采购账单可逐账号覆盖 |
 | CNY/USD 换算 | 固定 `1 USD = 7.2 CNY` | 默认估算 | 不是实时金融汇率 |
 
 ## 2. 当前号池与历史数据
@@ -36,11 +36,11 @@
 - 最近 1、6、24 小时：按小时聚合。
 - 最近 7 天：按天聚合。
 
-短窗口通过 `time_range` 传入精确范围，不再用“当天日期范围”近似一小时数据。Dashboard snapshot 缓存仍为 30 秒，因此自动刷新与后台聚合不会对数据库造成每秒查询压力。
+短窗口优先通过 `time_range` 传入精确范围，不再用“当天日期范围”近似一小时数据。官方上游内核若尚未支持 `start_time/end_time` 与分钟桶，桌面前端会按日期分页读取真实 `usage_logs`，再按记录时间过滤并聚合；最多读取 25,000 条，超过上限会停止并提示，不会把部分结果冒充完整窗口。Dashboard snapshot 缓存仍为 30 秒。
 
 ## 4. 默认成本与算法版本
 
-采购成本公式仍属于算法版本 `1.0.0`：
+当前采购成本算法版本为 `1.1.0`：
 
 ```text
 hourly_rate = amount / billing_cycle_hours
@@ -48,9 +48,17 @@ elapsed_hours = max(0, now - started_at) / 3,600,000
 accrued_cost = hourly_rate × elapsed_hours
 ```
 
-本次修复只纠正数据范围、分钟聚合、零值处理和界面标注，没有修改采购成本公式，因此不提升算法版本。后续修改默认价格、730 小时、汇率或起算边界时，必须提升 `ALGORITHM_VERSION`。
+`1.1.0` 的美国默认月价快照（核对日期：2026-08-05）：
+
+| 套餐 | 默认值 | 官方依据与边界 |
+| --- | ---: | --- |
+| Plus | USD 20 / 月 | [OpenAI Plus 官方说明](https://help.openai.com/en/articles/6950777-chatgpt-plus) |
+| Pro | USD 100 / 月起 | [OpenAI 发布说明](https://help.openai.com/en/articles/6825453-chatgpt-release-notes)；最高用量方案可为 USD 200，用户应按实际账单覆盖 |
+| Business / 旧 Team | USD 25 / 席位 / 月 | [OpenAI Business 官方说明](https://help.openai.com/en/articles/8792828-what-is-chatgpt-business)；年付折算为 USD 20，至少 2 席，均应按实际采购覆盖 |
+| 美国 K-12 教师 | USD 0 | [OpenAI Teachers 官方说明](https://help.openai.com/en/articles/12844995-chatgpt-for-teachers)；仅适用于通过验证且在官方免费期内的美国 K-12 教育工作者 |
+
+这些值是首次识别套餐时的默认配置，不是自动扣费接口，也不会覆盖用户保存的自定义成本。固定 `1 USD = 7.2 CNY` 仍是跨币种汇总假设，不是实时汇率。后续修改默认价格、730 小时、汇率或起算边界时，必须提升 `ALGORITHM_VERSION`。
 
 ## 5. 不属于生产数据的测试路径
 
 上游内核保留一个仅供隔离 UI 测试数据集使用的 `synthetic_ui_test` 标记。只有账号 `extra.synthetic_ui_test === true` 时才会走该测试分支；普通用户账号不会自动获得此标记，成本控制台也不会创建这种账号。
-

@@ -27,17 +27,20 @@ export const COST_ALGORITHM_MANIFEST = Object.freeze({
   version: COST_ALGORITHM_VERSION,
   monthly_hours: 730,
   cny_per_usd: CNY_PER_USD,
+  default_market: 'US',
+  default_price_currency: 'USD',
+  default_price_checked_at: '2026-08-05',
   accrual: 'linear_elapsed_milliseconds',
   start_boundary: 'account_created_at',
 })
 
-export const DEFAULT_MONTHLY_PRICES_CNY: Readonly<Record<CostPlan, number>> = {
+export const DEFAULT_MONTHLY_PRICES_USD: Readonly<Record<CostPlan, number>> = {
   free: 0,
-  plus: 140,
-  pro: 1400,
-  team: 210,
-  business: 210,
-  k12: 30,
+  plus: 20,
+  pro: 100,
+  team: 25,
+  business: 25,
+  k12: 0,
   unknown: 0,
 }
 
@@ -180,8 +183,8 @@ export function resolveCostProfile(account: CostAccount): CostProfile {
 
   const plan = inferPlan(account)
   return {
-    amount: DEFAULT_MONTHLY_PRICES_CNY[plan],
-    currency: 'CNY',
+    amount: DEFAULT_MONTHLY_PRICES_USD[plan],
+    currency: 'USD',
     billing_cycle: 'monthly',
     started_at: account.created_at,
     source: 'default',

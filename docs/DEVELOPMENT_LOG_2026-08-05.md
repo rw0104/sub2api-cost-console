@@ -1,9 +1,9 @@
 # Sub2API Cost Console 近期开发日志
 
 > 记录周期：2026-08-04 至 2026-08-05  
-> 桌面版本：`0.2.4`
+> 桌面版本：`0.2.5`
 > 受管内核版本：`0.1.170-21-g825ca7b1`  
-> 成本算法版本：`1.0.0`  
+> 成本算法版本：`1.1.0`
 > 上游基线提交：`825ca7b1fc9335f904bc077f051de815fb61e47f`  
 > 上游仓库：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`renqw2023/sub2api-cost-console`](https://github.com/renqw2023/sub2api-cost-console)
@@ -480,6 +480,48 @@ HTTP 422: Actions has been disabled for this user.
 - 移除伪“综合评分历史曲线”和账号状态推导的“恢复次数”，改为真实请求量趋势与不可用标记。
 - 用户实际计费为零时保留真实零值，不再用标准成本回退覆盖。
 - 新增 `docs/COST_DATA_PROVENANCE.md`，逐项记录实测、计算、预测和默认估算的来源。
+
+## 18. 0.2.5 单通道上游内核更新与安装器改造
+
+### 18.1 更新目标边界
+
+- 保留桌面右下角“版本与更新”入口，以及启动自动扫描、定时扫描和手动“检查更新”按钮。
+- 取消桌面客户端对本项目 `latest.json` 的访问；桌面版本只显示本机安装值，通过新的 NSIS 安装包升级。
+- 桌面模式下，上游原生 `VersionBadge` 退化为静态版本文本，不再调用原生 `check-updates/update/rollback`；唯一交互入口仍是右下角“版本与更新”。
+- 唯一在线检查目标改为公开的 `Wei-Shaw/sub2api` Releases API，因此用户不需要 GitHub 账号，也不受 `renqw2023` 账号公开访问限制影响。
+- 启动约 2 秒后自动扫描，此后每 6 小时扫描；发现新版后等待用户确认下载，避免在工作期间强制重启。
+
+### 18.2 官方上游内核验证链
+
+1. 读取 `https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest`。
+2. 只接受严格匹配 `Wei-Shaw/sub2api/releases/download/<tag>/...` 的 HTTPS 资产。
+3. 下载官方 `checksums.txt`，校验 Windows x64 ZIP 的 SHA-256。
+4. ZIP 只提取根目录的 `sub2api.exe`，并限制压缩包和可执行文件大小。
+5. 执行待更新内核的 `--version`，核对 Release 版本和十六进制真实提交号。
+6. 将文件写入 pending，安全停止当前内核并重启桌面；新内核健康检查失败时恢复 previous。
+
+这条流程不执行 `git pull`，不向桌面程序写入 GitHub Token，也不再依赖本项目自定义 `core-update.json`。
+
+### 18.3 官方内核统计兼容
+
+官方 `v0.1.171` Dashboard snapshot 尚不支持本控制台使用的分钟级精确窗口。为了避免内核升级后把“最近 5 分钟”错误显示成整天数据：
+
+- 响应含 `start_time/end_time` 时继续使用内核聚合结果。
+- 响应缺少精确时间边界时，分页读取真实 `/admin/usage` 日志并在客户端按时间戳过滤、按分钟/小时/天聚合。
+- 账号实算成本按 `COALESCE(account_stats_cost, total_cost) × account_rate_multiplier` 计算。
+- 单次最多读取 25,000 条；超过上限显示错误，不显示不完整成本。
+
+### 18.4 美国官方默认价格快照
+
+成本算法升级为 `1.1.0`。默认值为 Plus USD 20/月、Pro USD 100/月起、Business/旧 Team USD 25/席位/月、符合条件的美国 K-12 教师为 USD 0。年付、Pro USD 200 档、席位数量或非免费 K-12 情况由用户按实际账单覆盖；已保存的自定义成本不会被默认值覆盖。
+
+### 18.5 Windows 安装体验
+
+- Tauri NSIS 使用 `currentUser` 安装模式，不要求管理员权限。
+- 原生安装向导显示安装目录页，用户可选择目标目录。
+- 安装完成页提供“创建桌面快捷方式”选项。
+- `createUpdaterArtifacts=false`，本地构建不再要求 Tauri updater 私钥；安装包若未配置 Authenticode，Windows 仍可能显示未知发布者提示。
+- 用户可以直接分享 `Sub2API Cost Console_0.2.5_x64-setup.exe`，不需要分享源码；分发时应同时提供 SHA-256，并遵守 LGPL 的许可证和源代码提供义务。
 
 ---
 

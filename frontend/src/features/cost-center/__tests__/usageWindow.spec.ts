@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest'
+import type { AdminUsageLog } from '@/types'
+import { aggregateUsageWindow, localDateParameter, usageWindowBounds } from '../usageWindow'
+
+function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
+  return {
+    id: 1,
+    user_id: 1,
+    api_key_id: 1,
+    account_id: 1,
+    request_id: 'req-1',
+    model: 'gpt-5',
+    group_id: 1,
+    subscription_id: null,
+    input_tokens: 10,
+    output_tokens: 5,
+    cache_creation_tokens: 2,
+    cache_read_tokens: 3,
+    cache_creation_5m_tokens: 0,
+    cache_creation_1h_tokens: 0,
+    input_cost: 0.1,
+    output_cost: 0.2,
+    cache_creation_cost: 0.01,
+    cache_read_cost: 0.01,
+    total_cost: 0.32,
+    actual_cost: 0.4,
+    rate_multiplier: 1,
+    long_context_billing_applied: false,
+    billing_type: 0,
+    stream: false,
+    duration_ms: 100,
+    first_token_ms: 50,
+    image_count: 0,
+    image_size: null,
+    image_input_size: null,
+    image_output_size: null,
+    image_size_source: null,
+    image_size_breakdown: null,
+    image_input_tokens: 0,
+    image_input_cost: 0,
+    image_output_tokens: 0,
+    image_output_cost: 0,
+    user_agent: 'test',
+    cache_ttl_overridden: false,
+    created_at: '2026-08-05T12:03:20.000Z',
+    ...overrides,
+  }
+}
+
+describe('official core usage-log compatibility aggregation', () => {
+  it('keeps only records inside the requested rolling window', () => {
+    const end = new Date('2026-08-05T12:05:00.000Z')
+    const { start } = usageWindowBounds('5m', end)
+    const result = aggregateUsageWindow([
+      usage({ created_at: '2026-08-05T12:03:20.000Z' }),
+      usage({ id: 2, created_at: '2026-08-05T11:59:59.000Z' }),
+    ], '5m', start, end)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ requests: 1, total_tokens: 20, cost: 0.32, actual_cost: 0.4 })
+  })
+
+  it('calculates real account cost from the stored pricing snapshot and multiplier', () => {
+    const result = aggregateUsageWindow([
+      usage({ account_stats_cost: 0.25, account_rate_multiplier: 1.2 }),
+      usage({ id: 2, account_stats_cost: null, total_cost: 0.5, account_rate_multiplier: 2 }),
+    ], '30m', new Date('2026-08-05T11:35:00.000Z'), new Date('2026-08-05T12:05:00.000Z'))
+
+    expect(result[0].account_cost).toBeCloseTo(1.3)
+  })
+
+  it('formats local calendar dates for the upstream date-only API', () => {
+    const value = new Date(2026, 7, 5, 23, 59, 0)
+    expect(localDateParameter(value)).toBe('2026-08-05')
+  })
+})

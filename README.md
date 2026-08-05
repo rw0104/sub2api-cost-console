@@ -61,23 +61,25 @@ accrued_cost = hourly_rate × elapsed_hours
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
-| Desktop | `0.2.4` | Tauri 2 桌面壳、Vue 界面和安装结构 |
+| Desktop | `0.2.5` | Tauri 2 桌面壳、Vue 界面和安装结构 |
 | Core | `0.1.170-21-g825ca7b1` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `825ca7b1fc9335f904bc077f051de815fb61e47f`） |
-| Algorithm | `1.0.0` | 成本折算、起算边界和累计规则 |
+| Algorithm | `1.1.0` | 成本折算、起算边界、美国官方默认套餐价和累计规则 |
 
 每条成本档案记录其算法版本。旧数据如果没有版本会显示为 `legacy-unversioned`，不会被静默归类为当前算法。
 
-> 版本边界：`Core` 显示当前桌面包实际绑定的上游 Sub2API 基线，不追随上游最新发布自动变更；`Algorithm` 是本项目成本规则版本，不冒充上游版本。后续在版本面板手动执行内核更新时，清单中的上游版本和提交会一并显示并写入本地状态。
+> 版本边界：`Desktop` 只显示本机安装版本，不参与在线检查；`Core` 显示当前实际运行的 Sub2API 版本和真实提交号；`Algorithm` 是本项目成本规则版本，不冒充上游版本。版本面板只扫描公开的 `Wei-Shaw/sub2api` Release。
 
-### 双通道安全更新
+### 单通道上游内核更新
 
-- **桌面更新**：启动后检查，并每 6 小时检查一次 GitHub Releases 的 `latest.json`。
-- **内核更新**：桌面壳保持不变，只下载新的受管 Go 内核，校验完成后重启桌面端并切换内核。
-- **完整性校验**：更新清单、内核和安装包提供签名及 SHA-256 校验文件。
+- **桌面版本不联网检查**：安装包版本只在本机展示；当前版本不会请求本项目仓库的 `latest.json`，桌面升级通过新的安装包完成。
+- **单一更新入口**：桌面模式下，上游原生版本徽标只显示静态版本，不触发原生整包更新；所有内核检查和回滚都从右下角“版本与更新”完成。
+- **自动扫描上游**：启动约 2 秒后扫描一次，此后每 6 小时扫描一次；“检查更新”按钮也只查询公开的 `Wei-Shaw/sub2api` Release API，不需要 GitHub 账号。
+- **用户确认安装**：发现新版后由用户点击下载，避免工作中被强制重启。桌面壳保持不变，只切换 Go 内核。
+- **完整性校验**：只接受固定上游仓库的 Windows x64 资产，校验上游 `checksums.txt`、SHA-256、内核 `--version` 和真实提交号。
 - **失败回滚**：保留上一版内核；新内核必须在 30 秒内通过健康检查，否则自动恢复上一版本。
-- **发布原子性**：版本化资产先上传，签名清单最后替换，客户端只会看到完整的旧版本或新版本。
+- **统计兼容**：如果官方上游内核不支持分钟级 Dashboard 参数，控制台从真实 `usage_logs` 聚合精确窗口；超过安全行数上限时明确报错，不显示不完整结果。
 
-更新程序不会对源码目录执行 `git pull`，也不会运行未签名的 Release 资产。
+更新程序不会对源码目录执行 `git pull`，不会读取本项目受限 Release，也不会执行非 `Wei-Shaw/sub2api` 的资产。
 
 ## 系统架构
 
@@ -90,8 +92,8 @@ flowchart LR
     Core --> PG["PostgreSQL"]
     Core --> Redis["Redis / Valkey"]
     Core --> Providers["Codex / Grok / 其他上游"]
-    Releases["GitHub Releases"] -->|签名桌面更新| Desktop
-    Releases -->|签名内核更新| Core
+    Upstream["Wei-Shaw/sub2api Releases"] -->|官方 checksums + SHA-256| Core
+    Installer["手动分发的新安装包"] -->|桌面版本升级| Desktop
 ```
 
 | 层级 | 技术 | 职责 |
@@ -100,7 +102,7 @@ flowchart LR
 | 前端 | Vue 3、TypeScript、Pinia、Chart.js | 三套面板、成本模型、图表和版本面板 |
 | 后端 | Go、Gin、Ent | 鉴权、账号、调度、统计和 API 网关 |
 | 数据层 | PostgreSQL、Redis/Valkey | 持久化、缓存和运行状态 |
-| 发布 | GitHub Actions、Tauri updater | Windows NSIS、签名、校验和 Releases |
+| 发布 | Tauri NSIS、上游 Release API | Windows 安装包；官方上游内核扫描、校验和回滚 |
 
 ## 安装与使用
 
@@ -108,13 +110,14 @@ flowchart LR
 
 1. 打开 [Releases](https://github.com/renqw2023/sub2api-cost-console/releases/latest)。
 2. 下载最新的 Windows NSIS 安装包，并使用同一 Release 中的 `INSTALLER_SHA256SUMS.txt` 核对文件。
-3. 安装并启动 Sub2API Cost Console。
-4. 首次启动先选择数据服务方式：
+3. 安装向导允许选择安装目录，并在完成页选择是否创建桌面快捷方式；安装范围为当前 Windows 用户，不要求管理员权限。
+4. 安装并启动 Sub2API Cost Console。
+5. 首次启动先选择数据服务方式：
    - **快速安装（推荐新用户）**：需要 Docker Desktop 已安装且引擎正在运行。程序自动创建固定版本的 PostgreSQL 与 Valkey 容器、随机密码和独立数据卷，只映射到 `127.0.0.1:15432` 与 `127.0.0.1:16379`。
    - **高级连接**：连接已有的本地、Docker、NAS、服务器或云端 PostgreSQL 15+ 与 Redis 7+/Valkey。已经有数据库容器的用户应选择此模式，程序不会覆盖或删除现有数据。
-5. 如果未检测到可用 Docker、Docker 未启动、保留端口冲突或发现同名容器，快速安装会停止并明确引导到高级连接；程序不会静默安装 Windows 服务或不受支持的 Valkey 替代品。
-6. 在安装向导中完成连接验证和初始管理员配置。
-7. 登录后进入成本控制台；新增上游账号后，成本从账号加入时间开始累计。
+6. 如果未检测到可用 Docker、Docker 未启动、保留端口冲突或发现同名容器，快速安装会停止并明确引导到高级连接；程序不会静默安装 Windows 服务或不受支持的 Valkey 替代品。
+7. 在首次启动向导中完成连接验证和初始管理员配置。
+8. 登录后进入成本控制台；新增上游账号后，成本从账号加入时间开始累计。
 
 快速安装下载并固定使用 `postgres:16.14-alpine` 与 `valkey/valkey:8.1.9-alpine`。Docker 镜像、容器和数据卷独立于桌面程序升级；卸载桌面程序不会自动删除业务数据。
 
@@ -193,19 +196,15 @@ go test ./...
 
 ## 发布流程
 
-仓库包含两个 Windows 发布工作流：
+当前 `0.2.5` 关闭桌面端在线自更新。可直接把 NSIS 安装包及其 SHA-256 校验值分享给用户，不需要分享源码；用户运行安装包时可以选择安装位置和桌面快捷方式。
 
-- `.github/workflows/desktop-release.yml`：构建桌面安装包、更新清单、安装器校验文件以及配套内核资产。
-- `.github/workflows/core-release.yml`：只发布受管内核，不重新安装桌面壳；安装内核后桌面端自动重启。
+仓库仍保留历史发布脚本和工作流，供 GitHub 账号恢复后生成 Release 资产，但桌面客户端不会读取这些桌面更新清单。内核更新始终直接读取官方上游：
 
-发布所需私钥只能存储在 GitHub Actions Secrets：
+- `https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest`
+- 对应 Release 的 `checksums.txt`
+- 对应 Windows x64 `sub2api_<version>_windows_amd64.zip`
 
-```text
-TAURI_SIGNING_PRIVATE_KEY
-TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-```
-
-仓库和 CI 日志中只能出现公钥。Tauri/Minisign 更新签名不等同于 Windows Authenticode 代码签名；如需消除 Windows 发布者警告，还应单独配置受信任的 Authenticode 证书。
+`createUpdaterArtifacts` 当前为 `false`，所以本地构建不需要 Tauri updater 私钥。它不等同于 Windows Authenticode 代码签名；如需消除 Windows 发布者警告，仍应单独配置受信任的 Authenticode 证书。
 
 ## 与上游同步
 

@@ -31,8 +31,9 @@
         <label for="cost-plan">识别套餐</label>
         <div id="cost-plan" class="cost-readonly-row">
           <span>{{ planLabel }}</span>
-          <button type="button" class="cost-text-button" @click="applyPlanDefault">应用套餐默认价</button>
+          <button type="button" class="cost-text-button" @click="applyPlanDefault">应用美国官方默认价</button>
         </div>
+        <small class="cost-official-price-note">Plus $20/月；Pro $100 起；Business/旧 Team $25/席位/月；美国 K–12 已验证教育者当前免费。Pro 与年付方案请按实际账单覆盖。</small>
       </div>
 
       <div class="cost-form-grid">
@@ -95,7 +96,7 @@ import { computed, reactive, watch } from 'vue'
 import { Clock3, LoaderCircle, Save, X } from '@lucide/vue'
 import type { Account } from '@/types'
 import {
-  DEFAULT_MONTHLY_PRICES_CNY,
+  DEFAULT_MONTHLY_PRICES_USD,
   COST_ALGORITHM_VERSION,
   accruedCost,
   elapsedHours,
@@ -180,8 +181,8 @@ function maxStartTime(requested: string, joinedAt: string): string {
 }
 
 function applyPlanDefault() {
-  form.amount = DEFAULT_MONTHLY_PRICES_CNY[plan.value]
-  form.currency = 'CNY'
+  form.amount = DEFAULT_MONTHLY_PRICES_USD[plan.value]
+  form.currency = 'USD'
   form.billing_cycle = 'monthly'
   if (props.account) form.started_at = toLocalInput(props.account.created_at)
 }
@@ -245,6 +246,7 @@ function submit() {
 .cost-form-field input, .cost-form-field select { width: 100%; height: 40px; padding: 0 11px; color: #eef2e9; background: #171c17; border: 1px solid #3a443b; border-radius: 9px; outline: none; }
 .cost-form-field input:focus, .cost-form-field select:focus { border-color: #b9e55a; box-shadow: 0 0 0 1px #b9e55a; }
 .cost-form-field small { display: block; margin-top: 7px; color: #727e74; line-height: 1.5; }
+.cost-form-field .cost-official-price-note { color: #8f9b91; }
 .cost-readonly-row { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; background: #171c17; border: 1px solid #3a443b; border-radius: 9px; }
 .cost-readonly-row span { color: #d9dfd5; font-family: 'Cascadia Mono', monospace; }
 .cost-text-button { padding: 4px; color: #b9e55a; background: transparent; border: 0; font-size: 11px; }

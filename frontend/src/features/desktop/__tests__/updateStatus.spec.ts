@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeUpdateFailure, resolveUpdateCheckState } from '../updateStatus'
+import { describeCoreUpdateFailure, resolveUpdateCheckState } from '../updateStatus'
 
 describe('desktop update status', () => {
   it('does not report current when every remote update check failed', () => {
@@ -20,15 +20,9 @@ describe('desktop update status', () => {
     })).toBe('current')
   })
 
-  it('turns GitHub release 404 responses into an actionable desktop message', () => {
-    expect(describeUpdateFailure(
-      'desktop',
-      'Could not fetch a valid release JSON from the remote',
-    )).toContain('latest.json')
-
-    expect(describeUpdateFailure(
-      'core',
-      'HTTP status client error (404 Not Found) for url (https://github.com/example/core-update.json)',
-    )).toContain('GitHub 网络可达')
+  it('turns an upstream release 404 into an actionable core-only message', () => {
+    expect(describeCoreUpdateFailure(
+      'HTTP status client error (404 Not Found) for url (https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest)',
+    )).toContain('Wei-Shaw/sub2api')
   })
 })

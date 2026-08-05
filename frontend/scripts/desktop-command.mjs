@@ -26,14 +26,4 @@ function run(command, args) {
 run('corepack', ['pnpm@9', 'build'])
 run('node', [resolve(scriptDirectory, 'prepare-desktop-sidecar.mjs')])
 const tauriArgs = [mode]
-const desktopUpdateEndpoint = process.env.SUB2API_DESKTOP_UPDATE_ENDPOINT?.trim()
-if (desktopUpdateEndpoint) {
-  tauriArgs.push('--config', JSON.stringify({
-    plugins: {
-      updater: {
-        endpoints: [desktopUpdateEndpoint],
-      },
-    },
-  }))
-}
 run('corepack', ['pnpm@9', 'exec', 'tauri', ...tauriArgs])

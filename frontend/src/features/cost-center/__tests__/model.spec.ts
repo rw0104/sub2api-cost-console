@@ -48,10 +48,11 @@ describe('cost center model', () => {
     const resolved = resolveCostProfile(account({ extra: { subscription_tier: 'plus' } }))
     const afterOneDay = '2026-08-02T00:00:00.000Z'
 
-    expect(resolved.amount).toBe(140)
+    expect(resolved.amount).toBe(20)
+    expect(resolved.currency).toBe('USD')
     expect(elapsedHours(resolved.started_at, afterOneDay)).toBe(24)
-    expect(hourlyRate(resolved)).toBeCloseTo(140 / 730)
-    expect(accruedCost(resolved, afterOneDay)).toBeCloseTo((140 * 24) / 730)
+    expect(hourlyRate(resolved)).toBeCloseTo(20 / 730)
+    expect(accruedCost(resolved, afterOneDay)).toBeCloseTo((20 * 24) / 730)
   })
 
   it('does not accrue recurring or one-time cost before the start', () => {
@@ -124,8 +125,14 @@ describe('cost center model', () => {
   it('falls back through credential and parent plan fields', () => {
     expect(inferPlan(account({ credentials: { subscription_tier: 'ChatGPT Pro' } }))).toBe('pro')
     expect(inferPlan(account({ parent_plan_type: 'business' }))).toBe('business')
-    expect(resolveCostProfile(account({ credentials: { plan_type: 'team' } })).amount).toBe(210)
-    expect(resolveCostProfile(account({ parent_plan_type: 'k-12' })).amount).toBe(30)
+    expect(resolveCostProfile(account({ credentials: { plan_type: 'team' } }))).toMatchObject({ amount: 25, currency: 'USD' })
+    expect(resolveCostProfile(account({ parent_plan_type: 'k-12' }))).toMatchObject({ amount: 0, currency: 'USD' })
+  })
+
+  it('uses current US official monthly list-price defaults while allowing custom overrides', () => {
+    expect(resolveCostProfile(account({ extra: { plan_type: 'plus' } }))).toMatchObject({ amount: 20, currency: 'USD' })
+    expect(resolveCostProfile(account({ extra: { plan_type: 'pro' } }))).toMatchObject({ amount: 100, currency: 'USD' })
+    expect(resolveCostProfile(account({ extra: { plan_type: 'business' } }))).toMatchObject({ amount: 25, currency: 'USD' })
   })
 
   it('converts currencies using the fixed 7.2 CNY per USD rate', () => {

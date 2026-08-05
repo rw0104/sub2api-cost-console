@@ -70,9 +70,9 @@
 
           <div class="cost-provenance-strip" aria-label="成本数据口径">
             <div><CircleCheck :size="15" /><strong>实测数据</strong><span>请求、Token 与 API 金额来自 usage_logs / Ops</span></div>
-            <div><Calculator :size="15" /><strong>确定性计算</strong><span>采购档案 + 加入时间；汇率固定 1 USD = 7.2 CNY</span></div>
+            <div><Calculator :size="15" /><strong>确定性计算</strong><span>采购档案 + 加入时间；跨币种汇总暂按 1 USD = 7.2 CNY 估算</span></div>
             <div><TrendingUp :size="15" /><strong>预测数据</strong><span>滚动平均和剩余预期会明确标记为推导值</span></div>
-            <div v-if="defaultCostProfileCount" class="is-warning"><TriangleAlert :size="15" /><strong>{{ defaultCostProfileCount }} 个账号使用默认价</strong><span>默认套餐价格不是采购凭证，请按实际成交价配置</span></div>
+            <div v-if="defaultCostProfileCount" class="is-warning"><TriangleAlert :size="15" /><strong>{{ defaultCostProfileCount }} 个账号使用美国官方默认价</strong><span>Plus $20、Pro $100 起、Business/Team $25；实际账单可逐账号覆盖</span></div>
           </div>
 
           <div class="cost-assets-row">
@@ -92,7 +92,7 @@
               <MetricCell label="当前 API 产出速率" :value="formatUsd(apiOutputHourlyUsd, 2)" note="API 美元 / 小时" accent="gold" />
               <MetricCell label="一小时滚动产出" :value="formatUsd(rollingOutputUsd, 2)" note="API 美元 / 小时" accent="gold" />
               <MetricCell label="当前采购成本" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="号码采购折算" accent="blue" />
-              <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" note="采购 + API 成本" accent="blue" />
+              <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" accent="blue" />
               <MetricCell label="今日 API 账号成本" :value="formatUsd(todayAccountCostUsd, 3)" note="上游账号实际成本" />
               <MetricCell label="最近窗口 API 产出" :value="formatUsd(windowActualOutputUsd, 3)" note="用户实际计费" />
               <MetricCell label="预计月度采购" :value="formatCny(monthlyProcurementForecastCny, 2)" note="当前号码结构 × 730h" />
@@ -111,11 +111,11 @@
                 value-prefix="$"
               />
             </ChartPanel>
-            <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · API 实测成本 / 当前账号采购费率`">
+            <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购费率`">
               <CostLineChart
                 :labels="trendLabels"
                 :series="[
-                  { label: 'API 账号成本', data: trendStandardCost, color: '#d8b94d' },
+                  { label: apiCostBasisLabel, data: trendStandardCost, color: '#d8b94d' },
                   { label: '采购基线', data: procurementBaseline, color: '#7eb6d8', dashed: true },
                 ]"
                 value-prefix="¥"
@@ -395,7 +395,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, stats, trend, opsOverview, opsTrend, probes, loading, saving, error, lastUpdated,
+  accounts, stats, trend, trendUsesAccountCost, opsOverview, opsTrend, probes, loading, saving, error, lastUpdated,
 } = data
 
 const workspaceItems = [
@@ -467,7 +467,8 @@ const dayElapsedHours = computed(() => Math.max(1 / 60, now.value.getHours() + n
 const selectedRangeHours = computed(() => ({ '5m': 5 / 60, '30m': .5, '1h': 1, '6h': 6, '24h': 24, '7d': 168 })[range.value])
 const trendBucketHours = computed(() => range.value === '5m' || range.value === '30m' ? 1 / 60 : range.value === '7d' ? 24 : 1)
 const windowActualOutputUsd = computed(() => trend.value.reduce((sum, point) => sum + Number(point.actual_cost || 0), 0))
-const windowAccountCostUsd = computed(() => trend.value.reduce((sum, point) => sum + Number(point.cost || 0), 0))
+const windowAccountCostUsd = computed(() => trend.value.reduce((sum, point) => sum + Number(point.account_cost ?? point.cost ?? 0), 0))
+const apiCostBasisLabel = computed(() => trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
 const apiOutputHourlyUsd = computed(() => windowActualOutputUsd.value / selectedRangeHours.value)
 const combinedHourlyCny = computed(() => procurementHourlyCny.value + windowAccountCostUsd.value * 7.2 / selectedRangeHours.value)
 const todayRequests = computed(() => Number(stats.value?.today_requests ?? accountLedgers.value.reduce((sum, row) => sum + row.today.requests, 0)))
@@ -476,7 +477,7 @@ const trendLabels = computed(() => trend.value.map((point) => formatTrendLabel(p
 const trendActualCost = computed(() => trend.value.map((point) => Number(point.actual_cost || 0) / trendBucketHours.value))
 const rollingTrendActualCost = computed(() => movingAverage(trendActualCost.value, range.value === '7d' ? 3 : 4))
 const rollingOutputUsd = computed(() => rollingTrendActualCost.value.at(-1) ?? apiOutputHourlyUsd.value)
-const trendStandardCost = computed(() => trend.value.map((point) => Number(point.cost || 0) * 7.2 / trendBucketHours.value))
+const trendStandardCost = computed(() => trend.value.map((point) => Number(point.account_cost ?? point.cost ?? 0) * 7.2 / trendBucketHours.value))
 const procurementBaseline = computed(() => trend.value.map(() => procurementHourlyCny.value))
 const qualityTrendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trendLabels.value)
 const requestVolumeTrend = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => Number(point.request_count || 0)) : trend.value.map((point) => Number(point.requests || 0)))

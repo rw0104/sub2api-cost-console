@@ -3,12 +3,18 @@ import { adminAPI } from '@/api/admin'
 import type { OpsDashboardOverview, OpsThroughputTrendPoint } from '@/api/admin/ops'
 import type {
   Account,
+  AdminUsageLog,
   DashboardStats,
   ModelStat,
-  TrendDataPoint,
   WindowStats,
 } from '@/types'
 import type { CostProfile } from './model'
+import {
+  aggregateUsageWindow,
+  localDateParameter,
+  usageWindowBounds,
+  type CostTrendDataPoint,
+} from './usageWindow'
 
 export type CostCenterRange = '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
 
@@ -18,6 +24,9 @@ export interface AccountProbeState {
   latency_ms?: number
   message?: string
 }
+
+const USAGE_PAGE_SIZE = 1000
+const MAX_USAGE_PAGES = 25
 
 export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
   time_range: CostCenterRange
@@ -37,7 +46,8 @@ export function useCostCenterData() {
   const accounts = ref<Account[]>([])
   const todayStats = ref<Record<string, WindowStats>>({})
   const stats = ref<DashboardStats | null>(null)
-  const trend = ref<TrendDataPoint[]>([])
+  const trend = ref<CostTrendDataPoint[]>([])
+  const trendUsesAccountCost = ref(false)
   const models = ref<ModelStat[]>([])
   const opsOverview = ref<OpsDashboardOverview | null>(null)
   const opsTrend = ref<OpsThroughputTrendPoint[]>([])
@@ -51,6 +61,39 @@ export function useCostCenterData() {
   const accountStats = computed(() => (account: Account): WindowStats => {
     return todayStats.value[String(account.id)] ?? emptyTodayStats()
   })
+
+  async function loadUsageLogCompatibilityTrend(range: CostCenterRange): Promise<CostTrendDataPoint[]> {
+    const { start, end } = usageWindowBounds(range)
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const logs: AdminUsageLog[] = []
+    let reachedWindowStart = false
+
+    for (let page = 1; page <= MAX_USAGE_PAGES; page += 1) {
+      const response = await adminAPI.usage.list({
+        page,
+        page_size: USAGE_PAGE_SIZE,
+        start_date: localDateParameter(start),
+        end_date: localDateParameter(end),
+        timezone,
+        sort_by: 'created_at',
+        sort_order: 'desc',
+        exact_total: false,
+      })
+      const items = response.items ?? []
+      logs.push(...items)
+      const oldest = items.at(-1)
+      const oldestTime = oldest ? new Date(oldest.created_at).getTime() : Number.NEGATIVE_INFINITY
+      if (items.length < USAGE_PAGE_SIZE || oldestTime < start.getTime()) {
+        reachedWindowStart = true
+        break
+      }
+    }
+
+    if (!reachedWindowStart) {
+      throw new Error('所选窗口超过 25,000 条 usage_logs，已停止聚合以避免显示不完整成本')
+    }
+    return aggregateUsageWindow(logs, range, start, end)
+  }
 
   async function reload(range: CostCenterRange = '1h') {
     const sequence = ++requestSequence
@@ -77,6 +120,11 @@ export function useCostCenterData() {
 
     if (sequence !== requestSequence) return
 
+    const compatibilityTrend = dashboardResult.status === 'fulfilled'
+      && (!dashboardResult.value.start_time || !dashboardResult.value.end_time)
+      ? loadUsageLogCompatibilityTrend(range)
+      : null
+
     if (accountResult.status === 'fulfilled') {
       accounts.value = accountResult.value.items ?? []
       const ids = accounts.value.map((account) => account.id)
@@ -96,13 +144,32 @@ export function useCostCenterData() {
       todayStats.value = {}
     }
 
+    if (sequence !== requestSequence) return
+
     if (dashboardResult.status === 'fulfilled') {
       stats.value = dashboardResult.value.stats ?? null
-      trend.value = dashboardResult.value.trend ?? []
+      if (compatibilityTrend) {
+        try {
+          trend.value = await compatibilityTrend
+          if (sequence !== requestSequence) return
+          trendUsesAccountCost.value = true
+        } catch (compatibilityError) {
+          console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
+          trend.value = []
+          trendUsesAccountCost.value = false
+          error.value = compatibilityError instanceof Error
+            ? compatibilityError.message
+            : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
+        }
+      } else {
+        trend.value = dashboardResult.value.trend ?? []
+        trendUsesAccountCost.value = false
+      }
       models.value = dashboardResult.value.models ?? []
     } else {
       stats.value = null
       trend.value = []
+      trendUsesAccountCost.value = false
       models.value = []
     }
 
@@ -179,6 +246,7 @@ export function useCostCenterData() {
     todayStats,
     stats,
     trend,
+    trendUsesAccountCost,
     models,
     opsOverview,
     opsTrend,

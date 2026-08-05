@@ -8,8 +8,6 @@ fn main() {
     println!("cargo:rerun-if-changed=../CORE_VERSION");
     println!("cargo:rerun-if-changed=../ALGORITHM_VERSION");
     println!("cargo:rerun-if-changed=../UPSTREAM_SUB2API_COMMIT");
-    println!("cargo:rerun-if-env-changed=SUB2API_CORE_MANIFEST_URL");
-    println!("cargo:rerun-if-env-changed=SUB2API_CORE_MANIFEST_SIGNATURE_URL");
     println!(
         "cargo:rustc-env=SUB2API_CORE_VERSION={}",
         core_version.trim()

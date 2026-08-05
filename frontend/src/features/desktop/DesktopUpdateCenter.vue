@@ -29,7 +29,7 @@
       </dl>
 
       <p class="desktop-update__managed-note">
-        桌面版内核与成本算法只从这里更新；上游原生页面的整包更新已关闭，避免绕过签名校验和桌面回滚机制。
+        桌面端版本只随安装包发布，不再连接本项目 GitHub 更新源。这里会在启动后和每 6 小时自动扫描 Wei-Shaw/sub2api；发现新版后由你确认安装，并保留校验、重启和回滚保护。
       </p>
 
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
@@ -40,7 +40,7 @@
       <section v-if="coreUpdate?.available" class="desktop-update__release desktop-update__release--primary">
         <div class="desktop-update__release-title">
           <div><span>上游内核更新</span><strong>v{{ coreUpdate.update?.version }}</strong></div>
-          <em>算法 v{{ coreUpdate.update?.algorithm_version }} · 提交 {{ coreUpdate.update?.upstream_commit || '未提供' }}</em>
+          <em>Wei-Shaw/sub2api · {{ releaseDateLabel }}</em>
         </div>
         <p>{{ coreUpdate.update?.notes || '稳定性、成本核算与本地服务更新。' }}</p>
         <button type="button" :disabled="isBusy" @click="installCore">
@@ -48,25 +48,14 @@
         </button>
       </section>
 
-      <section v-if="appUpdate" class="desktop-update__release">
-        <div class="desktop-update__release-title">
-          <div><span>桌面更新</span><strong>v{{ appUpdate.version }}</strong></div>
-          <em>完整安装包</em>
-        </div>
-        <p>{{ appUpdate.body || '界面与桌面运行时更新。' }}</p>
-        <button type="button" :disabled="isBusy" @click="installDesktop">
-          <Download :size="15" /> 安装桌面更新
-        </button>
-      </section>
-
       <section v-if="checkState === 'current' && !errorMessage" class="desktop-update__current">
         <CheckCircle2 :size="20" />
-        <div><strong>当前已是最新版本</strong><span>{{ lastCheckedLabel }}</span></div>
+        <div><strong>当前内核已是上游最新版本</strong><span>{{ lastCheckedLabel }} · 桌面端未参与检查</span></div>
       </section>
 
       <section v-if="checkState === 'unavailable'" class="desktop-update__current desktop-update__current--warning">
         <WifiOff :size="20" />
-        <div><strong>更新服务暂不可用</strong><span>当前版本和正在运行的内核不受影响 · {{ lastCheckedLabel }}</span></div>
+        <div><strong>上游内核扫描暂不可用</strong><span>桌面端不会请求本项目 Release · 当前内核继续运行 · {{ lastCheckedLabel }}</span></div>
       </section>
 
       <div v-if="errorMessage" class="desktop-update__errors" role="alert">
@@ -79,7 +68,7 @@
       <footer>
         <button type="button" :disabled="checking || isBusy" @click="checkAll(false)">
           <RefreshCcw :size="14" :class="{ spinning: checking }" />
-          {{ checking ? '正在检查' : '检查更新' }}
+          {{ checking ? '正在扫描上游' : '检查上游内核' }}
         </button>
         <button
           v-if="coreUpdate?.previous_version"
@@ -101,10 +90,9 @@ import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { check, type Update } from '@tauri-apps/plugin-updater'
 import { CheckCircle2, Download, History, RefreshCcw, WifiOff, X } from '@lucide/vue'
 import { isDesktopRuntime } from '@/api/url'
-import { describeUpdateFailure, resolveUpdateCheckState } from './updateStatus'
+import { describeCoreUpdateFailure, resolveUpdateCheckState } from './updateStatus'
 
 interface BackendStatus {
   core_version: string
@@ -116,6 +104,7 @@ interface CoreManifest {
   version: string
   algorithm_version: string
   upstream_commit?: string
+  published_at: string
   notes: string
 }
 
@@ -139,12 +128,11 @@ const desktop = isDesktopRuntime()
 const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
-const algorithmVersion = ref('1.0.0')
+const algorithmVersion = ref('1.1.0')
 const upstreamCommit = ref('unknown')
-const appUpdate = ref<Update | null>(null)
 const coreUpdate = ref<CoreUpdateCheck | null>(null)
 const checking = ref(false)
-const operation = ref<'core' | 'desktop' | 'rollback' | null>(null)
+const operation = ref<'core' | 'rollback' | null>(null)
 const errorMessage = ref('')
 const updateFailures = ref<string[]>([])
 const progressStage = ref('')
@@ -156,7 +144,7 @@ let interval: number | null = null
 const unlisteners: UnlistenFn[] = []
 
 const isBusy = computed(() => operation.value !== null)
-const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available))
+const hasUpdate = computed(() => Boolean(coreUpdate.value?.available))
 const checkState = computed(() => resolveUpdateCheckState({
   checking: checking.value,
   hasUpdate: hasUpdate.value,
@@ -169,8 +157,14 @@ const progressPercent = computed(() => {
   return Math.min(99, Math.round(progressDownloaded.value / progressTotal.value * 100))
 })
 const lastCheckedLabel = computed(() => lastChecked.value
-  ? `上次检查 ${lastChecked.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-  : '尚未检查 GitHub Releases')
+  ? `上次扫描 ${lastChecked.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  : '尚未扫描 Wei-Shaw/sub2api')
+const releaseDateLabel = computed(() => {
+  const value = coreUpdate.value?.update?.published_at
+  if (!value) return '发布时间未知'
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value
+})
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -191,28 +185,18 @@ async function checkAll(silent = true) {
   const failures: string[] = []
   try {
     await loadRuntimeVersions()
-    const [desktopResult, coreResult] = await Promise.allSettled([
-      check(),
-      invoke<CoreUpdateCheck>('check_core_update'),
-    ])
-    if (desktopResult.status === 'fulfilled') appUpdate.value = desktopResult.value
-    else {
-      appUpdate.value = null
-      failures.push(describeUpdateFailure('desktop', desktopResult.reason))
-    }
-    if (coreResult.status === 'fulfilled') {
-      coreUpdate.value = coreResult.value
-      coreVersion.value = coreResult.value.current_version
-      algorithmVersion.value = coreResult.value.current_algorithm_version
-      upstreamCommit.value = coreResult.value.upstream_commit
-    } else {
-      coreUpdate.value = null
-      failures.push(describeUpdateFailure('core', coreResult.reason))
-    }
+    const result = await invoke<CoreUpdateCheck>('check_core_update')
+    coreUpdate.value = result
+    coreVersion.value = result.current_version
+    algorithmVersion.value = result.current_algorithm_version
+    upstreamCommit.value = result.upstream_commit
+  } catch (error) {
+    coreUpdate.value = null
+    failures.push(describeCoreUpdateFailure(error))
+  } finally {
     updateFailures.value = failures
     lastChecked.value = new Date()
     if (!silent && failures.length) errorMessage.value = failures.join('；')
-  } finally {
     checking.value = false
   }
 }
@@ -226,35 +210,6 @@ async function installCore() {
     const result = await invoke<{ version: string; algorithm_version: string }>('install_core_update')
     progressStage.value = 'ready'
     progressMessage.value = `内核 v${result.version} 已验证，正在安全重启`
-    await invoke('desktop_backend_prepare_relaunch')
-    await relaunch()
-  } catch (error) {
-    errorMessage.value = messageOf(error)
-    progressStage.value = ''
-  } finally {
-    operation.value = null
-  }
-}
-
-async function installDesktop() {
-  if (!appUpdate.value) return
-  operation.value = 'desktop'
-  errorMessage.value = ''
-  progressStage.value = 'downloading'
-  progressMessage.value = '正在下载桌面安装包'
-  progressDownloaded.value = 0
-  progressTotal.value = null
-  try {
-    await appUpdate.value.downloadAndInstall((event) => {
-      if (event.event === 'Started') {
-        progressTotal.value = event.data.contentLength ?? null
-      } else if (event.event === 'Progress') {
-        progressDownloaded.value += event.data.chunkLength
-      } else if (event.event === 'Finished') {
-        progressStage.value = 'finished'
-        progressMessage.value = '桌面更新已安装，正在重启'
-      }
-    })
     await invoke('desktop_backend_prepare_relaunch')
     await relaunch()
   } catch (error) {
