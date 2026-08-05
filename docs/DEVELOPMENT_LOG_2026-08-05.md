@@ -1,7 +1,7 @@
 # Sub2API Cost Console 近期开发日志
 
 > 记录周期：2026-08-04 至 2026-08-05  
-> 桌面版本：`0.2.2`  
+> 桌面版本：`0.2.4`
 > 受管内核版本：`0.1.170-21-g825ca7b1`  
 > 成本算法版本：`1.0.0`  
 > 上游基线提交：`825ca7b1fc9335f904bc077f051de815fb61e47f`  
@@ -32,7 +32,7 @@
 
 | 组件 | 当前版本 | 来源 | 用途 |
 |---|---|---|---|
-| 桌面应用 | `0.2.2` | `frontend/src-tauri/tauri.conf.json` | 窗口、安装包、桌面交互和 updater |
+| 桌面应用 | `0.2.4` | `frontend/src-tauri/tauri.conf.json` | 窗口、安装包、桌面交互和 updater |
 | 受管 Sub2API 内核 | `0.1.170-21-g825ca7b1` | `frontend/CORE_VERSION` | 本地 API 网关、管理 API、调度与账号逻辑 |
 | 成本算法 | `1.0.0` | `frontend/ALGORITHM_VERSION` | 采购成本折算、累计成本和面板口径 |
 | 上游提交 | `825ca7b1...` | `frontend/UPSTREAM_SUB2API_COMMIT` | 证明当前内核实际绑定的上游源码基线 |
@@ -66,7 +66,7 @@
 
 ```mermaid
 flowchart LR
-    User["Windows 用户"] --> Tauri["Tauri 桌面壳 v0.2.2"]
+    User["Windows 用户"] --> Tauri["Tauri 桌面壳 v0.2.4"]
     Tauri --> Vue["Vue 成本控制台"]
     Tauri --> Supervisor["Rust 内核监督器"]
     Supervisor --> Core["Sub2API sidecar\n127.0.0.1:18765"]
@@ -439,7 +439,7 @@ HTTP 422: Actions has been disabled for this user.
 建议按以下顺序继续：
 
 1. 解决 GitHub 账号级 Actions 限制，恢复仓库 CI。
-2. 将桌面版本提升到 `0.2.3`，通过 GitHub Runner 生成正式 Release。
+2. 为 `0.2.4` 配置公开更新镜像，并在 GitHub Actions 恢复后生成正式签名 Release。
 3. 在干净 Windows 10/11 环境验证快速安装、注册、登录和卸载重装。
 4. 验证从旧内核检查更新、下载、签名校验、停止、替换、健康检查和回滚的完整流程。
 5. 为 API 接入中心增加按 Agent/API Key 的请求、Token、成本和限额统计。
@@ -468,6 +468,18 @@ HTTP 422: Actions has been disabled for this user.
 | `.github/workflows/core-release.yml` | 独立受管内核发布流水线 |
 | `frontend/scripts/prepare-desktop-release.mjs` | 桌面更新清单与校验文件生成 |
 | `frontend/scripts/prepare-core-release.mjs` | 内核更新清单、签名和版本化资产生成 |
+
+## 17. 0.2.4 数据真实性与交互修复
+
+- 观察窗口细化为 5 分钟、30 分钟、1 小时、6 小时、24 小时和 7 天。
+- Dashboard snapshot 支持精确 `time_range`，短窗口由 PostgreSQL 按分钟聚合，不再用全天日期近似最近一小时。
+- 延迟探测开始时立即显示状态，60 秒超时；成功和失败结果分别反馈，不再把失败请求显示为成功完成。
+- 操作图标增加 WebView 内应用级 tooltip，明确真实探测会产生少量调用成本。
+- OAuth 预计月采购改为当前所选平台现存账号合计，不再混入其他平台账号。
+- 删除账号后，当前号池在手动刷新后立即更新，自动刷新最长等待 30 秒；历史 `usage_logs` 明确保留。
+- 移除伪“综合评分历史曲线”和账号状态推导的“恢复次数”，改为真实请求量趋势与不可用标记。
+- 用户实际计费为零时保留真实零值，不再用标准成本回退覆盖。
+- 新增 `docs/COST_DATA_PROVENANCE.md`，逐项记录实测、计算、预测和默认估算的来源。
 
 ---
 

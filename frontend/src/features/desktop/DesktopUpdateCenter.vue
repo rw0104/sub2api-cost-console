@@ -59,12 +59,22 @@
         </button>
       </section>
 
-      <section v-if="!hasUpdate && !checking" class="desktop-update__current">
+      <section v-if="checkState === 'current' && !errorMessage" class="desktop-update__current">
         <CheckCircle2 :size="20" />
         <div><strong>当前已是最新版本</strong><span>{{ lastCheckedLabel }}</span></div>
       </section>
 
-      <p v-if="errorMessage" class="desktop-update__error" role="alert">{{ errorMessage }}</p>
+      <section v-if="checkState === 'unavailable'" class="desktop-update__current desktop-update__current--warning">
+        <WifiOff :size="20" />
+        <div><strong>更新服务暂不可用</strong><span>当前版本和正在运行的内核不受影响 · {{ lastCheckedLabel }}</span></div>
+      </section>
+
+      <div v-if="errorMessage" class="desktop-update__errors" role="alert">
+        <div v-for="message in errorMessage.split('；')" :key="message">
+          <WifiOff :size="15" />
+          <span>{{ message }}</span>
+        </div>
+      </div>
 
       <footer>
         <button type="button" :disabled="checking || isBusy" @click="checkAll(false)">
@@ -92,8 +102,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
-import { CheckCircle2, Download, History, RefreshCcw, X } from '@lucide/vue'
+import { CheckCircle2, Download, History, RefreshCcw, WifiOff, X } from '@lucide/vue'
 import { isDesktopRuntime } from '@/api/url'
+import { describeUpdateFailure, resolveUpdateCheckState } from './updateStatus'
 
 interface BackendStatus {
   core_version: string
@@ -135,6 +146,7 @@ const coreUpdate = ref<CoreUpdateCheck | null>(null)
 const checking = ref(false)
 const operation = ref<'core' | 'desktop' | 'rollback' | null>(null)
 const errorMessage = ref('')
+const updateFailures = ref<string[]>([])
 const progressStage = ref('')
 const progressMessage = ref('')
 const progressDownloaded = ref(0)
@@ -145,6 +157,12 @@ const unlisteners: UnlistenFn[] = []
 
 const isBusy = computed(() => operation.value !== null)
 const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available))
+const checkState = computed(() => resolveUpdateCheckState({
+  checking: checking.value,
+  hasUpdate: hasUpdate.value,
+  hasFailures: updateFailures.value.length > 0,
+  hasChecked: lastChecked.value !== null,
+}))
 const progressPercent = computed(() => {
   if (progressStage.value === 'ready' || progressStage.value === 'finished') return 100
   if (!progressTotal.value) return progressStage.value ? 12 : 0
@@ -169,7 +187,7 @@ async function loadRuntimeVersions() {
 async function checkAll(silent = true) {
   if (!desktop || checking.value || isBusy.value) return
   checking.value = true
-  if (!silent) errorMessage.value = ''
+  errorMessage.value = ''
   const failures: string[] = []
   try {
     await loadRuntimeVersions()
@@ -178,18 +196,21 @@ async function checkAll(silent = true) {
       invoke<CoreUpdateCheck>('check_core_update'),
     ])
     if (desktopResult.status === 'fulfilled') appUpdate.value = desktopResult.value
-    else failures.push(`桌面更新：${messageOf(desktopResult.reason)}`)
+    else {
+      appUpdate.value = null
+      failures.push(describeUpdateFailure('desktop', desktopResult.reason))
+    }
     if (coreResult.status === 'fulfilled') {
       coreUpdate.value = coreResult.value
       coreVersion.value = coreResult.value.current_version
       algorithmVersion.value = coreResult.value.current_algorithm_version
       upstreamCommit.value = coreResult.value.upstream_commit
     } else {
-      failures.push(`内核更新：${messageOf(coreResult.reason)}`)
+      coreUpdate.value = null
+      failures.push(describeUpdateFailure('core', coreResult.reason))
     }
+    updateFailures.value = failures
     lastChecked.value = new Date()
-    // A repository without its first release returns 404. Keep startup silent,
-    // while a manual check exposes the actionable diagnostics.
     if (!silent && failures.length) errorMessage.value = failures.join('；')
   } finally {
     checking.value = false
@@ -286,11 +307,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .desktop-update { position: fixed; z-index: 90; right: 18px; bottom: 16px; color: #dfe7e0; font-family: Inter, 'Segoe UI', sans-serif; }
-.desktop-update__trigger { position: relative; display: flex; height: 34px; align-items: center; gap: 7px; padding: 0 11px; color: #87968a; border: 1px solid #2c372f; background: rgb(17 22 18 / 94%); box-shadow: 0 8px 25px rgb(0 0 0 / 22%); font: 11px 'Cascadia Mono', monospace; }
+.desktop-update__trigger { position: relative; display: flex; height: 36px; align-items: center; gap: 7px; padding: 0 12px; color: #87968a; border: 1px solid #2c372f; border-radius: 10px; background: rgb(17 22 18 / 94%); box-shadow: 0 8px 25px rgb(0 0 0 / 22%); font: 11px 'Cascadia Mono', monospace; }
 .desktop-update__trigger:hover, .desktop-update__trigger.available { color: #cde98f; border-color: #6d8f34; }
 .desktop-update__trigger i { width: 6px; height: 6px; border-radius: 50%; background: #b9e55a; box-shadow: 0 0 10px #b9e55a; }
-.desktop-update__panel { position: absolute; right: 0; bottom: 44px; width: min(430px, calc(100vw - 36px)); max-height: min(720px, calc(100vh - 70px)); overflow: auto; border: 1px solid #334038; background: #121713; box-shadow: 0 24px 70px rgb(0 0 0 / 55%); }
-.desktop-update__panel > header { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid #2a342c; background: #151b16; }
+.desktop-update__panel { position: absolute; right: 0; bottom: 48px; width: min(480px, calc(100vw - 28px)); max-height: min(720px, calc(100vh - 70px)); overflow: auto; border: 1px solid #334038; border-radius: 15px; background: #121713; box-shadow: 0 24px 70px rgb(0 0 0 / 55%); }
+.desktop-update__panel > header { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid #2a342c; border-radius: 15px 15px 0 0; background: rgb(21 27 22 / 96%); backdrop-filter: blur(14px); }
 .desktop-update__panel > header span { color: #91bc43; font: 10px 'Cascadia Mono', monospace; letter-spacing: .1em; }
 .desktop-update__panel h2 { margin: 4px 0 0; font-size: 18px; }
 .desktop-update__panel header button { display: grid; width: 30px; height: 30px; place-items: center; color: #718078; border: 0; background: transparent; }
@@ -315,15 +336,26 @@ onBeforeUnmount(() => {
 .desktop-update__release p { max-height: 110px; overflow: auto; margin: 12px 0; color: #9da9a0; font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
 .desktop-update__release button { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: center; gap: 8px; color: #11160f; border: 1px solid #b9e55a; background: #b9e55a; font-weight: 700; }
 .desktop-update__release button:disabled { opacity: .45; }
-.desktop-update__current { display: flex; align-items: center; gap: 12px; margin: 18px; color: #9cbd65; }
+.desktop-update__current { display: flex; align-items: center; gap: 12px; margin: 14px; padding: 13px 14px; color: #9cbd65; border: 1px solid #354735; border-radius: 11px; background: #172016; }
 .desktop-update__current strong, .desktop-update__current span { display: block; }
 .desktop-update__current strong { color: #d8e1d9; font-size: 12px; }
 .desktop-update__current span { margin-top: 3px; color: #708078; font-size: 10px; }
-.desktop-update__error { margin: 14px; padding: 10px 12px; color: #e4a08e; border-left: 2px solid #d56e54; background: #251914; font-size: 11px; line-height: 1.55; word-break: break-word; }
+.desktop-update__current--warning { color: #d7b26f; }
+.desktop-update__current--warning strong { color: #e4c98e; }
+.desktop-update__errors { display: grid; gap: 7px; margin: 14px; padding: 10px 12px; color: #e4a08e; border: 1px solid #6e4437; border-radius: 10px; background: #251914; font-size: 11px; line-height: 1.55; word-break: break-word; }
+.desktop-update__errors > div { display: flex; align-items: flex-start; gap: 8px; }
+.desktop-update__errors svg { flex: 0 0 auto; margin-top: 2px; }
 .desktop-update__panel footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px; border-top: 1px solid #29332b; }
-.desktop-update__panel footer button { display: flex; min-height: 32px; align-items: center; gap: 6px; padding: 0 10px; color: #aeb9b0; border: 1px solid #38443a; background: transparent; font-size: 11px; }
+.desktop-update__panel footer button { display: flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 11px; color: #aeb9b0; border: 1px solid #38443a; border-radius: 8px; background: transparent; font-size: 11px; }
 .desktop-update__panel footer button:hover:not(:disabled) { color: #dce6dd; border-color: #77867b; }
 .desktop-update__panel footer .desktop-update__rollback { margin-left: auto; color: #d5b079; border-color: #685138; }
 .spinning { animation: update-spin .8s linear infinite; }
 @keyframes update-spin { to { transform: rotate(360deg); } }
+@media (max-width: 520px) {
+  .desktop-update { right: 10px; bottom: 10px; }
+  .desktop-update__panel { right: -2px; width: min(480px, calc(100vw - 20px)); }
+  .desktop-update__versions { grid-template-columns: 1fr; }
+  .desktop-update__versions div { border-right: 0; border-bottom: 1px solid #29332b; }
+  .desktop-update__versions div:last-child { border-bottom: 0; }
+}
 </style>

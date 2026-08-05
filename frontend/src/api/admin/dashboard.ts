@@ -47,7 +47,10 @@ export async function getRealtimeMetrics(): Promise<{
 export interface TrendParams {
   start_date?: string
   end_date?: string
-  granularity?: 'day' | 'hour'
+  start_time?: string
+  end_time?: string
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
+  granularity?: 'day' | 'hour' | 'minute'
   user_id?: number
   api_key_id?: number
   model?: string
@@ -140,6 +143,8 @@ export interface DashboardSnapshotV2Response {
   generated_at: string
   start_date: string
   end_date: string
+  start_time?: string
+  end_time?: string
   granularity: string
   stats?: DashboardSnapshotV2Stats
   trend?: TrendDataPoint[]

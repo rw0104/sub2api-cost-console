@@ -239,6 +239,12 @@ export function roundCost(amount: number, fractionDigits = 2): number {
   return Math.round((amount + Number.EPSILON) * factor) / factor
 }
 
+export function actualUserCost(stats: { user_cost?: number; standard_cost?: number }): number {
+  if (typeof stats.user_cost === 'number' && Number.isFinite(stats.user_cost)) return stats.user_cost
+  if (typeof stats.standard_cost === 'number' && Number.isFinite(stats.standard_cost)) return stats.standard_cost
+  return 0
+}
+
 export function formatMoney(
   amount: number,
   currency: CostCurrency,

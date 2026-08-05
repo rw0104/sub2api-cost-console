@@ -27,6 +27,8 @@ type dashboardSnapshotV2Response struct {
 
 	StartDate   string `json:"start_date"`
 	EndDate     string `json:"end_date"`
+	StartTime   string `json:"start_time"`
+	EndTime     string `json:"end_time"`
 	Granularity string `json:"granularity"`
 
 	Stats      *dashboardSnapshotV2Stats        `json:"stats,omitempty"`
@@ -68,9 +70,13 @@ type dashboardSnapshotV2CacheKey struct {
 }
 
 func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
-	startTime, endTime := parseTimeRange(c)
+	startTime, endTime, err := parseDashboardSnapshotV2TimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	granularity := strings.TrimSpace(c.DefaultQuery("granularity", "day"))
-	if granularity != "hour" {
+	if granularity != "minute" && granularity != "hour" {
 		granularity = "day"
 	}
 
@@ -144,6 +150,17 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	response.Success(c, cached.Payload)
 }
 
+func parseDashboardSnapshotV2TimeRange(c *gin.Context) (time.Time, time.Time, error) {
+	if strings.TrimSpace(c.Query("time_range")) != "" ||
+		strings.TrimSpace(c.Query("start_time")) != "" ||
+		strings.TrimSpace(c.Query("end_time")) != "" {
+		return parseOpsTimeRange(c, "24h")
+	}
+
+	startTime, endTime := parseTimeRange(c)
+	return startTime, endTime, nil
+}
+
 func (h *DashboardHandler) buildSnapshotV2Response(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -155,7 +172,9 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	resp := &dashboardSnapshotV2Response{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		StartDate:   startTime.Format("2006-01-02"),
-		EndDate:     endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		EndDate:     endTime.Add(-time.Nanosecond).Format("2006-01-02"),
+		StartTime:   startTime.UTC().Format(time.RFC3339),
+		EndTime:     endTime.UTC().Format(time.RFC3339),
 		Granularity: granularity,
 	}
 

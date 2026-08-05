@@ -10,7 +10,7 @@ import type {
 } from '@/types'
 import type { CostProfile } from './model'
 
-export type CostCenterRange = '1h' | '6h' | '24h' | '7d'
+export type CostCenterRange = '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
 
 export interface AccountProbeState {
   loading: boolean
@@ -19,31 +19,14 @@ export interface AccountProbeState {
   message?: string
 }
 
-function localDate(value: Date): string {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function dashboardDateRange(range: CostCenterRange): {
-  start_date: string
-  end_date: string
-  granularity: 'day' | 'hour'
+export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
+  time_range: CostCenterRange
+  granularity: 'day' | 'hour' | 'minute'
 } {
-  const end = new Date()
-  const start = new Date(end)
-  if (range === '7d') start.setDate(start.getDate() - 6)
-  else start.setDate(start.getDate() - 1)
   return {
-    start_date: localDate(start),
-    end_date: localDate(end),
-    granularity: range === '7d' ? 'day' : 'hour',
+    time_range: range,
+    granularity: range === '7d' ? 'day' : range === '5m' || range === '30m' ? 'minute' : 'hour',
   }
-}
-
-function opsRange(range: CostCenterRange): '1h' | '6h' | '24h' {
-  return range === '7d' ? '24h' : range
 }
 
 function emptyTodayStats(): WindowStats {
@@ -73,7 +56,7 @@ export function useCostCenterData() {
     const sequence = ++requestSequence
     loading.value = true
     error.value = ''
-    const dates = dashboardDateRange(range)
+    const snapshotQuery = buildCostCenterSnapshotQuery(range)
 
     const [accountResult, dashboardResult, opsResult] = await Promise.allSettled([
       adminAPI.accounts.list(1, 1000, {
@@ -82,14 +65,14 @@ export function useCostCenterData() {
         sort_order: 'asc',
       }),
       adminAPI.dashboard.getSnapshotV2({
-        ...dates,
+        ...snapshotQuery,
         include_stats: true,
         include_trend: true,
         include_model_stats: true,
         include_group_stats: false,
         include_users_trend: false,
       }),
-      adminAPI.ops.getDashboardSnapshotV2({ time_range: opsRange(range), mode: 'auto' }),
+      adminAPI.ops.getDashboardSnapshotV2({ time_range: range, mode: 'auto' }),
     ])
 
     if (sequence !== requestSequence) return
@@ -168,7 +151,10 @@ export function useCostCenterData() {
   }
 
   async function probeAccount(account: Account) {
-    probes.value[String(account.id)] = { loading: true }
+    probes.value[String(account.id)] = {
+      loading: true,
+      message: '正在请求真实上游…',
+    }
     try {
       const result = await adminAPI.accounts.testAccount(account.id)
       probes.value[String(account.id)] = {

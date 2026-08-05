@@ -32,6 +32,21 @@ func TestParseTimeRange(t *testing.T) {
 	require.False(t, end.IsZero())
 }
 
+func TestParseDashboardSnapshotV2TimeRangeUsesExactLiveWindow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/?time_range=30m", nil)
+
+	before := time.Now()
+	start, end, err := parseDashboardSnapshotV2TimeRange(c)
+	after := time.Now()
+
+	require.NoError(t, err)
+	require.WithinDuration(t, before.Add(-30*time.Minute), start, 2*time.Second)
+	require.WithinDuration(t, after, end, 2*time.Second)
+}
+
 func TestParseOpsViewParam(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

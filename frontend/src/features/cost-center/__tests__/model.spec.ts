@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accruedCost,
+  actualUserCost,
   convertCurrency,
   elapsedHours,
   formatMoney,
@@ -132,5 +133,10 @@ describe('cost center model', () => {
     expect(convertCurrency(72, 'CNY', 'USD')).toBe(10)
     expect(convertCurrency(10, 'USD', 'USD')).toBe(10)
     expect(formatMoney(72, 'CNY')).toBe('\u00a572.00')
+  })
+
+  it('preserves a real zero user charge instead of replacing it with standard cost', () => {
+    expect(actualUserCost({ user_cost: 0, standard_cost: 12.5 })).toBe(0)
+    expect(actualUserCost({ standard_cost: 12.5 })).toBe(12.5)
   })
 })

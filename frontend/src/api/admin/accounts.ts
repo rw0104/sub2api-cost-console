@@ -227,22 +227,77 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
-/**
- * Test account connectivity
- * @param id - Account ID
- * @returns Test result
- */
-export async function testAccount(id: number): Promise<{
+export interface AccountTestResult {
   success: boolean
   message: string
   latency_ms?: number
-}> {
-  const { data } = await apiClient.post<{
-    success: boolean
-    message: string
-    latency_ms?: number
-  }>(`/admin/accounts/${id}/test`)
-  return data
+}
+
+interface AccountTestEvent {
+  type?: string
+  text?: string
+  status?: string
+  success?: boolean
+  error?: string
+}
+
+/**
+ * The account test endpoint intentionally streams SSE events so the native
+ * account test dialog can show progress. The cost console only needs the
+ * terminal result, so normalize the stream into the small result shape used
+ * by the latency table.
+ */
+export function parseAccountTestSse(payload: unknown, elapsedMs: number): AccountTestResult {
+  if (payload && typeof payload === 'object' && 'success' in payload) {
+    const result = payload as Partial<AccountTestResult>
+    return {
+      success: Boolean(result.success),
+      message: String(result.message || (result.success ? '连接成功' : '连接测试失败')),
+      latency_ms: result.latency_ms ?? Math.max(1, Math.round(elapsedMs)),
+    }
+  }
+
+  const events: AccountTestEvent[] = []
+  const text = String(payload || '')
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.trimStart().startsWith('data:'))
+      .map((line) => line.replace(/^\s*data:\s?/, ''))
+      .join('\n')
+      .trim()
+    if (!data) continue
+    try {
+      const event = JSON.parse(data) as AccountTestEvent
+      events.push(event)
+    } catch {
+      // Ignore keep-alive or non-JSON SSE frames and use the terminal event.
+    }
+  }
+
+  const error = [...events].reverse().find((event) => event.type === 'error')
+  const complete = [...events].reverse().find((event) => event.type === 'test_complete')
+  const success = Boolean(complete?.success) && !error
+  const message = error?.error || (success
+    ? [...events].reverse().find((event) => event.type === 'status' || event.type === 'content')?.text || '连接成功'
+    : '连接测试失败：未收到有效的完成事件')
+
+  return {
+    success,
+    message,
+    latency_ms: Math.max(1, Math.round(elapsedMs)),
+  }
+}
+
+/** Test account connectivity and normalize the backend SSE response. */
+export async function testAccount(id: number): Promise<AccountTestResult> {
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const { data } = await apiClient.post<string>(`/admin/accounts/${id}/test`, undefined, {
+    responseType: 'text',
+    timeout: 60000,
+  })
+  const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  return parseAccountTestSse(data, finishedAt - startedAt)
 }
 
 /**

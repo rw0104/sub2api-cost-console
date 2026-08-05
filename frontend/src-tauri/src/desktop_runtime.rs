@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use minisign_verify::{PublicKey, Signature};
-use reqwest::{Client, Url};
+use reqwest::{Client, StatusCode, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,14 +18,23 @@ use tokio::{io::AsyncWriteExt, sync::Mutex as AsyncMutex, time::sleep};
 const BACKEND_HOST: &str = "127.0.0.1";
 const BACKEND_PORT: u16 = 18_765;
 const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
-const CORE_MANIFEST_URL: &str =
+const DEFAULT_CORE_MANIFEST_URL: &str =
     "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json";
-const CORE_MANIFEST_SIGNATURE_URL: &str =
+const DEFAULT_CORE_MANIFEST_SIGNATURE_URL: &str =
     "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json.sig";
 const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5RTdCNTVENUMxNzNFMkIKUldRclBoZGNYYlhuR1VaK1dVS3hDUUlVRVBFUlVOaEVtTCt2aTV4Tm1YR2lVd0hYREdaNmRBZnQK";
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
+
+fn core_manifest_url() -> &'static str {
+    option_env!("SUB2API_CORE_MANIFEST_URL").unwrap_or(DEFAULT_CORE_MANIFEST_URL)
+}
+
+fn core_manifest_signature_url() -> &'static str {
+    option_env!("SUB2API_CORE_MANIFEST_SIGNATURE_URL")
+        .unwrap_or(DEFAULT_CORE_MANIFEST_SIGNATURE_URL)
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -690,11 +699,18 @@ fn update_client() -> Result<Client, String> {
 
 async fn fetch_verified_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
     let manifest_response = client
-        .get(CORE_MANIFEST_URL)
+        .get(core_manifest_url())
         .header("Cache-Control", "no-cache")
         .send()
         .await
-        .map_err(|error| format!("无法获取内核更新清单: {error}"))?
+        .map_err(|error| format!("无法获取内核更新清单: {error}"))?;
+    if manifest_response.status() == StatusCode::NOT_FOUND {
+        return Err(format!(
+            "内核更新源暂不可用：更新清单通过匿名访问返回 404（{}）。当前内核继续运行，请恢复 Release 公网访问或配置公开更新镜像。",
+            core_manifest_url()
+        ));
+    }
+    let manifest_response = manifest_response
         .error_for_status()
         .map_err(|error| format!("内核更新清单返回错误: {error}"))?;
     let manifest_bytes = manifest_response
@@ -702,7 +718,7 @@ async fn fetch_verified_manifest(client: &Client) -> Result<CoreUpdateManifest, 
         .await
         .map_err(|error| format!("无法读取内核更新清单: {error}"))?;
     let signature = client
-        .get(CORE_MANIFEST_SIGNATURE_URL)
+        .get(core_manifest_signature_url())
         .header("Cache-Control", "no-cache")
         .send()
         .await

@@ -55,11 +55,13 @@ accrued_cost = hourly_rate × elapsed_hours
 
 支持 `hourly`、`daily`、`weekly`、`monthly` 和 `one_time` 五种计费周期。自定义成本配置写入 `account.extra.cost_profile`，不会覆盖账号已有的 `extra` 数据。默认月成本、套餐识别优先级、汇率和边界条件参见[成本模型文档](COST_CONSOLE_DEVELOPMENT.md#6-成本模型)。
 
+每项指标的实测来源、推导公式、当前号池与历史数据边界参见[成本数据真实性与口径](docs/COST_DATA_PROVENANCE.md)。
+
 ### 可追溯的三版本体系
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
-| Desktop | `0.2.1` | Tauri 桌面壳、Vue 界面和安装结构 |
+| Desktop | `0.2.4` | Tauri 2 桌面壳、Vue 界面和安装结构 |
 | Core | `0.1.170-21-g825ca7b1` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `825ca7b1fc9335f904bc077f051de815fb61e47f`） |
 | Algorithm | `1.0.0` | 成本折算、起算边界和累计规则 |
 
