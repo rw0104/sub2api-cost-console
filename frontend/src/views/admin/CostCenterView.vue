@@ -194,7 +194,7 @@
           </div>
         </section>
 
-        <section v-else class="cost-workspace cost-oauth" aria-labelledby="oauth-title">
+        <section v-else-if="activePanel === 'oauth'" class="cost-workspace cost-oauth" aria-labelledby="oauth-title">
           <div class="cost-oauth-header">
             <div class="cost-page-heading cost-page-heading--compact">
               <div><span>OAUTH / LIVE ECONOMICS</span><h2 id="oauth-title">OAuth 实时成本</h2><p>{{ lastUpdatedLabel }}</p></div>
@@ -255,6 +255,10 @@
             </table>
           </div>
         </section>
+
+        <section v-else class="cost-workspace cost-api-workspace" aria-labelledby="api-access-title">
+          <CostApiAccessPanel :desktop-mode="desktopMode" :ops-overview="opsOverview" />
+        </section>
       </main>
 
       <CostProfileInspector :account="selectedAccount" :saving="saving" :now="now" @close="selectedAccount = null" @save="saveSelectedCostProfile" />
@@ -271,6 +275,7 @@ import {
   Database,
   FlaskConical,
   Gauge,
+  KeyRound,
   Maximize2,
   Plus,
   RefreshCcw,
@@ -282,6 +287,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAppStore } from '@/stores'
 import type { Account } from '@/types'
 import CostLineChart from '@/features/cost-center/components/CostLineChart.vue'
+import CostApiAccessPanel from '@/features/cost-center/components/CostApiAccessPanel.vue'
 import CostProfileInspector from '@/features/cost-center/components/CostProfileInspector.vue'
 import {
   accruedCost,
@@ -296,7 +302,7 @@ import {
 } from '@/features/cost-center/model'
 import { useCostCenterData, type CostCenterRange } from '@/features/cost-center/useCostCenterData'
 
-type WorkspaceKey = 'overview' | 'upstreams' | 'oauth'
+type WorkspaceKey = 'overview' | 'upstreams' | 'oauth' | 'api'
 type PlatformFilter = 'all' | 'codex' | 'grok'
 
 const MetricCell = defineComponent({
@@ -340,6 +346,7 @@ const workspaceItems = [
   { key: 'overview' as const, label: '资产总览', shortcut: '1', icon: Gauge },
   { key: 'upstreams' as const, label: '上游排行', shortcut: '2', icon: Database },
   { key: 'oauth' as const, label: 'OAuth 号池', shortcut: '3', icon: BarChart3 },
+  { key: 'api' as const, label: 'API 接入', shortcut: '4', icon: KeyRound },
 ]
 const platformTabs = [
   { key: 'all' as const, label: '全部' },
@@ -355,13 +362,14 @@ const poolPlatform = ref<Exclude<PlatformFilter, 'all'>>('codex')
 const searchQuery = ref('')
 const selectedAccount = ref<Account | null>(null)
 const now = ref(new Date())
-const autoRefresh = ref(false)
-const countdown = ref(60)
+const autoRefresh = ref(true)
+const REFRESH_INTERVAL_SECONDS = 30
+const countdown = ref(REFRESH_INTERVAL_SECONDS)
 let clockTimer: number | null = null
 
 const desktopMode = computed(() => route.query.desktop === '1' || '__TAURI_INTERNALS__' in (window as any))
-const panelTitle = computed(() => activePanel.value === 'overview' ? '上游资产与实时成本' : activePanel.value === 'upstreams' ? '上游运行矩阵' : 'OAuth 实时成本')
-const panelDescription = computed(() => activePanel.value === 'overview' ? '评分、调度、采购与 API 产出统一视图' : activePanel.value === 'upstreams' ? '桌面级密集账号巡检与成本操作台' : '号码加入即起算的号池经济模型')
+const panelTitle = computed(() => activePanel.value === 'overview' ? '上游资产与实时成本' : activePanel.value === 'upstreams' ? '上游运行矩阵' : activePanel.value === 'oauth' ? 'OAuth 实时成本' : 'API 接入中心')
+const panelDescription = computed(() => activePanel.value === 'overview' ? '评分、调度、采购与 API 产出统一视图' : activePanel.value === 'upstreams' ? '桌面级密集账号巡检与成本操作台' : activePanel.value === 'oauth' ? '号码加入即起算的号池经济模型' : '本地网关、Agent 配置与延迟诊断')
 const rangeLabel = computed(() => ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' })[range.value])
 const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '等待首次刷新')
 
@@ -505,7 +513,7 @@ watch(activePanel, (panel) => router.replace({ query: { ...route.query, panel } 
 watch(range, () => reload())
 
 function normalizePanel(value: unknown): WorkspaceKey {
-  return value === 'upstreams' || value === 'oauth' ? value : 'overview'
+  return value === 'upstreams' || value === 'oauth' || value === 'api' ? value : 'overview'
 }
 
 function matchesPlatform(account: Account, filter: PlatformFilter): boolean {
@@ -535,8 +543,12 @@ function statusRingGradient(normal: number, limited: number, errors: number): st
 function formatProbeLatency(id: number): string { const state = probes.value[String(id)]; if (!state) return '—'; if (state.loading) return '检测中'; return state.latency_ms ? `${formatInteger(state.latency_ms)} ms` : state.success ? '可用' : '失败' }
 function probeLabel(id: number): string { const state = probes.value[String(id)]; return state?.message || '点击检测' }
 
-async function reload() { await data.reload(range.value) }
-function toggleAutoRefresh() { autoRefresh.value = !autoRefresh.value; countdown.value = 60 }
+async function reload() {
+  if (loading.value) return
+  await data.reload(range.value)
+  countdown.value = REFRESH_INTERVAL_SECONDS
+}
+function toggleAutoRefresh() { autoRefresh.value = !autoRefresh.value; countdown.value = REFRESH_INTERVAL_SECONDS }
 function goToAccounts() { router.push('/admin/accounts') }
 async function runProbe(account: Account) { try { await data.probeAccount(account); appStore.showSuccess(`已完成 ${account.name} 上游检测`) } catch { appStore.showError(`检测 ${account.name} 失败`) } }
 async function saveSelectedCostProfile(profile: CostProfile) { if (!selectedAccount.value) return; try { const updated = await data.saveCostProfile(selectedAccount.value, profile); selectedAccount.value = updated; appStore.showSuccess('成本档案已保存，累计成本已重新计算') } catch (saveError: any) { appStore.showError(saveError?.message || '成本档案保存失败') } }
@@ -546,20 +558,33 @@ function handleKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') { event.preventDefault(); reload(); return }
   if (event.key === 'F11') { event.preventDefault(); toggleFullscreen(); return }
   if (event.key === 'Escape' && selectedAccount.value) { selectedAccount.value = null; return }
-  if ((event.ctrlKey || event.metaKey) && ['1', '2', '3'].includes(event.key)) { event.preventDefault(); activePanel.value = workspaceItems[Number(event.key) - 1].key }
+  if ((event.ctrlKey || event.metaKey) && ['1', '2', '3', '4'].includes(event.key)) { event.preventDefault(); activePanel.value = workspaceItems[Number(event.key) - 1].key }
+}
+
+async function refreshOnResume() {
+  if (document.visibilityState !== 'visible') return
+  countdown.value = REFRESH_INTERVAL_SECONDS
+  await reload()
 }
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('visibilitychange', refreshOnResume)
+  window.addEventListener('focus', refreshOnResume)
   clockTimer = window.setInterval(() => {
     now.value = new Date()
-    if (!autoRefresh.value) return
+    if (!autoRefresh.value || document.visibilityState !== 'visible') return
     countdown.value -= 1
-    if (countdown.value <= 0) { countdown.value = 60; reload() }
+    if (countdown.value <= 0) reload()
   }, 1000)
   await reload()
 })
-onBeforeUnmount(() => { window.removeEventListener('keydown', handleKeydown); if (clockTimer !== null) window.clearInterval(clockTimer) })
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('visibilitychange', refreshOnResume)
+  window.removeEventListener('focus', refreshOnResume)
+  if (clockTimer !== null) window.clearInterval(clockTimer)
+})
 </script>
 
 <style scoped>
