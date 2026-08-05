@@ -84,7 +84,7 @@ flowchart LR
     Desktop --> Core["受管 Go 内核 :18765"]
     UI --> API["Sub2API 管理 API"]
     Core --> PG["PostgreSQL"]
-    Core --> Redis["Redis"]
+    Core --> Redis["Redis / Valkey"]
     Core --> Providers["Codex / Grok / 其他上游"]
     Releases["GitHub Releases"] -->|签名桌面更新| Desktop
     Releases -->|签名内核更新| Core
@@ -95,7 +95,7 @@ flowchart LR
 | 桌面宿主 | Tauri 2、Rust、WebView2 | 窗口、受管内核生命周期、更新、回滚 |
 | 前端 | Vue 3、TypeScript、Pinia、Chart.js | 三套面板、成本模型、图表和版本面板 |
 | 后端 | Go、Gin、Ent | 鉴权、账号、调度、统计和 API 网关 |
-| 数据层 | PostgreSQL、Redis | 持久化、缓存和运行状态 |
+| 数据层 | PostgreSQL、Redis/Valkey | 持久化、缓存和运行状态 |
 | 发布 | GitHub Actions、Tauri updater | Windows NSIS、签名、校验和 Releases |
 
 ## 安装与使用
@@ -105,9 +105,14 @@ flowchart LR
 1. 打开 [Releases](https://github.com/renqw2023/sub2api-cost-console/releases/latest)。
 2. 下载最新的 Windows NSIS 安装包，并使用同一 Release 中的 `INSTALLER_SHA256SUMS.txt` 核对文件。
 3. 安装并启动 Sub2API Cost Console。
-4. 准备可连接的 PostgreSQL 15+ 和 Redis 7+。
-5. 首次启动按安装向导完成数据库、Redis 和初始管理员配置。
-6. 登录后进入成本控制台；新增上游账号后，成本从账号加入时间开始累计。
+4. 首次启动先选择数据服务方式：
+   - **快速安装（推荐新用户）**：需要 Docker Desktop 已安装且引擎正在运行。程序自动创建固定版本的 PostgreSQL 与 Valkey 容器、随机密码和独立数据卷，只映射到 `127.0.0.1:15432` 与 `127.0.0.1:16379`。
+   - **高级连接**：连接已有的本地、Docker、NAS、服务器或云端 PostgreSQL 15+ 与 Redis 7+/Valkey。已经有数据库容器的用户应选择此模式，程序不会覆盖或删除现有数据。
+5. 如果未检测到可用 Docker、Docker 未启动、保留端口冲突或发现同名容器，快速安装会停止并明确引导到高级连接；程序不会静默安装 Windows 服务或不受支持的 Valkey 替代品。
+6. 在安装向导中完成连接验证和初始管理员配置。
+7. 登录后进入成本控制台；新增上游账号后，成本从账号加入时间开始累计。
+
+快速安装下载并固定使用 `postgres:16.14-alpine` 与 `valkey/valkey:8.1.9-alpine`。Docker 镜像、容器和数据卷独立于桌面程序升级；卸载桌面程序不会自动删除业务数据。
 
 桌面内核默认只监听：
 

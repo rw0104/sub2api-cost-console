@@ -849,7 +849,7 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 
 ### 21.1 当前限制
 
-- Go 后端已由桌面端作为 sidecar 管理；PostgreSQL 和 Redis 仍需本机或远程提供。
+- Go 后端已由桌面端作为 sidecar 管理；快速安装依赖可用的 Docker 引擎，高级连接仍需用户提供本机或远程 PostgreSQL 与 Redis/Valkey。
 - 默认汇率是固定值，不是实时金融汇率。
 - 部分账号级失败/恢复信息是由账号状态字段推导，不是完整事件流。
 - 默认套餐价格是项目级常量，不是后台全局配置。
@@ -857,7 +857,7 @@ API 地址在 Axios 模块初始化时读取。修改 `VITE_API_BASE_URL` 或 `s
 
 ### 21.2 建议路线
 
-1. 增加 PostgreSQL/Redis 一键安装助手和更完整的连接诊断。
+1. 增加受管 Docker 数据服务的备份、恢复、升级和显式卸载入口。
 2. 将套餐成本配置迁移到后端数据库和管理员设置。
 3. 增加汇率服务及历史汇率快照。
 4. 增加号码成本预算、超限提醒和月度报表。
@@ -1160,3 +1160,70 @@ gh release download v0.2.0 --repo renqw2023/sub2api-cost-console --pattern INSTA
 gh release view core-channel --repo renqw2023/sub2api-cost-console
 gh release download core-channel --repo renqw2023/sub2api-cost-console --pattern CORE_SHA256SUMS.txt
 ```
+
+---
+
+## 29. 数据服务安装策略与双部署模式
+
+### 29.1 为什么当前核心仍使用 PostgreSQL 与 Redis/Valkey
+
+Sub2API 不是只读的个人数据查看器，而是包含用户、账号、API Key、配额、计费、调度、并发控制、队列、限流和定时任务的长期运行服务。当前 Go/Ent 数据层、迁移、备份与查询均按 PostgreSQL 实现；Redis 同时承担缓存、限流、调度状态和分布式协调职责。因此 MySQL、MongoDB 或 SQLite 都不是修改一个连接字符串即可替换的后端。
+
+- MySQL 仍是需要安装和维护的客户端/服务器数据库，并不会改善普通 Windows 用户的安装体验；切换还需要适配 SQL 方言、迁移、索引、JSON 查询和回归测试。
+- MongoDB 可以作为未来的数据导入源或独立适配器，但无法直接承接 Ent 的关系模型、外键、事务、现有 SQL 迁移及 Redis 的协调语义。
+- SQLite 非常适合单机桌面程序。SQLite 官方也把设备本地、低写入并发、无需网络共享的数据列为优势场景；但它同时说明多客户端网络访问、高写入并发和多服务器网站更适合客户端/服务器数据库。参见 [SQLite Appropriate Uses](https://www.sqlite.org/whentouse.html)。
+
+### 29.2 为什么 Cockpit Tools 不需要单独安装数据库
+
+[`jlcodes99/cockpit-tools`](https://github.com/jlcodes99/cockpit-tools) 是以本机账号与配置管理为主的桌面应用，其 README 说明数据主要保存在本机应用数据目录；Rust 依赖直接启用了 `rusqlite` 的 `bundled` 特性，所以 SQLite 库随程序一起分发，用户不会看到独立数据库安装。参考其 [README](https://github.com/jlcodes99/cockpit-tools#安全性与隐私简明版) 和 [`src-tauri/Cargo.toml`](https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/Cargo.toml)。
+
+这与 Sub2API 的服务端网关边界不同。Cockpit Tools 的方案证明 SQLite 很适合“单用户、本机、单进程”模式，但不能证明它能无条件替换面向多用户和持续调度的 PostgreSQL/Redis。
+
+### 29.3 对 Api2Business 的参考边界
+
+[`api2business/api2business`](https://github.com/api2business/api2business) 可以作为经营指标组织、数据投影、采样流程和运营面板信息架构的参考，并采用 MIT License。但它也不是免数据库方案：README 明确要求 Bun、PostgreSQL、Temporal 和可访问的 Sub2API 管理面；架构使用 PostgreSQL 保存持久化缓存与经营账本，并读取 Sub2API PostgreSQL。其 Compose 文件只启动 API、Worker 和 Web，不会自动创建数据库。参见该项目的 [README](https://github.com/api2business/api2business#架构)、[`compose.yaml`](https://github.com/api2business/api2business/blob/master/compose.yaml) 与 [MIT License](https://github.com/api2business/api2business/blob/master/LICENSE)。
+
+允许参考的内容包括指标命名、信息层级、数据投影思路和交互流程。复制代码、样式或资产时必须保留其 MIT 版权声明；Cockpit Tools 标注为 `CC-BY-NC-SA-4.0`，不得把其代码或资产直接并入本项目的可商用分发物。
+
+### 29.4 当前已实现的安装决策
+
+首次启动由 Tauri/Rust 原生层执行环境检测，前端只展示结果和采集用户选择：
+
+| 模式 | 适用用户 | 自动行为 | 不会做的事 |
+| --- | --- | --- | --- |
+| 快速安装 | 已安装并启动 Docker、尚无现成数据服务的新用户 | 拉取固定镜像，创建 PostgreSQL + Valkey 容器、随机密码、独立卷并验证连接 | 不安装 Docker，不覆盖同名容器，不绑定公网，不复用未知端口 |
+| 高级连接 | 已有 Docker 容器、本地服务、NAS、服务器或云数据库的用户 | 填写并测试 PostgreSQL 与 Redis/Valkey 连接，后端可在授权账号下创建目标 PostgreSQL 数据库 | 不修改既有容器，不代管远程数据库，不保存未验证配置 |
+
+快速安装固定使用：
+
+```text
+postgres:16.14-alpine       127.0.0.1:15432 -> 5432
+valkey/valkey:8.1.9-alpine  127.0.0.1:16379 -> 6379
+```
+
+受管容器分别命名为 `sub2api-cost-postgres` 与 `sub2api-cost-valkey`。若 Docker 不存在、引擎未启动、保留端口被占用或同名容器已存在，流程立即停止并转为明确的高级连接提示。失败清理仅作用于本次生成的容器和随机命名卷，不删除用户已有资源。
+
+“自动在 Docker 创建 SQL”归入快速安装；高级连接保持无副作用，专门用于已有基础设施。这个划分避免高级用户仅想测试连接时，程序却意外创建第二套数据库。
+
+PostgreSQL 官方 Windows 下载页提供适合被其他应用安装程序集成的二进制压缩包，但本版本暂不把它静默复制为 Windows 服务：初始化、升级、权限、卸载和备份都需要明确的生命周期管理。Valkey 官方目前没有原生 Windows 发行版，Windows 用户通常通过 WSL 或 Docker 使用，因此快速安装只在 Docker 引擎可用时创建 Valkey 容器。参考 [PostgreSQL Windows 下载说明](https://www.postgresql.org/download/windows/) 和 [Valkey 安装说明](https://valkey.io/topics/installation/)。
+
+### 29.5 网页端与桌面端双模式
+
+当前代码支持同一 Vue/Go 业务层的两种部署形态：
+
+1. **网页/服务器模式**：部署 Go 服务和 Web UI，连接外部 PostgreSQL 与 Redis/Valkey，适合多用户、远程访问、容器编排与持续运行。
+2. **Windows 桌面模式**：Tauri 管理本地 Go sidecar。可选择 Docker 快速安装或高级连接；受管服务只监听回环地址，桌面端口固定为 `127.0.0.1:18765`。
+
+浏览器环境不会获得本机进程管理权限，因此不会显示可执行的 Docker 快速安装；它只使用高级连接/服务器部署配置。这是安全边界，不是功能缺失。
+
+### 29.6 SQLite 本地模式的可行演进
+
+技术上可以增加真正“零外部数据库”的桌面本地模式，但必须作为独立存储后端开发，不能把当前 `postgres` 驱动直接改名为 `sqlite`。建议按以下边界推进：
+
+1. 抽象持久化接口，消除 PostgreSQL 专属 SQL、迁移、锁和 JSON 查询。
+2. 为 SQLite 建立独立 schema/migration，并使用 WAL、单写入队列和崩溃恢复测试。
+3. 将 Redis 的限流、队列、调度锁与缓存分成接口；桌面单节点使用进程内实现和 SQLite 持久化，服务器模式继续使用 Redis/Valkey。
+4. 建立功能矩阵，SQLite 模式明确禁用多实例、横向扩容、远程直连数据库和分布式任务。
+5. 提供 PostgreSQL ↔ SQLite 的导出、导入、备份、算法版本和审计记录迁移。
+
+在以上工作完成前，不能把 SQLite 或 MongoDB 暴露为可选择但不完整的数据库类型。当前发布版本以 PostgreSQL + Redis/Valkey 为唯一经过验证的核心数据合同。

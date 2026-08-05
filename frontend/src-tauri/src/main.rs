@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod desktop_runtime;
+mod setup_environment;
 
 use desktop_runtime::{
     check_core_update, desktop_backend_start, desktop_backend_status, desktop_backend_stop,
     initialize_backend, install_core_update, prepare_core_rollback, shutdown_backend,
     start_backend,
 };
+use setup_environment::{detect_setup_environment, provision_quick_setup};
 use tauri::Manager;
 
 fn main() {
@@ -28,6 +30,8 @@ fn main() {
             desktop_backend_status,
             desktop_backend_start,
             desktop_backend_stop,
+            detect_setup_environment,
+            provision_quick_setup,
             check_core_update,
             install_core_update,
             prepare_core_rollback,

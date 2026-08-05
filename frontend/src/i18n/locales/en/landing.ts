@@ -192,7 +192,44 @@ export default {
   // Setup Wizard
   setup: {
     title: 'Sub2API Setup',
-    description: 'Configure your Sub2API instance',
+    description: 'Choose a data-service mode and configure your Sub2API instance',
+    mode: {
+      title: 'Choose Data Storage',
+      description: 'Quick setup creates isolated local containers. Choose Advanced Connection if you already use Docker databases, a NAS, or cloud services.',
+      quickTitle: 'Quick Setup',
+      quickBadge: 'Recommended',
+      quickDescription: 'When a working Docker engine is detected, automatically create PostgreSQL and Valkey with generated passwords.',
+      quickNoOverwrite: 'Existing containers and occupied ports are never overwritten.',
+      quickAction: 'Start Quick Setup',
+      quickUnavailable: 'Quick setup cannot run safely in this environment. Use Advanced Connection and prepare the databases manually.',
+      advancedTitle: 'Advanced Connection',
+      advancedDescription: 'Connect to existing local, Docker, NAS, server, or cloud PostgreSQL and Redis/Valkey services.',
+      advancedRequirement: 'Requires PostgreSQL 15+ and Redis 7+ or a Valkey-compatible service.',
+      advancedDockerRedirect: 'To create the database automatically in Docker, use Quick Setup.',
+      advancedAction: 'Configure Advanced Connection',
+      recommended: 'Recommended for this environment',
+      detected: 'Detected',
+      notDetected: 'Not detected',
+      running: 'Running',
+      notRunning: 'Not running',
+      checking: 'Checking this computer…',
+      checkAgain: 'Check again',
+      docker: 'Docker engine',
+      localPostgres: 'Local PostgreSQL :5432',
+      localRedis: 'Local Redis/Valkey :6379',
+      existingServices: 'Existing local data services were detected. Advanced Connection is recommended to avoid duplicate databases.',
+      dockerExistingHint: 'If database containers already run in Docker, choose Advanced Connection and enter their published ports.',
+      blocker: {
+        desktopOnly: 'Quick setup is available only in the Windows desktop application.',
+        dockerMissing: 'Docker Desktop is not installed. Install and start it, or use Advanced Connection.',
+        dockerStopped: 'Docker Desktop is installed, but the engine is not running. Start it and check again.',
+        portConflict: 'Reserved quick-setup port 15432 or 16379 is occupied. Stop the conflicting service or use Advanced Connection.'
+      },
+      progressTitle: 'Preparing Local Data Services',
+      progressHint: 'The first component download may take several minutes. Keep the application open.',
+      manualTitle: 'Manual Data-Service Setup Required',
+      manualDescription: 'The application will not silently install unsupported Windows database components. Install PostgreSQL and prepare a Redis/Valkey-compatible service, then use Advanced Connection.'
+    },
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',
@@ -238,7 +275,10 @@ export default {
       description: 'Review your configuration and complete setup',
       database: 'Database',
       redis: 'Redis',
-      adminEmail: 'Admin Email'
+      adminEmail: 'Admin Email',
+      setupMode: 'Setup Mode',
+      quickMode: 'Docker Quick Setup',
+      advancedMode: 'Advanced Connection'
     },
     status: {
       testing: 'Testing...',
@@ -249,7 +289,9 @@ export default {
       completed: 'Installation completed!',
       redirecting: 'Redirecting to login page...',
       restarting: 'Service is restarting, please wait...',
-      timeout: 'Service restart is taking longer than expected. Please refresh the page manually.'
+      timeout: 'Service restart is taking longer than expected. Please refresh the page manually.',
+      notReady: 'not ready',
+      managedVerificationFailed: 'Local data services were created, but connection verification failed. PostgreSQL: {database}; Redis/Valkey: {redis}. Review the configuration or switch to Advanced Connection.'
     }
   },
 

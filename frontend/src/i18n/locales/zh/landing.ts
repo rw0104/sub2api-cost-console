@@ -192,7 +192,44 @@ export default {
   // Setup Wizard
   setup: {
     title: 'Sub2API 安装向导',
-    description: '配置您的 Sub2API 实例',
+    description: '选择数据服务方式并配置您的 Sub2API 实例',
+    mode: {
+      title: '选择数据存储方式',
+      description: '快速安装会创建隔离的本地容器；已有 Docker 数据容器、NAS 或云数据库请选择高级连接。',
+      quickTitle: '快速安装',
+      quickBadge: '推荐',
+      quickDescription: '检测到可用的 Docker 引擎后，自动创建 PostgreSQL 与 Valkey，并生成随机密码。',
+      quickNoOverwrite: '不会覆盖已有容器或占用中的端口。',
+      quickAction: '开始快速安装',
+      quickUnavailable: '当前环境不能安全执行快速安装，请使用高级连接并手动准备数据库。',
+      advancedTitle: '高级连接',
+      advancedDescription: '连接已有的本地、Docker、NAS、服务器或云端 PostgreSQL 与 Redis/Valkey。',
+      advancedRequirement: '需要 PostgreSQL 15+ 和 Redis 7+/Valkey 兼容服务。',
+      advancedDockerRedirect: '希望程序自动在 Docker 创建数据库时，请使用快速安装。',
+      advancedAction: '配置高级连接',
+      recommended: '根据检测结果推荐',
+      detected: '已检测',
+      notDetected: '未检测',
+      running: '运行中',
+      notRunning: '未运行',
+      checking: '正在检查本机环境…',
+      checkAgain: '重新检测',
+      docker: 'Docker 引擎',
+      localPostgres: '本机 PostgreSQL :5432',
+      localRedis: '本机 Redis/Valkey :6379',
+      existingServices: '检测到已有本地数据服务。为避免创建重复数据库，建议使用高级连接。',
+      dockerExistingHint: '如果 Docker 中已经运行数据库容器，请使用高级连接并填写容器映射端口。',
+      blocker: {
+        desktopOnly: '快速安装仅在 Windows 桌面应用中提供。',
+        dockerMissing: '未安装 Docker Desktop。请先安装并启动 Docker，或使用高级连接。',
+        dockerStopped: 'Docker Desktop 已安装但引擎未运行。请启动后重新检测。',
+        portConflict: '快速安装保留端口 15432 或 16379 已被占用，请停止冲突服务或使用高级连接。'
+      },
+      progressTitle: '正在准备本地数据服务',
+      progressHint: '首次下载数据组件可能需要几分钟，请不要关闭应用。',
+      manualTitle: '需要手动准备数据服务',
+      manualDescription: '应用不会静默安装不受支持的 Windows 数据库组件。请安装 PostgreSQL，并准备 Redis/Valkey 兼容服务后使用高级连接。'
+    },
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',
@@ -238,7 +275,10 @@ export default {
       description: '检查您的配置并完成安装',
       database: '数据库',
       redis: 'Redis',
-      adminEmail: '管理员邮箱'
+      adminEmail: '管理员邮箱',
+      setupMode: '安装方式',
+      quickMode: 'Docker 快速安装',
+      advancedMode: '高级连接'
     },
     status: {
       testing: '测试中...',
@@ -249,7 +289,9 @@ export default {
       completed: '安装完成！',
       redirecting: '正在跳转到登录页面...',
       restarting: '服务正在重启，请稍候...',
-      timeout: '服务重启时间超出预期，请手动刷新页面。'
+      timeout: '服务重启时间超出预期，请手动刷新页面。',
+      notReady: '未就绪',
+      managedVerificationFailed: '本地数据服务已创建，但连接验证未通过。PostgreSQL：{database}；Redis/Valkey：{redis}。你可以检查配置或切换高级连接。'
     }
   },
 
