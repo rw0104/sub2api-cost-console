@@ -30,7 +30,7 @@ if (!existsSync(nsisDirectory)) {
 }
 
 const installerName = readdirSync(nsisDirectory)
-  .find(name => name.endsWith('_x64-setup.exe'))
+  .find(name => name.endsWith(`_${version}_x64-setup.exe`))
 if (!installerName) throw new Error('No x64 NSIS installer was generated')
 const installerPath = resolve(nsisDirectory, installerName)
 const signaturePath = `${installerPath}.sig`

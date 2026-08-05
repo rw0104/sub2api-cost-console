@@ -28,13 +28,14 @@ const upstreamCommit = readFileSync(resolve(frontendDirectory, 'UPSTREAM_SUB2API
 const repository = (process.env.GITHUB_REPOSITORY || 'renqw2023/sub2api-cost-console').trim()
 const channel = (process.env.SUB2API_CORE_CHANNEL || 'core-channel').trim()
 const sourceCommit = (process.env.GITHUB_SHA || 'local').trim()
+// Keep the generated fallback ASCII-only so release manifests stay portable
+// across PowerShell, Node and GitHub Actions locales.
 const notes = (process.env.SUB2API_CORE_RELEASE_NOTES || '').trim()
-  || `受管 Sub2API 上游基线 ${coreVersion}（${upstreamCommit}）；成本规则版本 ${algorithmVersion}。`
+  || `Managed Sub2API upstream baseline ${coreVersion} (${upstreamCommit}); cost algorithm ${algorithmVersion}.`
 
 for (const [name, value] of [
   ['CORE_VERSION', coreVersion],
   ['ALGORITHM_VERSION', algorithmVersion],
-  ['UPSTREAM_SUB2API_COMMIT', upstreamCommit],
 ]) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)) {
     throw new Error(`${name} must be SemVer, received ${JSON.stringify(value)}`)

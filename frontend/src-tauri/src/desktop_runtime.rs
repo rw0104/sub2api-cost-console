@@ -22,7 +22,7 @@ const CORE_MANIFEST_URL: &str =
     "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json";
 const CORE_MANIFEST_SIGNATURE_URL: &str =
     "https://github.com/renqw2023/sub2api-cost-console/releases/download/core-channel/core-update.json.sig";
-const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFQThBQjkyM0FBMEUyMTEKUldRUjRxQTZrcXVvenN6ZjJmK1JhWUFiaFlKS1NNdVRGc1JlRUtFdVhoTWwrUmdEYTdOd2RXc0QK";
+const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5RTdCNTVENUMxNzNFMkIKUldRclBoZGNYYlhuR1VaK1dVS3hDUUlVRVBFUlVOaEVtTCt2aTV4Tm1YR2lVd0hYREdaNmRBZnQK";
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
