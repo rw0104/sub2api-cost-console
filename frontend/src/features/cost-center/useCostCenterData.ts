@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { adminAPI } from '@/api/admin'
 import type { OpsDashboardOverview, OpsThroughputTrendPoint } from '@/api/admin/ops'
+import type { SystemSettings } from '@/api/admin/settings'
 import type {
   Account,
   AdminUsageLog,
@@ -9,6 +10,7 @@ import type {
   WindowStats,
 } from '@/types'
 import type { CostProfile } from './model'
+import type { AccountProbeState } from './upstreamTable'
 import {
   aggregateUsageWindow,
   localDateParameter,
@@ -17,13 +19,6 @@ import {
 } from './usageWindow'
 
 export type CostCenterRange = '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
-
-export interface AccountProbeState {
-  loading: boolean
-  success?: boolean
-  latency_ms?: number
-  message?: string
-}
 
 const USAGE_PAGE_SIZE = 1000
 const MAX_USAGE_PAGES = 25
@@ -51,6 +46,7 @@ export function useCostCenterData() {
   const models = ref<ModelStat[]>([])
   const opsOverview = ref<OpsDashboardOverview | null>(null)
   const opsTrend = ref<OpsThroughputTrendPoint[]>([])
+  const systemSettings = ref<SystemSettings | null>(null)
   const probes = ref<Record<string, AccountProbeState>>({})
   const loading = ref(false)
   const saving = ref(false)
@@ -101,7 +97,7 @@ export function useCostCenterData() {
     error.value = ''
     const snapshotQuery = buildCostCenterSnapshotQuery(range)
 
-    const [accountResult, dashboardResult, opsResult] = await Promise.allSettled([
+    const [accountResult, dashboardResult, opsResult, settingsResult] = await Promise.allSettled([
       adminAPI.accounts.list(1, 1000, {
         include_scheduler_score: 'true',
         sort_by: 'created_at',
@@ -116,6 +112,7 @@ export function useCostCenterData() {
         include_users_trend: false,
       }),
       adminAPI.ops.getDashboardSnapshotV2({ time_range: range, mode: 'auto' }),
+      adminAPI.settings.getSettings(),
     ])
 
     if (sequence !== requestSequence) return
@@ -181,6 +178,8 @@ export function useCostCenterData() {
       opsOverview.value = null
       opsTrend.value = []
     }
+
+    systemSettings.value = settingsResult.status === 'fulfilled' ? settingsResult.value : null
 
     if (
       accountResult.status === 'rejected' &&
@@ -250,6 +249,7 @@ export function useCostCenterData() {
     models,
     opsOverview,
     opsTrend,
+    systemSettings,
     probes,
     loading,
     saving,

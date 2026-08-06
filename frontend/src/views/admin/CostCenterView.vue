@@ -84,14 +84,14 @@
 
             <div class="cost-donut-wrap">
               <div class="cost-donut" :style="{ background: platformDonutBackground }" role="img" :aria-label="platformDonutLabel">
-                <div><strong>{{ formatCny(totalAccruedCny, 2) }}</strong><span>累计采购</span></div>
+                <div><strong>{{ formatCny(totalAccruedCny, 2) }}</strong><span>累计采购（配置推算）</span></div>
               </div>
             </div>
 
             <div class="cost-metric-grid">
               <MetricCell label="当前 API 产出速率" :value="formatUsd(apiOutputHourlyUsd, 2)" note="API 美元 / 小时" accent="gold" />
               <MetricCell label="一小时滚动产出" :value="formatUsd(rollingOutputUsd, 2)" note="API 美元 / 小时" accent="gold" />
-              <MetricCell label="当前采购成本" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="号码采购折算" accent="blue" />
+              <MetricCell label="当前采购成本（配置推算）" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="用户成本档案 / 美国套餐默认价折算" accent="blue" />
               <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" accent="blue" />
               <MetricCell label="今日 API 账号成本" :value="formatUsd(todayAccountCostUsd, 3)" note="上游账号实际成本" />
               <MetricCell label="最近窗口 API 产出" :value="formatUsd(windowActualOutputUsd, 3)" note="用户实际计费" />
@@ -111,7 +111,7 @@
                 value-prefix="$"
               />
             </ChartPanel>
-            <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购费率`">
+            <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购配置推算`">
               <CostLineChart
                 :labels="trendLabels"
                 :series="[
@@ -182,7 +182,7 @@
                 <option value="output">今日 API 产出</option>
                 <option value="requests">今日请求量</option>
                 <option value="cost">今日账号成本</option>
-                <option value="latency">探测延迟</option>
+                <option value="latency">连接测试总耗时</option>
               </select>
             </label>
             <span class="cost-ranking-bar__summary">显示 {{ upstreamRows.length }} 个账号<span v-if="upstreamRows[0]"> · 当前第 1 名：{{ upstreamRows[0].account.name }}</span></span>
@@ -197,7 +197,7 @@
             <table class="cost-data-table">
               <thead>
                 <tr>
-                  <th>账号</th><th>状态</th><th>评分 ↓</th><th>优先级</th><th>加入时间</th><th>采购费率</th><th>已累计成本</th><th>今日账号成本</th><th>API 产出</th><th>请求 / Token</th><th>探测延迟</th><th>状态异常 / 当前限流 / 恢复</th><th>分组</th><th>操作</th>
+                  <th>账号</th><th>状态</th><th>调度评分 ↓</th><th>优先级</th><th>加入时间</th><th>采购费率（推算）</th><th>累计采购（推算）</th><th>今日账号成本</th><th>API 产出</th><th>请求 / Token</th><th>连接测试总耗时</th><th>当前异常 / 当前限流</th><th>分组</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -207,22 +207,22 @@
                     <small>#{{ row.account.id }} · {{ row.account.platform }} / {{ row.plan }}</small>
                   </td>
                   <td><StatusLabel :status="row.account.status" :schedulable="row.account.schedulable" /></td>
-                  <td><span class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><small>{{ scoreGrade(row.score) }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
+                  <td><span class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><small>{{ row.scoreRaw == null ? '质量分回退' : `${row.scoreRaw.toFixed(2)} / ${row.scoreMax.toFixed(2)}` }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
                   <td><strong>{{ row.account.priority }}</strong><small>当前</small></td>
                   <td><strong>{{ formatCompactDate(row.account.created_at) }}</strong><small>{{ row.elapsedHours.toFixed(1) }}h 已计费</small></td>
-                  <td><strong class="cost-lime">{{ formatCny(row.hourlyCost, 5) }}/h</strong><small>{{ row.profile.source === 'custom' ? '自定义' : '套餐默认' }}</small></td>
-                  <td><strong class="cost-lime">{{ formatCny(row.accrued, 3) }}</strong><small>{{ row.profile.billing_cycle }}</small></td>
+                  <td><strong class="cost-lime">{{ formatCny(row.hourlyCost, 5) }}/h</strong><small>配置推算 · {{ row.profile.source === 'custom' ? '用户自定义' : '美国套餐默认' }}</small></td>
+                  <td><strong class="cost-lime">{{ formatCny(row.accrued, 3) }}</strong><small>配置推算 · {{ row.profile.billing_cycle }}</small></td>
                   <td><strong>{{ formatUsd(row.today.cost, 4) }}</strong><small>标准 {{ formatUsd(row.today.standard_cost || 0, 4) }}</small></td>
                   <td><strong class="cost-lime">{{ formatUsd(actualUserCost(row.today), 3) }}</strong><small>今日用户计费</small></td>
                   <td><strong>{{ formatInteger(row.today.requests) }}</strong><small>{{ formatTokens(row.today.tokens) }} Token</small></td>
-                  <td aria-live="polite"><strong>{{ formatProbeLatency(row.account.id) }}</strong><small>{{ probeLabel(row.account.id) }}</small></td>
-                  <td><strong>{{ row.account.status === 'error' ? '1' : '0' }} / {{ row.limited }} / —</strong><small>{{ row.account.error_message || '恢复事件暂未采集' }}</small></td>
+                  <UpstreamProbeCell :account-name="row.account.name" :state="probes[String(row.account.id)]" @probe="runProbe(row.account)" />
+                  <td><strong>{{ row.currentState.error }} / {{ row.currentState.limited }}</strong><small>{{ row.currentState.note }}</small></td>
                   <td class="cost-group-cell"><span v-for="group in row.groups" :key="group" class="cost-tag">{{ group }}</span><span v-if="row.groups.length === 0" class="cost-tag">自用</span></td>
                   <td class="cost-actions-cell">
-                    <button type="button" title="检测真实上游延迟" aria-label="检测真实上游延迟" :class="{ 'is-loading': probes[String(row.account.id)]?.loading, 'is-success': probes[String(row.account.id)]?.success === true, 'is-error': probes[String(row.account.id)]?.success === false }" :disabled="probes[String(row.account.id)]?.loading" @click.stop="runProbe(row.account)">
+                    <button type="button" title="检测真实上游连接总耗时" aria-label="检测真实上游连接总耗时" :class="{ 'is-loading': probes[String(row.account.id)]?.loading, 'is-success': probes[String(row.account.id)]?.success === true, 'is-error': probes[String(row.account.id)]?.success === false }" :disabled="probes[String(row.account.id)]?.loading" @click.stop="runProbe(row.account)">
                       <LoaderCircle v-if="probes[String(row.account.id)]?.loading" :size="15" class="cost-spin" />
                       <FlaskConical v-else :size="15" />
-                      <span class="cost-action-tooltip" role="tooltip">{{ probes[String(row.account.id)]?.loading ? '正在请求真实上游…' : '发送一次真实最小请求并测量延迟，会产生少量调用成本' }}</span>
+                      <span class="cost-action-tooltip" role="tooltip">{{ probes[String(row.account.id)]?.loading ? '正在请求真实上游…' : '发送一次真实最小请求并测量完整测试耗时，会产生少量调用成本' }}</span>
                     </button>
                     <button type="button" title="配置账号采购成本" aria-label="配置账号采购成本" @click.stop="selectedAccount = row.account">
                       <Settings2 :size="15" />
@@ -243,7 +243,7 @@
             </div>
             <div class="cost-oauth-kpis">
               <MetricCell label="当前池 API 产出速率" :value="formatUsd(oauthOutputHourlyUsd, 2)" note="今日当前池实测 / 已过小时" accent="gold" />
-              <MetricCell label="当前池综合成本" :value="`${formatCny(oauthCombinedHourlyCny, 2)}/小时`" note="当前池 API + 号码采购" accent="gold" />
+              <MetricCell label="当前池综合成本" :value="`${formatCny(oauthCombinedHourlyCny, 2)}/小时`" note="真实 API + 配置推算采购" accent="gold" />
               <MetricCell label="今日当前池产出" :value="formatUsd(oauthTodayOutputUsd, 3)" note="现存账号今日真实用户计费" />
               <MetricCell label="今日剩余预期" :value="formatUsd(oauthRemainingForecastUsd, 2)" note="按当前池今日速率线性外推" />
               <MetricCell label="预计月采购" :value="formatCny(oauthMonthlyProcurementForecastCny, 1)" :note="`${selectedPlatformLabel} 当前 ${oauthAccounts.length} 个账号合计`" />
@@ -258,14 +258,14 @@
           </div>
 
           <div class="cost-pool-heading-row">
-            <div class="cost-section-heading"><span>POOL / JOINED COST</span><h2>{{ selectedPlatformLabel }} 当前号池实时成本</h2><p>全历史采购累计 · 有效账号 {{ oauthAccounts.length }} · 缺少自定义成本 {{ defaultCostAccountCount }} 个</p></div>
+            <div class="cost-section-heading"><span>POOL / JOINED COST</span><h2>{{ selectedPlatformLabel }} 当前号池实时成本</h2><p>配置推算采购累计 · 有效账号 {{ oauthAccounts.length }} · 使用套餐默认成本 {{ defaultCostAccountCount }} 个</p></div>
             <div class="cost-platform-tabs" role="tablist"><button v-for="item in platformTabs.filter(item => item.key !== 'all')" :key="item.key" type="button" :class="{ active: poolPlatform === item.key }" @click="poolPlatform = item.key">{{ item.label }}</button></div>
             <button type="button" class="cost-primary-button cost-primary-button--outline" @click="reload"><RefreshCcw :size="16" /> 刷新号池核算</button>
           </div>
 
           <div class="cost-pool-summary">
             <MetricCell label="OAuth 账号" :value="formatInteger(oauthAccounts.length)" :note="`${oauthActiveCount} 个已产生请求`" />
-            <MetricCell label="净采购成本" :value="formatCny(oauthAccruedCny, 2)" :note="`小时成本 ${formatCny(oauthHourlyCny, 4)}`" />
+            <MetricCell label="净采购成本（配置推算）" :value="formatCny(oauthAccruedCny, 2)" :note="`推算小时成本 ${formatCny(oauthHourlyCny, 4)}`" />
             <MetricCell label="今日 API 账号成本" :value="formatUsd(oauthTodayCostUsd, 4)" note="真实账号成本" accent="lime" />
             <MetricCell label="今日 API 产出" :value="formatUsd(oauthTodayOutputUsd, 4)" :note="`预估利润 ${formatUsd(oauthTodayOutputUsd - oauthTodayCostUsd, 3)}`" accent="blue" />
             <MetricCell label="号池状态" :value="`${oauthNormalCount} 正常`" :note="`限流 ${oauthLimitedCount} · 错误 ${oauthErrorCount}`" />
@@ -287,7 +287,7 @@
 
           <div class="cost-pool-table-wrap">
             <table class="cost-pool-table">
-              <thead><tr><th>核算范围</th><th>账号类型</th><th>账号数</th><th>有产出</th><th>状态分布</th><th>采购成本</th><th>平均单价</th><th>当前产出 / 实时预期 / 月预期</th><th>成本计算</th><th>请求</th><th>Token</th></tr></thead>
+              <thead><tr><th>核算范围</th><th>账号类型</th><th>账号数</th><th>有产出</th><th>状态分布</th><th>采购成本（推算）</th><th>平均单价（推算）</th><th>当前产出 / 实时预期 / 月预期</th><th>成本计算</th><th>请求</th><th>Token</th></tr></thead>
               <tbody>
                 <tr v-for="group in poolGroups" :key="group.plan">
                   <td><strong>当前号池</strong></td><td><strong>{{ group.planLabel }}</strong></td><td>{{ group.count }}</td><td>{{ group.productive }}</td>
@@ -343,6 +343,7 @@ import type { Account, WindowStats } from '@/types'
 import CostLineChart from '@/features/cost-center/components/CostLineChart.vue'
 import CostApiAccessPanel from '@/features/cost-center/components/CostApiAccessPanel.vue'
 import CostProfileInspector from '@/features/cost-center/components/CostProfileInspector.vue'
+import UpstreamProbeCell from '@/features/cost-center/components/UpstreamProbeCell.vue'
 import {
   accruedCost,
   actualUserCost,
@@ -356,6 +357,11 @@ import {
   type CostProfile,
 } from '@/features/cost-center/model'
 import { useCostCenterData, type CostCenterRange } from '@/features/cost-center/useCostCenterData'
+import {
+  describeCurrentAccountState,
+  normalizeSchedulerScore,
+  resolveSchedulerBaseScoreMax,
+} from '@/features/cost-center/upstreamTable'
 
 type WorkspaceKey = 'overview' | 'upstreams' | 'oauth' | 'api'
 type PlatformFilter = 'all' | 'codex' | 'grok'
@@ -395,7 +401,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, stats, trend, trendUsesAccountCost, opsOverview, opsTrend, probes, loading, saving, error, lastUpdated,
+  accounts, stats, trend, trendUsesAccountCost, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated,
 } = data
 
 const workspaceItems = [
@@ -444,6 +450,7 @@ const qualityScore = computed(() => {
   return Math.max(0, Math.min(100, availability * 82 + (1 - errorRate.value) * 18))
 })
 const qualityGrade = computed(() => scoreGrade(qualityScore.value))
+const schedulerBaseScoreMax = computed(() => resolveSchedulerBaseScoreMax(systemSettings.value as Record<string, unknown> | null))
 
 const accountLedgers = computed(() => accounts.value.map((account) => {
   const profile = resolveCostProfile(account)
@@ -518,14 +525,20 @@ const upstreamRows = computed(() => {
   const rows = accountLedgers.value
     .filter((row) => matchesPlatform(row.account, platformFilter.value))
     .filter((row) => !query || [row.account.name, row.account.notes, row.account.platform, ...(row.account.groups?.map((group) => group.name) || [])].some((value) => String(value || '').toLowerCase().includes(query)))
-    .map((row) => ({
-      ...row,
-      score: normalizedSchedulerScore(row.account),
-      hourlyCost: row.hourlyCny,
-      accrued: row.accruedCny,
-      limited: row.account.rate_limited_at ? 1 : 0,
-      groups: row.account.groups?.map((group) => group.name) ?? [],
-    }))
+    .map((row) => {
+      const rawScore = Number(row.account.scheduler_score?.base_score)
+      const hasRawScore = Number.isFinite(rawScore)
+      return {
+        ...row,
+        score: hasRawScore ? normalizeSchedulerScore(rawScore, schedulerBaseScoreMax.value) : qualityScore.value,
+        scoreRaw: hasRawScore ? rawScore : null,
+        scoreMax: schedulerBaseScoreMax.value,
+        hourlyCost: row.hourlyCny,
+        accrued: row.accruedCny,
+        currentState: describeCurrentAccountState(row.account),
+        groups: row.account.groups?.map((group) => group.name) ?? [],
+      }
+    })
   return rows
     .sort((a, b) => {
       const aValue = rankingValue(a, rankingMetric.value)
@@ -608,13 +621,6 @@ function matchesPlatform(account: Account, filter: PlatformFilter): boolean {
   return filter === 'codex' ? account.platform === 'openai' : account.platform === 'grok'
 }
 
-function normalizedSchedulerScore(account: Account): number {
-  const raw = Number(account.scheduler_score?.base_score)
-  if (!Number.isFinite(raw)) return account.status === 'active' ? qualityScore.value : Math.max(0, qualityScore.value - 18)
-  if (raw <= 1) return raw * 100
-  return Math.max(0, Math.min(100, raw))
-}
-
 function scoreGrade(score: number): string { return score >= 82 ? 'A' : score >= 70 ? 'B' : score >= 58 ? 'C' : 'D' }
 function movingAverage(values: number[], windowSize: number): number[] { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1); return slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length) }) }
 function formatInteger(value: number): string { return Math.round(Number(value) || 0).toLocaleString() }
@@ -627,9 +633,6 @@ function formatCompactDate(value: string): string { const date = new Date(value)
 function formatTrendLabel(value: string): string { const date = new Date(value.includes(' ') ? value.replace(' ', 'T') : value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], range.value === '7d' ? { month: '2-digit', day: '2-digit' } : { hour: '2-digit', minute: '2-digit' }) : value }
 function donutGradient(items: Array<{ value: number; color: string }>): string { const total = items.reduce((sum, item) => sum + Math.max(0, item.value), 0); if (!total) return 'conic-gradient(#303830 0 100%)'; let cursor = 0; const stops = items.map((item) => { const start = cursor; cursor += Math.max(0, item.value) / total * 100; return `${item.color} ${start}% ${cursor}%` }); return `conic-gradient(${stops.join(', ')})` }
 function statusRingGradient(normal: number, limited: number, errors: number): string { const total = Math.max(1, normal + limited + errors); const normalEnd = normal / total * 100; const limitedEnd = normalEnd + limited / total * 100; return `conic-gradient(#b9e55a 0 ${normalEnd}%, #9c8a54 ${normalEnd}% ${limitedEnd}%, #995c50 ${limitedEnd}% 100%)` }
-function formatProbeLatency(id: number): string { const state = probes.value[String(id)]; if (!state) return '—'; if (state.loading) return '检测中'; return state.latency_ms != null ? `${formatInteger(state.latency_ms)} ms` : state.success ? '可用' : '失败' }
-function probeLabel(id: number): string { const state = probes.value[String(id)]; return state?.message || '点击检测' }
-
 async function reload() {
   if (loading.value) return
   await data.reload(range.value)
@@ -642,7 +645,7 @@ async function runProbe(account: Account) {
   appStore.showInfo(`正在检测 ${account.name}，将发送一次真实最小请求`, 2500)
   try {
     const result = await data.probeAccount(account)
-    if (result.success) appStore.showSuccess(`${account.name} 延迟 ${formatInteger(result.latency_ms || 0)} ms`)
+    if (result.success) appStore.showSuccess(`${account.name} 连接测试完成，总耗时 ${formatInteger(result.latency_ms || 0)} ms`)
     else appStore.showError(`${account.name} 检测失败：${result.message}`)
   } catch (probeError: any) {
     appStore.showError(`检测 ${account.name} 失败：${probeError?.message || '请求异常'}`)

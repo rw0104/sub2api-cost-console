@@ -14,11 +14,11 @@
     <div class="cost-inspector__body">
       <section class="cost-inspector__summary">
         <div>
-          <span>累计采购成本</span>
+          <span>累计采购成本（配置推算）</span>
           <strong>{{ formatMoney(currentAccrued, form.currency, 4) }}</strong>
         </div>
         <div>
-          <span>折算小时成本</span>
+          <span>折算小时成本（配置推算）</span>
           <strong>{{ formatMoney(currentHourly, form.currency, 5) }}</strong>
         </div>
         <div>
@@ -69,7 +69,7 @@
 
       <section class="cost-form-note">
         <Clock3 :size="16" />
-        <p>号码加入后按实际毫秒线性累计；月费按 730 小时折算。一次性成本在起算时刻计入全额。</p>
+        <p>这里展示的是成本档案推算，不是上游账单。号码加入后按实际毫秒线性累计；月费按 730 小时折算，一次性成本在起算时刻计入全额。</p>
       </section>
 
       <section class="cost-form-meta">
