@@ -4,7 +4,7 @@
 > 桌面应用版本：0.2.1
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
-> 本项目：[`garciagary6/sub2api-cost-console`](https://github.com/garciagary6/sub2api-cost-console)
+> 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
 
 本文档面向需要继续开发、部署、调试和维护 Sub2API Cost Console 的开发者。项目在 Sub2API 管理端基础上增加了 Windows 桌面壳、三套成本运营面板、号码采购成本模型以及桌面端连接适配。
 
@@ -457,7 +457,7 @@ Test-NetConnection 127.0.0.1 -Port 18765
 ## 10. 安装依赖
 
 ```powershell
-git clone https://github.com/garciagary6/sub2api-cost-console.git
+git clone https://github.com/rw0104/sub2api-cost-console.git
 cd sub2api-cost-console/frontend
 corepack pnpm@9 install --frozen-lockfile
 ```
@@ -1055,7 +1055,7 @@ Invoke-WebRequest -Method Options `
 
 ### 27.2 桌面版本边界
 
-当前版本已恢复 Tauri updater 插件、`updater:default` 权限和固定 endpoint，`createUpdaterArtifacts=true`。客户端匿名访问 `garciagary6/sub2api-cost-console` 公开 Release 的 `latest.json`，不会把 GitHub Token 写入桌面程序。
+当前版本已恢复 Tauri updater 插件、`updater:default` 权限和固定 endpoint，`createUpdaterArtifacts=true`。客户端匿名访问 `rw0104/sub2api-cost-console` 公开 Release 的 `latest.json`，不会把 GitHub Token 写入桌面程序。
 
 桌面安装器采用 `currentUser` 模式，显示原生安装目录页，并在完成页允许用户选择是否创建桌面快捷方式。自动更新只接受 `tauri.conf.json` 内置公钥验证通过的签名 NSIS 资产；发现更新后仍由用户确认安装，避免工作中被强制重启。
 
@@ -1140,7 +1140,7 @@ frontend/src-tauri/target/release/bundle/nsis/
 
 ```powershell
 # 仓库恢复后，使用 tauri.conf.json 中的版本创建安装包 Release
-gh workflow run desktop-release.yml --repo garciagary6/sub2api-cost-console
+gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
 git tag v0.2.1
@@ -1151,8 +1151,8 @@ git push origin v0.2.6
 发布后验证：
 
 ```powershell
-gh release view v0.2.6 --repo garciagary6/sub2api-cost-console
-gh release download v0.2.6 --repo garciagary6/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.6 --repo rw0104/sub2api-cost-console
+gh release download v0.2.6 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

@@ -45,7 +45,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdERTkwRDZGNzdEREI2ODEKUldTQnR0MTNidzNwZmYrdVVaVG9nNWJHTVBVVG80ZndsMzNrNFRvRUI3QS8zVTNxVXlxaWhQa3YK",
       "endpoints": [
-        "https://github.com/garciagary6/sub2api-cost-console/releases/latest/download/latest.json"
+        "https://github.com/rw0104/sub2api-cost-console/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

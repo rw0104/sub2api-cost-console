@@ -29,7 +29,7 @@
       </dl>
 
       <p class="desktop-update__managed-note">
-        启动后及每 6 小时自动检查两条签名更新通道：桌面整包来自 garciagary6/sub2api-cost-console，内置核心来自 Wei-Shaw/sub2api。发现新版本后由你确认安装，并保留签名校验、安全重启与核心回滚保护。
+        启动后及每 6 小时自动检查两条签名更新通道：桌面整包来自 rw0104/sub2api-cost-console，内置核心来自 Wei-Shaw/sub2api。发现新版本后由你确认安装，并保留签名校验、安全重启与核心回滚保护。
       </p>
 
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
@@ -51,7 +51,7 @@
       <section v-if="appUpdate" class="desktop-update__release">
         <div class="desktop-update__release-title">
           <div><span>桌面整包更新</span><strong>v{{ appUpdate.version }}</strong></div>
-          <em>garciagary6/sub2api-cost-console · 签名安装包</em>
+          <em>rw0104/sub2api-cost-console · 签名安装包</em>
         </div>
         <p>{{ appUpdate.body || '界面、桌面运行时与内置核心的完整更新。' }}</p>
         <button type="button" :disabled="isBusy" @click="installDesktop">

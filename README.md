@@ -6,13 +6,13 @@
 
 **面向 Sub2API 的 Windows 桌面成本运营控制台**
 
-[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/garciagary6/sub2api-cost-console/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs)](https://vuejs.org/)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-[下载 Windows 版本](https://github.com/garciagary6/sub2api-cost-console/releases/latest) · [完整开发文档](COST_CONSOLE_DEVELOPMENT.md) · [上游项目](https://github.com/Wei-Shaw/sub2api)
+[下载 Windows 版本](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [完整开发文档](COST_CONSOLE_DEVELOPMENT.md) · [上游项目](https://github.com/Wei-Shaw/sub2api)
 
 </div>
 
@@ -88,7 +88,7 @@ accrued_cost = hourly_rate × elapsed_hours
 
 ### 双通道签名更新
 
-- **桌面整包通道**：从 `garciagary6/sub2api-cost-console` 的公开 Release 读取 `latest.json`，只安装与内置公钥匹配的 Tauri 签名安装包。
+- **桌面整包通道**：从 `rw0104/sub2api-cost-console` 的公开 Release 读取 `latest.json`，只安装与内置公钥匹配的 Tauri 签名安装包。
 - **官方内核通道**：独立扫描公开的 `Wei-Shaw/sub2api` Release，桌面壳不变时可只切换 Go 内核。
 - **统一更新入口**：启动约 2 秒后检查一次，此后每 6 小时检查；用户也可从右下角“版本与更新”手动触发。
 - **用户确认安装**：发现新版后由用户点击下载，避免工作中被强制重启。
@@ -125,7 +125,7 @@ flowchart LR
 
 ### 使用 Windows 安装包
 
-1. 打开 [Releases](https://github.com/garciagary6/sub2api-cost-console/releases/latest)。
+1. 打开 [Releases](https://github.com/rw0104/sub2api-cost-console/releases/latest)。
 2. 下载最新的 Windows NSIS 安装包，并使用同一 Release 中的 `INSTALLER_SHA256SUMS.txt` 核对文件。
 3. 安装向导允许选择安装目录，并在完成页选择是否创建桌面快捷方式；安装范围为当前 Windows 用户，不要求管理员权限。
 4. 安装并启动 Sub2API Cost Console。
@@ -151,7 +151,7 @@ http://127.0.0.1:18765
 开发环境需要 Windows 10/11、Node.js 24、pnpm 9、Go 1.26、Rust stable、MSVC 构建工具、WebView2、PostgreSQL 15+ 和 Redis 7+。
 
 ```powershell
-git clone https://github.com/garciagary6/sub2api-cost-console.git
+git clone https://github.com/rw0104/sub2api-cost-console.git
 cd sub2api-cost-console/frontend
 corepack pnpm@9 install --frozen-lockfile
 corepack pnpm@9 desktop:dev
@@ -249,7 +249,7 @@ git merge upstream/main
 ### 版权归属
 
 - Sub2API 原始项目、原始源代码、原始文档和原始品牌资产的版权归 **Wesley Liddick、Wei-Shaw/sub2api 贡献者及各自权利人**所有。
-- 本仓库新增的桌面成本控制台、成本算法扩展、更新与回滚实现、文档以及原创 Logo 的版权归 `garciagary6/sub2api-cost-console` 贡献者所有。
+- 本仓库新增的桌面成本控制台、成本算法扩展、更新与回滚实现、文档以及原创 Logo 的版权归 `rw0104/sub2api-cost-console` 贡献者所有。
 - 本仓库不主张拥有上游项目的版权，也不暗示得到上游作者的官方背书或合作授权。
 - 对上游代码的复制、修改和分发继续受 LGPL-3.0-or-later 约束；第三方依赖和品牌分别遵循其自身许可证与权利声明。
 
