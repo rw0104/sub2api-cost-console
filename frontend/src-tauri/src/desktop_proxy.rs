@@ -78,7 +78,11 @@ fn parse_proxy_server(server: &str) -> BTreeMap<String, String> {
     }
 
     let mut socks_proxy = None;
-    for entry in server.split(';').map(str::trim).filter(|entry| !entry.is_empty()) {
+    for entry in server
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
         let Some((kind, endpoint)) = entry.split_once('=') else {
             continue;
         };
@@ -106,9 +110,7 @@ fn parse_proxy_server(server: &str) -> BTreeMap<String, String> {
         environment
             .entry("HTTP_PROXY".into())
             .or_insert_with(|| proxy.clone());
-        environment
-            .entry("HTTPS_PROXY".into())
-            .or_insert(proxy);
+        environment.entry("HTTPS_PROXY".into()).or_insert(proxy);
     }
     environment
 }
@@ -128,7 +130,11 @@ fn normalize_proxy_bypass(bypass: &str) -> String {
         "127.0.0.1".to_string(),
         "::1".to_string(),
     ]);
-    for raw in bypass.split(';').map(str::trim).filter(|value| !value.is_empty()) {
+    for raw in bypass
+        .split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if raw.eq_ignore_ascii_case("<local>") {
             continue;
         }
@@ -166,8 +172,14 @@ mod tests {
             bypass: "<local>;localhost;127.*;192.168.*".into(),
         });
 
-        assert_eq!(environment.get("HTTP_PROXY").unwrap(), "http://127.0.0.1:10808");
-        assert_eq!(environment.get("HTTPS_PROXY").unwrap(), "http://127.0.0.1:10808");
+        assert_eq!(
+            environment.get("HTTP_PROXY").unwrap(),
+            "http://127.0.0.1:10808"
+        );
+        assert_eq!(
+            environment.get("HTTPS_PROXY").unwrap(),
+            "http://127.0.0.1:10808"
+        );
         let no_proxy = environment.get("NO_PROXY").unwrap();
         assert!(no_proxy.contains("127.0.0.0/8"));
         assert!(no_proxy.contains("192.168.0.0/16"));
@@ -175,19 +187,30 @@ mod tests {
 
     #[test]
     fn maps_protocol_specific_and_socks_windows_proxies() {
-        let environment = parse_proxy_server(
-            "http=127.0.0.1:8080;https=127.0.0.1:8443;socks=127.0.0.1:1080",
-        );
+        let environment =
+            parse_proxy_server("http=127.0.0.1:8080;https=127.0.0.1:8443;socks=127.0.0.1:1080");
 
-        assert_eq!(environment.get("HTTP_PROXY").unwrap(), "http://127.0.0.1:8080");
-        assert_eq!(environment.get("HTTPS_PROXY").unwrap(), "http://127.0.0.1:8443");
+        assert_eq!(
+            environment.get("HTTP_PROXY").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            environment.get("HTTPS_PROXY").unwrap(),
+            "http://127.0.0.1:8443"
+        );
     }
 
     #[test]
     fn uses_socks_when_no_protocol_proxy_exists() {
         let environment = parse_proxy_server("socks=127.0.0.1:1080");
 
-        assert_eq!(environment.get("HTTP_PROXY").unwrap(), "socks5://127.0.0.1:1080");
-        assert_eq!(environment.get("HTTPS_PROXY").unwrap(), "socks5://127.0.0.1:1080");
+        assert_eq!(
+            environment.get("HTTP_PROXY").unwrap(),
+            "socks5://127.0.0.1:1080"
+        );
+        assert_eq!(
+            environment.get("HTTPS_PROXY").unwrap(),
+            "socks5://127.0.0.1:1080"
+        );
     }
 }

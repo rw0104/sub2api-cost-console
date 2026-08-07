@@ -10,7 +10,7 @@ import (
 func TestAccountK12ModelAllowlist(t *testing.T) {
 	account := &Account{
 		Credentials: map[string]any{"plan_type": "k-12"},
-		Extra: map[string]any{"k12_allowed_models": []any{"gpt-5.1*", "gpt-5.2-codex"}},
+		Extra:       map[string]any{"k12_allowed_models": []any{"gpt-5.1*", "gpt-5.2-codex"}},
 	}
 
 	require.True(t, account.IsK12Account())

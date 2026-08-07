@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod desktop_runtime;
 mod desktop_proxy;
+mod desktop_runtime;
 mod setup_environment;
 
 use desktop_runtime::{

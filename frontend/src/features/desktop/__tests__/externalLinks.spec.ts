@@ -17,7 +17,7 @@ describe('desktop external links', () => {
   })
 
   it('opens the project repository and purchase page through the system browser', async () => {
-    ;(window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
 
     await openProjectExternalUrl(PROJECT_REPOSITORY_URL)
     await openProjectExternalUrl(ACCOUNT_PURCHASE_URL)

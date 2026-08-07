@@ -1077,7 +1077,7 @@ Invoke-WebRequest -Method Options `
 | 字段 | 来源 | 作用 |
 |---|---|---|
 | `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
-| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.170-21-g825ca7b1` |
+| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.171` |
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
@@ -1173,16 +1173,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.1
-git push origin v0.2.6
+git tag v0.2.7
+git push origin v0.2.7
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.6 --repo rw0104/sub2api-cost-console
-gh release download v0.2.6 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.7 --repo rw0104/sub2api-cost-console
+gh release download v0.2.7 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

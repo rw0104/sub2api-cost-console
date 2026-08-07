@@ -2630,6 +2630,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, turnCount)}
 
 	if len(tc.channelMapping) > 0 {
+		solInputPrice, solOutputPrice := 5e-6, 30e-6
+		terraInputPrice, terraOutputPrice := 2e-6, 12e-6
 		channelSvc = service.NewChannelService(&openAIWSUsageHandlerChannelRepoStub{
 			channels: []service.Channel{{
 				ID:                 7701,
@@ -2638,12 +2640,33 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 				GroupIDs:           []int64{groupID},
 				ModelMapping:       map[string]map[string]string{service.PlatformOpenAI: tc.channelMapping},
 				BillingModelSource: tc.billingModelSource,
+				// Keep mapping/billing-source tests deterministic when the production
+				// fallback catalog is refreshed with new provider prices.
+				ModelPricing: []service.ChannelModelPricing{
+					{
+						Platform:    service.PlatformOpenAI,
+						Models:      []string{"gpt-5.6-sol"},
+						InputPrice:  &solInputPrice,
+						OutputPrice: &solOutputPrice,
+					},
+					{
+						Platform:    service.PlatformOpenAI,
+						Models:      []string{"gpt-5.6-terra"},
+						InputPrice:  &terraInputPrice,
+						OutputPrice: &terraOutputPrice,
+					},
+				},
 			}},
 			groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
 		}, nil, nil, nil)
 	}
 
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	billingSvc := service.NewBillingService(cfg, nil)
+	var pricingResolver *service.ModelPricingResolver
+	if channelSvc != nil {
+		pricingResolver = service.NewModelPricingResolver(channelSvc, billingSvc)
+	}
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo,
 		usageRepo,
@@ -2655,14 +2678,14 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		cfg,
 		nil,
 		nil,
-		service.NewBillingService(cfg, nil),
+		billingSvc,
 		nil,
 		billingCacheSvc,
 		nil,
 		&service.DeferredService{},
 		nil,
 		nil,
-		nil,
+		pricingResolver,
 		channelSvc,
 		nil,
 		nil,
@@ -2687,7 +2710,13 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	apiKey := &service.APIKey{
 		ID:      1801,
 		GroupID: &groupID,
-		User:    &service.User{ID: 1701, Status: service.StatusActive},
+		Group: &service.Group{
+			ID:             groupID,
+			Platform:       service.PlatformOpenAI,
+			Status:         service.StatusActive,
+			RateMultiplier: 1,
+		},
+		User: &service.User{ID: 1701, Status: service.StatusActive},
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
