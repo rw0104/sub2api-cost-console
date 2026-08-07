@@ -5,6 +5,7 @@ export type BillingCycle = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time
 export type CostCurrency = 'CNY' | 'USD'
 export type CostSource = 'default' | 'custom'
 export type CostPlan = 'free' | 'plus' | 'pro' | 'team' | 'business' | 'k12' | 'unknown'
+export type AccountBillingMode = 'subscription' | 'metered'
 
 export interface CostProfile {
   amount: number
@@ -15,9 +16,10 @@ export interface CostProfile {
   algorithm_version: string
 }
 
-export type CostAccount = Pick<Account, 'created_at' | 'extra' | 'credentials' | 'parent_plan_type'>
+export type CostAccount = Pick<Account, 'created_at' | 'extra' | 'credentials' | 'parent_plan_type' | 'platform' | 'type'>
 export type DateInput = string | number | Date
 
+// Used only when the daily reference-rate request and its local cache are both unavailable.
 export const CNY_PER_USD = 7.2
 export const USD_TO_CNY_RATE = CNY_PER_USD
 export const COST_ALGORITHM_VERSION = algorithmVersionSource.trim()
@@ -32,6 +34,11 @@ export const COST_ALGORITHM_MANIFEST = Object.freeze({
   default_price_checked_at: '2026-08-05',
   accrual: 'linear_elapsed_milliseconds',
   start_boundary: 'account_created_at',
+  account_billing_modes: Object.freeze({
+    subscription: Object.freeze(['oauth', 'setup-token']),
+    metered: Object.freeze(['apikey', 'upstream', 'bedrock', 'service_account']),
+  }),
+  metered_cost_basis: 'usage_tokens_x_model_or_channel_price_x_account_multiplier',
 })
 
 export const DEFAULT_MONTHLY_PRICES_USD: Readonly<Record<CostPlan, number>> = {
@@ -137,6 +144,17 @@ export function inferPlan(account: CostAccount): CostPlan {
   return 'unknown'
 }
 
+/**
+ * OAuth/setup-token accounts are acquired as quota-bearing subscriptions and
+ * can have a fixed procurement profile. API keys and upstream credentials are
+ * pay-as-you-go: their actual upstream cost is calculated from usage_logs,
+ * model/channel pricing and the account multiplier. A custom cost profile on a
+ * metered account is therefore optional fixed overhead, never its token price.
+ */
+export function resolveAccountBillingMode(account: Pick<CostAccount, 'type'>): AccountBillingMode {
+  return account.type === 'oauth' || account.type === 'setup-token' ? 'subscription' : 'metered'
+}
+
 function customCostProfile(account: CostAccount): CostProfile | null {
   const extra = isRecord(account.extra) ? account.extra : undefined
   const rawProfile = extra?.cost_profile
@@ -192,6 +210,10 @@ export function resolveCostProfile(account: CostAccount): CostProfile {
   }
 }
 
+export function isDefaultSubscriptionCostProfile(account: CostAccount): boolean {
+  return resolveAccountBillingMode(account) === 'subscription' && resolveCostProfile(account).source === 'default'
+}
+
 export function billingCycleHours(cycle: BillingCycle): number {
   return cycle === 'one_time' ? 0 : HOURS_PER_BILLING_CYCLE[cycle]
 }
@@ -225,10 +247,12 @@ export function convertCurrency(
   amount: number,
   from: CostCurrency,
   to: CostCurrency,
+  cnyPerUsd = CNY_PER_USD,
 ): number {
   if (!Number.isFinite(amount)) return 0
   if (from === to) return amount
-  return from === 'USD' ? amount * CNY_PER_USD : amount / CNY_PER_USD
+  const rate = Number.isFinite(cnyPerUsd) && cnyPerUsd > 0 ? cnyPerUsd : CNY_PER_USD
+  return from === 'USD' ? amount * rate : amount / rate
 }
 
 export function currencySymbol(currency: CostCurrency): '$' | '\u00a5' {

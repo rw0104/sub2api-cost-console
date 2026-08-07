@@ -7,6 +7,8 @@ import {
   formatMoney,
   hourlyRate,
   inferPlan,
+  isDefaultSubscriptionCostProfile,
+  resolveAccountBillingMode,
   resolveCostProfile,
   COST_ALGORITHM_VERSION,
   LEGACY_COST_ALGORITHM_VERSION,
@@ -19,6 +21,8 @@ const JOINED_AT = '2026-08-01T00:00:00.000Z'
 function account(overrides: Partial<CostAccount> = {}): CostAccount {
   return {
     created_at: JOINED_AT,
+    platform: 'openai',
+    type: 'oauth',
     extra: {},
     credentials: {},
     parent_plan_type: undefined,
@@ -133,6 +137,49 @@ describe('cost center model', () => {
     expect(resolveCostProfile(account({ extra: { plan_type: 'plus' } }))).toMatchObject({ amount: 20, currency: 'USD' })
     expect(resolveCostProfile(account({ extra: { plan_type: 'pro' } }))).toMatchObject({ amount: 100, currency: 'USD' })
     expect(resolveCostProfile(account({ extra: { plan_type: 'business' } }))).toMatchObject({ amount: 25, currency: 'USD' })
+  })
+
+  it.each([
+    ['apikey', 'https://api.deepseek.com/v1'],
+    ['apikey', 'https://api.anthropic.com'],
+    ['service_account', 'https://generativelanguage.googleapis.com'],
+    ['bedrock', ''],
+    ['upstream', 'https://relay.example.com/v1'],
+  ] as const)('treats %s upstream accounts as metered usage instead of monthly subscriptions', (type, baseUrl) => {
+    const current = account({
+      type,
+      credentials: baseUrl ? { base_url: baseUrl } : {},
+    })
+
+    expect(resolveAccountBillingMode(current)).toBe('metered')
+    expect(isDefaultSubscriptionCostProfile(current)).toBe(false)
+    expect(resolveCostProfile(current)).toMatchObject({ amount: 0, source: 'default' })
+  })
+
+  it.each(['oauth', 'setup-token'] as const)('keeps %s accounts on fixed subscription procurement', (type) => {
+    const current = account({ type, extra: { plan_type: 'plus' } })
+
+    expect(resolveAccountBillingMode(current)).toBe('subscription')
+    expect(isDefaultSubscriptionCostProfile(current)).toBe(true)
+    expect(resolveCostProfile(current)).toMatchObject({ amount: 20, source: 'default' })
+  })
+
+  it('keeps an explicit fixed overhead on a metered relay without calling it a subscription default', () => {
+    const current = account({
+      type: 'upstream',
+      extra: {
+        cost_profile: {
+          amount: 30,
+          currency: 'USD',
+          billing_cycle: 'monthly',
+          started_at: JOINED_AT,
+        },
+      },
+    })
+
+    expect(resolveAccountBillingMode(current)).toBe('metered')
+    expect(isDefaultSubscriptionCostProfile(current)).toBe(false)
+    expect(resolveCostProfile(current)).toMatchObject({ amount: 30, source: 'custom' })
   })
 
   it('converts currencies using the fixed 7.2 CNY per USD rate', () => {

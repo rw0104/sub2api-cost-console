@@ -3,7 +3,7 @@
 ## Sub2API Cost Console
 
 This repository contains original desktop-console work maintained by the
-contributors to `renqw2023/sub2api-cost-console`.
+contributors to `garciagary6/sub2api-cost-console`.
 
 The original Cost Console logo stored at `assets/cost-console-logo.png` and the
 generated application icons derived from it are project-specific assets and do

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -537,4 +538,28 @@ func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 
 	models := h.pricingService.ListModelNamesByProvider(provider)
 	response.Success(c, gin.H{"models": models})
+}
+
+// GetPricingStatus 返回当前价格目录缓存状态。
+// GET /api/v1/admin/channels/pricing/status
+func (h *ChannelHandler) GetPricingStatus(c *gin.Context) {
+	if h.pricingService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "pricing service not initialized")
+		return
+	}
+	response.Success(c, h.pricingService.GetStatus())
+}
+
+// RefreshPricing 立即从配置的数据源刷新价格目录。
+// POST /api/v1/admin/channels/pricing/refresh
+func (h *ChannelHandler) RefreshPricing(c *gin.Context) {
+	if h.pricingService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "pricing service not initialized")
+		return
+	}
+	if err := h.pricingService.ForceUpdate(); err != nil {
+		response.Error(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	response.Success(c, h.pricingService.GetStatus())
 }

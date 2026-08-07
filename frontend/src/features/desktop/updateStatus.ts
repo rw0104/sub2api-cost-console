@@ -18,6 +18,18 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+export function describeDesktopUpdateFailure(error: unknown): string {
+  const detail = errorText(error)
+  const isRelease404 = /404/i.test(detail)
+    && /releases\/(download|latest)|latest\.json/i.test(detail)
+
+  if (isRelease404) {
+    return '桌面更新清单尚未发布或暂时无法读取；当前安装版本继续运行。'
+  }
+
+  return `桌面更新检查失败：${detail}`
+}
+
 export function describeCoreUpdateFailure(error: unknown): string {
   const detail = errorText(error)
   const isRelease404 = /404/i.test(detail)

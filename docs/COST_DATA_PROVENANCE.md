@@ -40,15 +40,25 @@
 
 ## 4. 默认成本与算法版本
 
-当前采购成本算法版本为 `1.1.0`：
+当前成本算法版本为 `1.3.0`。固定订阅采购与 API 按量成本分开计算：
 
 ```text
-hourly_rate = amount / billing_cycle_hours
-elapsed_hours = max(0, now - started_at) / 3,600,000
-accrued_cost = hourly_rate × elapsed_hours
+fixed_hourly_rate = amount / billing_cycle_hours
+fixed_accrued_cost = fixed_hourly_rate × max(0, now - started_at) / 3,600,000
+
+metered_model_cost = input_tokens × input_price
+                   + cache_read_tokens × cache_read_price
+                   + cache_creation_tokens × cache_creation_price
+                   + output_tokens × output_price
+metered_account_cost = metered_model_cost × account_rate_multiplier
+combined_cost = fixed_accrued_cost + metered_account_cost
 ```
 
-`1.1.0` 的美国默认月价快照（核对日期：2026-08-05）：
+`1.3.0` 仅对 OAuth / Setup Token 订阅账号应用美国默认月价；API Key、Service Account、Bedrock 与中转账号默认按 usage 和模型价格自动计算，不要求用户填写采购金额。中转渠道优先使用渠道自定义价格，没有渠道价时再使用模型目录价和账号倍率；缺少 usage 或价格时明确标记，不伪造成本。价格目录每 24 小时自动同步一次，远程目录优先；仓库内按官方页面核验的条目只在远程缺少模型或断网时兜底，不能阻止后续自动更新。
+
+`1.3.0` 将实时总览默认窗口设为最近 1 小时并按分钟分桶，模型成本与真实路由默认使用当天数据。趋势时间轴会补齐没有请求的真实零桶，以保留空闲区间和请求峰值；移动平均窗口随观察范围变化，只作为明确标记的派生曲线，不改变请求数、Token 或成本总额。
+
+`1.3.0` 的美国默认月价快照（核对日期：2026-08-07）：
 
 | 套餐 | 默认值 | 官方依据与边界 |
 | --- | ---: | --- |
@@ -57,7 +67,7 @@ accrued_cost = hourly_rate × elapsed_hours
 | Business / 旧 Team | USD 25 / 席位 / 月 | [OpenAI Business 官方说明](https://help.openai.com/en/articles/8792828-what-is-chatgpt-business)；年付折算为 USD 20，至少 2 席，均应按实际采购覆盖 |
 | 美国 K-12 教师 | USD 0 | [OpenAI Teachers 官方说明](https://help.openai.com/en/articles/12844995-chatgpt-for-teachers)；仅适用于通过验证且在官方免费期内的美国 K-12 教育工作者 |
 
-这些值是首次识别套餐时的默认配置，不是自动扣费接口，也不会覆盖用户保存的自定义成本。固定 `1 USD = 7.2 CNY` 仍是跨币种汇总假设，不是实时汇率。后续修改默认价格、730 小时、汇率或起算边界时，必须提升 `ALGORITHM_VERSION`。
+这些值只用于固定订阅采购，不是 API Token 价格，也不会覆盖用户保存的自定义成本。美元兑人民币使用联网参考汇率并缓存 12 小时；联网与缓存都不可用时才回退到 `1 USD = 7.2 CNY`。后续修改计费模式、默认价格、730 小时、汇率或起算边界时，必须提升 `ALGORITHM_VERSION`。
 
 ## 5. 不属于生产数据的测试路径
 

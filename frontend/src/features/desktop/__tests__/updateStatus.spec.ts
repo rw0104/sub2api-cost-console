@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { describeCoreUpdateFailure, resolveUpdateCheckState } from '../updateStatus'
+import {
+  describeCoreUpdateFailure,
+  describeDesktopUpdateFailure,
+  resolveUpdateCheckState,
+} from '../updateStatus'
 
 describe('desktop update status', () => {
   it('does not report current when every remote update check failed', () => {
@@ -24,5 +28,14 @@ describe('desktop update status', () => {
     expect(describeCoreUpdateFailure(
       'HTTP status client error (404 Not Found) for url (https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest)',
     )).toContain('Wei-Shaw/sub2api')
+  })
+
+  it('treats a missing initial desktop release as a non-fatal publishing state', () => {
+    expect(describeDesktopUpdateFailure(new Error('404 latest.json'))).toContain('尚未发布')
+  })
+
+  it('keeps diagnostic details for other desktop updater failures', () => {
+    expect(describeDesktopUpdateFailure(new Error('signature rejected')))
+      .toBe('桌面更新检查失败：signature rejected')
   })
 })

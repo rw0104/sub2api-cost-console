@@ -27,6 +27,8 @@ const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2ap
 const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
 const UPSTREAM_CHECKSUM_ASSET: &str = "checksums.txt";
 const MAX_CORE_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
+const CURATED_MODEL_PRICING: &[u8] =
+    include_bytes!("../../../backend/resources/model-pricing/model_prices_and_context_window.json");
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
@@ -392,6 +394,16 @@ fn emit_backend_status(app: &AppHandle, supervisor: &BackendSupervisor) {
     let _ = app.emit("desktop-backend-status", supervisor.snapshot());
 }
 
+fn ensure_curated_model_pricing(data_dir: &Path) -> Result<(), String> {
+    let pricing_dir = data_dir.join("resources").join("model-pricing");
+    fs::create_dir_all(&pricing_dir).map_err(|error| format!("无法创建模型价格目录: {error}"))?;
+    fs::write(
+        pricing_dir.join("model_prices_and_context_window.json"),
+        CURATED_MODEL_PRICING,
+    )
+    .map_err(|error| format!("无法写入内置模型价格目录: {error}"))
+}
+
 pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<(), String> {
     {
         let inner = supervisor.inner.lock().expect("backend state poisoned");
@@ -413,6 +425,7 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
 
     let data_dir = backend_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|error| format!("无法创建后端数据目录: {error}"))?;
+    ensure_curated_model_pricing(&data_dir)?;
     let active_path = active_core_path(&app)?;
     let executable = if active_path.is_file() {
         active_path

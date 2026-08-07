@@ -43,7 +43,7 @@ const value = computed(() => {
 const detail = computed(() => {
   if (!props.state) return '点击开始真实检测'
   if (props.state.loading) return props.state.message || '正在请求真实上游…'
-  if (props.state.success) return `成功 · 连接测试总耗时${props.state.message ? ` · ${props.state.message}` : ''}`
+  if (props.state.success) return '成功 · 连接测试总耗时'
   return `失败 · ${props.state.message || '未收到有效上游响应'}`
 })
 

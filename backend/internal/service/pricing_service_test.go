@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +12,20 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+type pricingRemoteClientStub struct {
+	body  []byte
+	calls int
+}
+
+func (s *pricingRemoteClientStub) FetchPricingJSON(_ context.Context, _ string) ([]byte, error) {
+	s.calls++
+	return s.body, nil
+}
+
+func (s *pricingRemoteClientStub) FetchHashText(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
 
 func TestPricingSchedulerBlankRemoteURLDoesNotStart(t *testing.T) {
 	svc := NewPricingService(&config.Config{Pricing: config.PricingConfig{RemoteURL: "  \t  "}}, nil)
@@ -39,6 +55,53 @@ func TestPricingNonEmptyInvalidRemoteURLStillReturnsValidationError(t *testing.T
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid pricing url")
+}
+
+func TestPricingSourceChangeRefreshesExistingCacheImmediately(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model_pricing.json"), []byte(`{
+		"old-model": {"input_cost_per_token": 0.000001, "litellm_provider": "test", "mode": "chat"}
+	}`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model_pricing.source"), []byte("https://old.example/catalog\n"), 0644))
+
+	remote := &pricingRemoteClientStub{body: []byte(`{
+		"new-model": {"input_cost_per_token": 0.000002, "litellm_provider": "test", "mode": "chat"}
+	}`)}
+	svc := NewPricingService(&config.Config{Pricing: config.PricingConfig{
+		RemoteURL: "https://new.example/catalog",
+		DataDir:   dir,
+	}}, remote)
+
+	require.NoError(t, svc.checkAndUpdatePricing())
+	require.Equal(t, 1, remote.calls)
+	require.NotNil(t, svc.GetModelPricing("new-model"))
+	source, err := os.ReadFile(filepath.Join(dir, "model_pricing.source"))
+	require.NoError(t, err)
+	require.Equal(t, "https://new.example/catalog", string(bytes.TrimSpace(source)))
+}
+
+func TestPricingCatalogDoesNotDownloadMoreThanOncePerDay(t *testing.T) {
+	dir := t.TempDir()
+	remoteURL := "https://daily.example/catalog"
+	pricingFile := filepath.Join(dir, "model_pricing.json")
+	body := []byte(`{"daily-model":{"input_cost_per_token":0.000001,"litellm_provider":"test","mode":"chat"}}`)
+	require.NoError(t, os.WriteFile(pricingFile, body, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model_pricing.source"), []byte(remoteURL+"\n"), 0644))
+
+	remote := &pricingRemoteClientStub{body: body}
+	svc := NewPricingService(&config.Config{Pricing: config.PricingConfig{
+		RemoteURL:           remoteURL,
+		DataDir:             dir,
+		UpdateIntervalHours: 24,
+	}}, remote)
+
+	require.NoError(t, svc.checkAndUpdatePricing())
+	require.Zero(t, remote.calls, "a fresh daily cache must not trigger a network download")
+
+	old := time.Now().Add(-25 * time.Hour)
+	require.NoError(t, os.Chtimes(pricingFile, old, old))
+	require.NoError(t, svc.syncWithRemote())
+	require.Equal(t, 1, remote.calls, "an expired daily cache must refresh once")
 }
 
 func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
@@ -88,8 +151,8 @@ func TestBillingService_GPT56CacheWritePricingUsesOfficialMultiplier(t *testing.
 		cacheReadPriority float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, inputPriority: 10e-6, output: 30e-6, outputPriority: 60e-6, cacheRead: 0.5e-6, cacheReadPriority: 1e-6},
-		{model: "gpt-5.6-terra", input: 2e-6, inputPriority: 4e-6, output: 12e-6, outputPriority: 24e-6, cacheRead: 0.2e-6, cacheReadPriority: 0.4e-6},
-		{model: "gpt-5.6-luna", input: 0.2e-6, inputPriority: 0.4e-6, output: 1.2e-6, outputPriority: 2.4e-6, cacheRead: 0.02e-6, cacheReadPriority: 0.04e-6},
+		{model: "gpt-5.6-terra", input: 2.5e-6, inputPriority: 5e-6, output: 15e-6, outputPriority: 30e-6, cacheRead: 0.25e-6, cacheReadPriority: 0.5e-6},
+		{model: "gpt-5.6-luna", input: 1e-6, inputPriority: 2e-6, output: 6e-6, outputPriority: 12e-6, cacheRead: 0.1e-6, cacheReadPriority: 0.2e-6},
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
@@ -136,8 +199,8 @@ func TestBillingService_GPT56UsesLongContextPricingAcrossModelsAndTiers(t *testi
 		cacheWrite, output float64
 	}{
 		{name: "gpt-5.6-sol", input: 5e-6, cached: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6},
-		{name: "gpt-5.6-terra", input: 2e-6, cached: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6},
-		{name: "gpt-5.6-luna", input: 0.2e-6, cached: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6},
+		{name: "gpt-5.6-terra", input: 2.5e-6, cached: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6},
+		{name: "gpt-5.6-luna", input: 1e-6, cached: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6},
 	}
 	tiers := []struct {
 		name       string
@@ -188,8 +251,8 @@ func TestBillingService_GPT56LongContextBoundaryIsExclusive(t *testing.T) {
 func TestPricingService_BareGPT56AliasDeterministicallyUsesSol(t *testing.T) {
 	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 		"gpt-5.6-sol":   {InputCostPerToken: 5e-6},
-		"gpt-5.6-terra": {InputCostPerToken: 2e-6},
-		"gpt-5.6-luna":  {InputCostPerToken: 0.2e-6},
+		"gpt-5.6-terra": {InputCostPerToken: 2.5e-6},
+		"gpt-5.6-luna":  {InputCostPerToken: 1e-6},
 		"gpt-5.4":       {InputCostPerToken: 2.5e-6},
 	}}
 
@@ -226,8 +289,8 @@ func TestDefaultPricingIncludesOfficialGPT56Rates(t *testing.T) {
 		inputPriority, cachedPriority, cacheWritePriority, outputPriority float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, cached: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6, inputPriority: 10e-6, cachedPriority: 1e-6, cacheWritePriority: 12.5e-6, outputPriority: 60e-6},
-		{model: "gpt-5.6-terra", input: 2e-6, cached: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6, inputPriority: 4e-6, cachedPriority: 0.4e-6, cacheWritePriority: 5e-6, outputPriority: 24e-6},
-		{model: "gpt-5.6-luna", input: 0.2e-6, cached: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6, inputPriority: 0.4e-6, cachedPriority: 0.04e-6, cacheWritePriority: 0.5e-6, outputPriority: 2.4e-6},
+		{model: "gpt-5.6-terra", input: 2.5e-6, cached: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6, inputPriority: 5e-6, cachedPriority: 0.5e-6, cacheWritePriority: 6.25e-6, outputPriority: 30e-6},
+		{model: "gpt-5.6-luna", input: 1e-6, cached: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6, inputPriority: 2e-6, cachedPriority: 0.2e-6, cacheWritePriority: 2.5e-6, outputPriority: 12e-6},
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
@@ -254,8 +317,8 @@ func TestGPT56DedicatedFallbacksUseOfficialRates(t *testing.T) {
 		input, cached, cacheWrite, output float64
 	}{
 		{model: "gpt-5.6-sol", input: 5e-6, cached: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6},
-		{model: "gpt-5.6-terra", input: 2e-6, cached: 0.2e-6, cacheWrite: 2.5e-6, output: 12e-6},
-		{model: "gpt-5.6-luna", input: 0.2e-6, cached: 0.02e-6, cacheWrite: 0.25e-6, output: 1.2e-6},
+		{model: "gpt-5.6-terra", input: 2.5e-6, cached: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6},
+		{model: "gpt-5.6-luna", input: 1e-6, cached: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6},
 	}
 
 	for _, tt := range tests {
@@ -345,7 +408,7 @@ func TestBillingService_GetModelPricing_FailsClosedForImageOnlyEntries(t *testin
 	require.InDelta(t, 0.04, raw.OutputCostPerImage, 1e-12)
 }
 
-func TestPricingService_MergesFallbackOnlyModels(t *testing.T) {
+func TestPricingService_RemoteCatalogWinsAndOfflineFallbackOnlyFillsMissingModels(t *testing.T) {
 	dir := t.TempDir()
 	fallbackFile := filepath.Join(dir, "fallback.json")
 	require.NoError(t, os.WriteFile(fallbackFile, []byte(`{
@@ -373,7 +436,8 @@ func TestPricingService_MergesFallbackOnlyModels(t *testing.T) {
 	require.NoError(t, err)
 
 	merged := svc.mergeFallbackPricingData(remoteData)
-	require.InDelta(t, 0.000002, merged["remote-model"].InputCostPerToken, 1e-12)
+	require.InDelta(t, 0.000002, merged["remote-model"].InputCostPerToken, 1e-12,
+		"the daily remote catalog must update an existing model without a code release")
 	require.NotNil(t, merged["gemini-3.1-flash-lite-image"])
 	require.InDelta(t, 0.034, merged["gemini-3.1-flash-lite-image"].OutputCostPerImage, 1e-12)
 }

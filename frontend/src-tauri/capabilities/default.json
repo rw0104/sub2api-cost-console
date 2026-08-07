@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Desktop cost console capabilities",
   "windows": ["main"],
-  "permissions": ["core:default", "process:default"]
+  "permissions": ["core:default", "process:default", "updater:default"]
 }

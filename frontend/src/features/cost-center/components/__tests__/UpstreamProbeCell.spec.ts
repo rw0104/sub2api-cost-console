@@ -33,4 +33,17 @@ describe('UpstreamProbeCell', () => {
     expect(wrapper.text()).toContain('120 ms')
     expect(wrapper.text()).toContain('失败 · 上游返回 401')
   })
+
+  it('does not append arbitrary model output to a successful latency result', () => {
+    const wrapper = mount(UpstreamProbeCell, {
+      props: {
+        accountName: 'deepseek',
+        state: { loading: false, success: true, latency_ms: 1172, message: '?' },
+      },
+    })
+
+    expect(wrapper.text()).toContain('1,172 ms')
+    expect(wrapper.text()).toContain('成功 · 连接测试总耗时')
+    expect(wrapper.text()).not.toContain('连接测试总耗时 · ?')
+  })
 })

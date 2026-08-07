@@ -48,6 +48,21 @@ function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
 }
 
 describe('official core usage-log compatibility aggregation', () => {
+  it('uses local calendar-day bounds for today', () => {
+    const end = new Date(2026, 7, 6, 13, 45, 30)
+    const bounds = usageWindowBounds('today', end)
+
+    expect(bounds.start).toEqual(new Date(2026, 7, 6, 0, 0, 0, 0))
+    expect(bounds.end).toEqual(new Date(2026, 7, 7, 0, 0, 0, 0))
+  })
+
+  it('uses exact rolling bounds for one minute and one month', () => {
+    const end = new Date('2026-08-06T12:00:00.000Z')
+
+    expect(usageWindowBounds('1m', end).start.toISOString()).toBe('2026-08-06T11:59:00.000Z')
+    expect(usageWindowBounds('30d', end).start.toISOString()).toBe('2026-07-07T12:00:00.000Z')
+  })
+
   it('keeps only records inside the requested rolling window', () => {
     const end = new Date('2026-08-05T12:05:00.000Z')
     const { start } = usageWindowBounds('5m', end)
@@ -56,8 +71,9 @@ describe('official core usage-log compatibility aggregation', () => {
       usage({ id: 2, created_at: '2026-08-05T11:59:59.000Z' }),
     ], '5m', start, end)
 
-    expect(result).toHaveLength(1)
-    expect(result[0]).toMatchObject({ requests: 1, total_tokens: 20, cost: 0.32, actual_cost: 0.4 })
+    expect(result).toHaveLength(5)
+    expect(result.map((point) => point.requests)).toEqual([0, 0, 0, 1, 0])
+    expect(result[3]).toMatchObject({ requests: 1, total_tokens: 20, cost: 0.32, actual_cost: 0.4 })
   })
 
   it('calculates real account cost from the stored pricing snapshot and multiplier', () => {
@@ -66,7 +82,7 @@ describe('official core usage-log compatibility aggregation', () => {
       usage({ id: 2, account_stats_cost: null, total_cost: 0.5, account_rate_multiplier: 2 }),
     ], '30m', new Date('2026-08-05T11:35:00.000Z'), new Date('2026-08-05T12:05:00.000Z'))
 
-    expect(result[0].account_cost).toBeCloseTo(1.3)
+    expect(result.reduce((sum, point) => sum + Number(point.account_cost || 0), 0)).toBeCloseTo(1.3)
   })
 
   it('formats local calendar dates for the upstream date-only API', () => {

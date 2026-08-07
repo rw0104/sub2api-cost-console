@@ -44,6 +44,7 @@ type dashboardSnapshotV2Filters struct {
 	AccountID   int64
 	GroupID     int64
 	Model       string
+	ModelSource string
 	RequestType *int16
 	Stream      *bool
 	BillingType *int8
@@ -58,6 +59,7 @@ type dashboardSnapshotV2CacheKey struct {
 	AccountID         int64  `json:"account_id"`
 	GroupID           int64  `json:"group_id"`
 	Model             string `json:"model"`
+	ModelSource       string `json:"model_source"`
 	RequestType       *int16 `json:"request_type"`
 	Stream            *bool  `json:"stream"`
 	BillingType       *int8  `json:"billing_type"`
@@ -107,6 +109,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		AccountID:         filters.AccountID,
 		GroupID:           filters.GroupID,
 		Model:             filters.Model,
+		ModelSource:       filters.ModelSource,
 		RequestType:       filters.RequestType,
 		Stream:            filters.Stream,
 		BillingType:       filters.BillingType,
@@ -219,7 +222,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.APIKeyID,
 			filters.AccountID,
 			filters.GroupID,
-			usagestats.ModelSourceRequested,
+			filters.ModelSource,
 			filters.RequestType,
 			filters.Stream,
 			filters.BillingType,
@@ -262,7 +265,14 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 
 func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filters, error) {
 	filters := &dashboardSnapshotV2Filters{
-		Model: strings.TrimSpace(c.Query("model")),
+		Model:       strings.TrimSpace(c.Query("model")),
+		ModelSource: usagestats.ModelSourceRequested,
+	}
+	if rawModelSource := strings.TrimSpace(c.Query("model_source")); rawModelSource != "" {
+		if !usagestats.IsValidModelSource(rawModelSource) {
+			return nil, errors.New("invalid model_source, use requested/upstream/mapping")
+		}
+		filters.ModelSource = rawModelSource
 	}
 
 	if userIDStr := strings.TrimSpace(c.Query("user_id")); userIDStr != "" {

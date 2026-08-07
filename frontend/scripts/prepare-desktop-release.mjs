@@ -17,7 +17,7 @@ const releaseDirectory = resolve(frontendDirectory, 'release-assets')
 const nsisDirectory = resolve(tauriDirectory, 'target', 'release', 'bundle', 'nsis')
 const config = JSON.parse(readFileSync(resolve(tauriDirectory, 'tauri.conf.json'), 'utf8'))
 const version = String(config.version)
-const repository = (process.env.GITHUB_REPOSITORY || 'renqw2023/sub2api-cost-console').trim()
+const repository = (process.env.GITHUB_REPOSITORY || 'garciagary6/sub2api-cost-console').trim()
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error(`Desktop version must be SemVer, received ${JSON.stringify(version)}`)

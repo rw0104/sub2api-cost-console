@@ -519,15 +519,20 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
-	// Default to openai.DefaultTestModel for OpenAI testing
+	// API-key compatible upstreams may require provider-specific model IDs.
 	testModelID := modelID
-	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
+	if testModelID == "" && account.Type == AccountTypeAPIKey {
+		// The selector already returns an upstream model, so do not map it twice.
+		testModelID = selectOpenAIAPIKeyTestModel(account)
+	} else {
+		if testModelID == "" {
+			testModelID = openai.DefaultTestModel
+		}
+		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
 	// account model mapping, and compact mode applies compact-only mapping on top.
-	testModelID = account.GetMappedModel(testModelID)
 	if mode == AccountTestModeCompact {
 		testModelID = resolveOpenAICompactForwardModel(account, testModelID)
 		return s.testOpenAICompactConnection(c, account, testModelID)

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { testAccount } = vi.hoisted(() => ({ testAccount: vi.fn() }))
 
@@ -10,9 +10,63 @@ vi.mock('@/api/admin', () => ({
   },
 }))
 
-import { buildCostCenterSnapshotQuery, useCostCenterData } from '../useCostCenterData'
+import {
+  buildCostCenterSnapshotQuery,
+  buildCostCenterDataQueries,
+  DEFAULT_COST_CENTER_RANGE,
+  DEFAULT_MODEL_COST_RANGE,
+  useCostCenterData,
+} from '../useCostCenterData'
 
 describe('cost center live ranges', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('defaults live observation to one hour and model economics to today', () => {
+    expect(DEFAULT_COST_CENTER_RANGE).toBe('1h')
+    expect(DEFAULT_MODEL_COST_RANGE).toBe('today')
+    expect(useCostCenterData().modelCostRange.value).toBe('today')
+  })
+
+  it('requests the current local calendar day with exact bounds', () => {
+    const now = new Date(2026, 7, 6, 13, 45, 30)
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 1)
+
+    expect(buildCostCenterSnapshotQuery('today')).toEqual({
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+      granularity: 'hour',
+    })
+  })
+
+  it('uses minute buckets for the one minute window', () => {
+    expect(buildCostCenterSnapshotQuery('1m')).toEqual({
+      time_range: '1m',
+      granularity: 'minute',
+    })
+  })
+
+  it('uses minute buckets for the default one hour chart', () => {
+    expect(buildCostCenterSnapshotQuery('1h')).toEqual({
+      time_range: '1h',
+      granularity: 'minute',
+    })
+  })
+
+  it('keeps observation and model queries on their independent windows', () => {
+    const queries = buildCostCenterDataQueries('1h', 'today')
+    expect(queries.observation).toMatchObject({ time_range: '1h', granularity: 'minute' })
+    expect(queries.model).toMatchObject({ granularity: 'hour' })
+    expect(queries.model).not.toHaveProperty('time_range')
+  })
+
   it('requests an exact 30 minute snapshot with minute buckets', () => {
     expect(buildCostCenterSnapshotQuery('30m')).toEqual({
       time_range: '30m',
@@ -23,6 +77,13 @@ describe('cost center live ranges', () => {
   it('uses day buckets for the seven day window', () => {
     expect(buildCostCenterSnapshotQuery('7d')).toEqual({
       time_range: '7d',
+      granularity: 'day',
+    })
+  })
+
+  it('uses day buckets for the one month window', () => {
+    expect(buildCostCenterSnapshotQuery('30d')).toEqual({
+      time_range: '30d',
       granularity: 'day',
     })
   })

@@ -6,13 +6,13 @@
 
 **面向 Sub2API 的 Windows 桌面成本运营控制台**
 
-[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/renqw2023/sub2api-cost-console/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/garciagary6/sub2api-cost-console/releases/latest)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri)](https://tauri.app/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs)](https://vuejs.org/)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-[下载 Windows 版本](https://github.com/renqw2023/sub2api-cost-console/releases/latest) · [完整开发文档](COST_CONSOLE_DEVELOPMENT.md) · [上游项目](https://github.com/Wei-Shaw/sub2api)
+[下载 Windows 版本](https://github.com/garciagary6/sub2api-cost-console/releases/latest) · [完整开发文档](COST_CONSOLE_DEVELOPMENT.md) · [上游项目](https://github.com/Wei-Shaw/sub2api)
 
 </div>
 
@@ -21,7 +21,7 @@
 
 ## 项目简介
 
-Sub2API Cost Console 将 Sub2API 的网关、账号管理和运营数据整合为一个 Windows 桌面工具，重点解决“账号加入后花了多少钱、产生了多少 API 价值、哪个上游最稳定、号池还能使用多久”这类运营问题。
+Sub2API Cost Console 是带本地 Go 内核的原生 Windows 桌面程序，不是把管理页单独部署成网站。它将 Sub2API 的网关、账号管理和真实 `usage_logs` 运营数据整合到同一个桌面窗口，重点解决“账号加入后花了多少钱、具体模型产生了多少 API 价值、哪个上游最稳定、号池还能使用多久”这类运营问题。
 
 桌面程序使用 Tauri 2 承载 Vue 3 界面，并管理本地 Go 内核。首次启动时会检查 `127.0.0.1:18765`：如果已有兼容的 Sub2API 服务则直接连接，否则启动安装包内置的受管内核。受管配置和业务数据保存在 Windows 用户应用数据目录，升级桌面程序时不会覆盖。
 
@@ -30,6 +30,8 @@ Sub2API Cost Console 将 Sub2API 的网关、账号管理和运营数据整合�
 - 维护多个 Codex、Grok 或其他上游账号的个人及团队。
 - 需要把采购成本、API 产出、请求质量和账号状态放在同一个界面的运维人员。
 - 需要对成本算法、软件版本和内核更新进行可追溯管理的部署场景。
+
+成本分析不只面向 Codex 和 Grok。只要请求经过 Sub2API 并产生真实用量记录，控制台就会按实际模型、渠道、账号、入站接口和上游接口归集；OpenAI、Anthropic/Claude、DeepSeek、Gemini、xAI/Grok 以及 OpenAI 兼容中转站都使用同一套可追溯统计链路。无法返回 Token 或真实计费信息的中转站会明确显示数据缺口，不会根据账号名称猜测成本。
 
 ## 核心能力
 
@@ -57,29 +59,44 @@ accrued_cost = hourly_rate × elapsed_hours
 
 每项指标的实测来源、推导公式、当前号池与历史数据边界参见[成本数据真实性与口径](docs/COST_DATA_PROVENANCE.md)。
 
+### 模型、渠道与实时价格目录
+
+- 模型和渠道只从真实路由与 `usage_logs` 展示，不预置“只有 Codex / Grok”的假筛选项。
+- 官方按量 API 使用模型输入、输出、缓存创建和缓存命中 Token 分别核算；DeepSeek、Claude 等无需填写月费成本档案。
+- OpenAI 兼容中转站优先采用其返回的真实 `actual_cost` 或账号/渠道自定义价格；若只返回 Token，则按实际模型目录价估算并标注口径。
+- 价格目录由后端每日最多自动同步一次，离线时使用随安装包发布的兜底目录；价格更新只影响后续请求，历史记录保留请求发生时的价格快照。
+- 美元/人民币汇率使用 12 小时本地缓存，网络失败时保留最近成功值并显示来源与时间。
+
+### 历史统计与可观察性
+
+- 观察窗口支持最近 1 分钟、5 分钟、30 分钟、1 小时、6 小时、24 小时、7 天、1 个月和本地自然日。
+- 趋势图使用真实零桶、自适应采样粒度和滚动均值，短窗口无请求时会明确显示空窗，不伪造数据。
+- 账号删除后不再级联删除历史 `usage_logs`；排行榜只显示现有账号，历史成本、请求和模型统计仍可追溯。
+- K-12 账号可配置模型白名单；遇到 `Selected model is at capacity` 时进入账号故障转移，而不是停止整条请求链路。
+
 ### 可追溯的三版本体系
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
 | Desktop | `0.2.6` | Tauri 2 桌面壳、Vue 界面和安装结构 |
 | Core | `0.1.170-21-g825ca7b1` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `825ca7b1fc9335f904bc077f051de815fb61e47f`） |
-| Algorithm | `1.1.0` | 成本折算、起算边界、美国官方默认套餐价和累计规则 |
+| Algorithm | `1.3.0` | 固定订阅/API 按量分流、独立观察/模型窗口、真实零桶、自适应趋势与动态价格目录 |
 
 每条成本档案记录其算法版本。旧数据如果没有版本会显示为 `legacy-unversioned`，不会被静默归类为当前算法。
 
-> 版本边界：`Desktop` 只显示本机安装版本，不参与在线检查；`Core` 显示当前实际运行的 Sub2API 版本和真实提交号；`Algorithm` 是本项目成本规则版本，不冒充上游版本。版本面板只扫描公开的 `Wei-Shaw/sub2api` Release。
+> 版本边界：`Desktop` 检查本仓库的签名 Release；`Core` 显示当前实际运行的 Sub2API 版本和真实提交号，并检查公开的 `Wei-Shaw/sub2api` Release；`Algorithm` 是本项目成本规则版本，不冒充上游版本。
 
-### 单通道上游内核更新
+### 双通道签名更新
 
-- **桌面版本不联网检查**：安装包版本只在本机展示；当前版本不会请求本项目仓库的 `latest.json`，桌面升级通过新的安装包完成。
-- **单一更新入口**：桌面模式下，上游原生版本徽标只显示静态版本，不触发原生整包更新；所有内核检查和回滚都从右下角“版本与更新”完成。
-- **自动扫描上游**：启动约 2 秒后扫描一次，此后每 6 小时扫描一次；“检查更新”按钮也只查询公开的 `Wei-Shaw/sub2api` Release API，不需要 GitHub 账号。
-- **用户确认安装**：发现新版后由用户点击下载，避免工作中被强制重启。桌面壳保持不变，只切换 Go 内核。
+- **桌面整包通道**：从 `garciagary6/sub2api-cost-console` 的公开 Release 读取 `latest.json`，只安装与内置公钥匹配的 Tauri 签名安装包。
+- **官方内核通道**：独立扫描公开的 `Wei-Shaw/sub2api` Release，桌面壳不变时可只切换 Go 内核。
+- **统一更新入口**：启动约 2 秒后检查一次，此后每 6 小时检查；用户也可从右下角“版本与更新”手动触发。
+- **用户确认安装**：发现新版后由用户点击下载，避免工作中被强制重启。
 - **完整性校验**：只接受固定上游仓库的 Windows x64 资产，校验上游 `checksums.txt`、SHA-256、内核 `--version` 和真实提交号。
 - **失败回滚**：保留上一版内核；新内核必须在 30 秒内通过健康检查，否则自动恢复上一版本。
 - **统计兼容**：如果官方上游内核不支持分钟级 Dashboard 参数，控制台从真实 `usage_logs` 聚合精确窗口；超过安全行数上限时明确报错，不显示不完整结果。
 
-更新程序不会对源码目录执行 `git pull`，不会读取本项目受限 Release，也不会执行非 `Wei-Shaw/sub2api` 的资产。
+更新程序不会对源码目录执行 `git pull`，不会把 GitHub Token 写入客户端，也不会执行两个固定更新来源之外的资产。
 
 ## 系统架构
 
@@ -93,7 +110,7 @@ flowchart LR
     Core --> Redis["Redis / Valkey"]
     Core --> Providers["Codex / Grok / 其他上游"]
     Upstream["Wei-Shaw/sub2api Releases"] -->|官方 checksums + SHA-256| Core
-    Installer["手动分发的新安装包"] -->|桌面版本升级| Desktop
+    Release["本项目 GitHub Releases"] -->|Tauri 签名 + latest.json| Desktop
 ```
 
 | 层级 | 技术 | 职责 |
@@ -102,13 +119,13 @@ flowchart LR
 | 前端 | Vue 3、TypeScript、Pinia、Chart.js | 三套面板、成本模型、图表和版本面板 |
 | 后端 | Go、Gin、Ent | 鉴权、账号、调度、统计和 API 网关 |
 | 数据层 | PostgreSQL、Redis/Valkey | 持久化、缓存和运行状态 |
-| 发布 | Tauri NSIS、上游 Release API | Windows 安装包；官方上游内核扫描、校验和回滚 |
+| 发布 | GitHub Actions、Tauri NSIS、上游 Release API | 签名桌面安装包；官方上游内核扫描、校验和回滚 |
 
 ## 安装与使用
 
 ### 使用 Windows 安装包
 
-1. 打开 [Releases](https://github.com/renqw2023/sub2api-cost-console/releases/latest)。
+1. 打开 [Releases](https://github.com/garciagary6/sub2api-cost-console/releases/latest)。
 2. 下载最新的 Windows NSIS 安装包，并使用同一 Release 中的 `INSTALLER_SHA256SUMS.txt` 核对文件。
 3. 安装向导允许选择安装目录，并在完成页选择是否创建桌面快捷方式；安装范围为当前 Windows 用户，不要求管理员权限。
 4. 安装并启动 Sub2API Cost Console。
@@ -134,7 +151,7 @@ http://127.0.0.1:18765
 开发环境需要 Windows 10/11、Node.js 24、pnpm 9、Go 1.26、Rust stable、MSVC 构建工具、WebView2、PostgreSQL 15+ 和 Redis 7+。
 
 ```powershell
-git clone https://github.com/renqw2023/sub2api-cost-console.git
+git clone https://github.com/garciagary6/sub2api-cost-console.git
 cd sub2api-cost-console/frontend
 corepack pnpm@9 install --frozen-lockfile
 corepack pnpm@9 desktop:dev
@@ -191,20 +208,22 @@ go test ./...
 - 人民币/美元换算规则。
 - 账号开始计费时间。
 - 累计成本公式和一次性费用边界。
+- 账号固定订阅采购与 API 按量成本的分类规则。
+- 模型目录价、渠道自定义价和账号成本倍率的优先级。
 
 更完整的目录说明、API、打包、更新、故障排查和发布流程见 [COST_CONSOLE_DEVELOPMENT.md](COST_CONSOLE_DEVELOPMENT.md)。
 
 ## 发布流程
 
-当前 `0.2.6` 关闭桌面端在线自更新。可直接把 NSIS 安装包及其 SHA-256 校验值分享给用户，不需要分享源码；用户运行安装包时可以选择安装位置和桌面快捷方式。
+当前版本已恢复桌面在线更新。推送与 `tauri.conf.json` 版本一致的 `v*` 标签，或手动运行 `Desktop Release` 工作流，会生成 NSIS 安装包、Tauri 签名、`latest.json` 和 SHA-256 校验文件。客户端匿名读取公开 Release，不需要 GitHub Token。
 
-仓库仍保留历史发布脚本和工作流，供 GitHub 账号恢复后生成 Release 资产，但桌面客户端不会读取这些桌面更新清单。内核更新始终直接读取官方上游：
+内核更新始终直接读取官方上游：
 
 - `https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest`
 - 对应 Release 的 `checksums.txt`
 - 对应 Windows x64 `sub2api_<version>_windows_amd64.zip`
 
-`createUpdaterArtifacts` 当前为 `false`，所以本地构建不需要 Tauri updater 私钥。它不等同于 Windows Authenticode 代码签名；如需消除 Windows 发布者警告，仍应单独配置受信任的 Authenticode 证书。
+`createUpdaterArtifacts` 当前为 `true`。发布构建必须在 GitHub Actions 中配置 `TAURI_SIGNING_PRIVATE_KEY`，本地发布构建也必须通过同名环境变量提供私钥。Tauri 更新签名用于防止安装包被替换；它不等同于 Windows Authenticode 代码签名，如需消除 Windows 发布者警告，仍应单独配置受信任的 Authenticode 证书。
 
 ## 与上游同步
 
@@ -230,7 +249,7 @@ git merge upstream/main
 ### 版权归属
 
 - Sub2API 原始项目、原始源代码、原始文档和原始品牌资产的版权归 **Wesley Liddick、Wei-Shaw/sub2api 贡献者及各自权利人**所有。
-- 本仓库新增的桌面成本控制台、成本算法扩展、更新与回滚实现、文档以及原创 Logo 的版权归 `renqw2023/sub2api-cost-console` 贡献者所有。
+- 本仓库新增的桌面成本控制台、成本算法扩展、更新与回滚实现、文档以及原创 Logo 的版权归 `garciagary6/sub2api-cost-console` 贡献者所有。
 - 本仓库不主张拥有上游项目的版权，也不暗示得到上游作者的官方背书或合作授权。
 - 对上游代码的复制、修改和分发继续受 LGPL-3.0-or-later 约束；第三方依赖和品牌分别遵循其自身许可证与权利声明。
 

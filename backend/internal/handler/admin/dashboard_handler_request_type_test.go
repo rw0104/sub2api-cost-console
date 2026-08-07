@@ -19,9 +19,25 @@ type dashboardUsageRepoCapture struct {
 	trendStream      *bool
 	modelRequestType *int16
 	modelStream      *bool
+	modelSource      string
 	rankingLimit     int
 	ranking          []usagestats.UserSpendingRankingItem
 	rankingTotal     float64
+}
+
+func (s *dashboardUsageRepoCapture) GetModelStatsWithFiltersBySource(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	userID, apiKeyID, accountID, groupID int64,
+	requestType *int16,
+	stream *bool,
+	billingType *int8,
+	source string,
+) ([]usagestats.ModelStat, error) {
+	s.modelRequestType = requestType
+	s.modelStream = stream
+	s.modelSource = source
+	return []usagestats.ModelStat{}, nil
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
@@ -73,6 +89,7 @@ func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Eng
 	router := gin.New()
 	router.GET("/admin/dashboard/trend", handler.GetUsageTrend)
 	router.GET("/admin/dashboard/models", handler.GetModelStats)
+	router.GET("/admin/dashboard/snapshot-v2", handler.GetSnapshotV2)
 	router.GET("/admin/dashboard/users-ranking", handler.GetUserSpendingRanking)
 	return router
 }
@@ -169,6 +186,32 @@ func TestDashboardModelStatsValidModelSource(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, usagestats.ModelSourceUpstream, repo.modelSource)
+}
+
+func TestDashboardSnapshotV2UsesRequestedModelSource(t *testing.T) {
+	dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?time_range=1m&granularity=minute&include_stats=false&include_trend=false&include_model_stats=true&model_source=upstream", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, usagestats.ModelSourceUpstream, repo.modelSource)
+}
+
+func TestDashboardSnapshotV2RejectsInvalidModelSource(t *testing.T) {
+	dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?include_stats=false&include_trend=false&model_source=invalid", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestDashboardUsersRankingLimitAndCache(t *testing.T) {

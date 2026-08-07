@@ -31,13 +31,24 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/sub2api-backend"],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"],
         "startMenuFolder": "Sub2API Cost Console"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdERTkwRDZGNzdEREI2ODEKUldTQnR0MTNidzNwZmYrdVVaVG9nNWJHTVBVVG80ZndsMzNrNFRvRUI3QS8zVTNxVXlxaWhQa3YK",
+      "endpoints": [
+        "https://github.com/garciagary6/sub2api-cost-console/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

@@ -89,9 +89,16 @@ func TestResponsesProbeBodyHasFunctionCall(t *testing.T) {
 	require.False(t, responsesProbeBodyHasFunctionCall([]byte(`garbage`)))
 }
 
-func TestSelectResponsesProbeModel(t *testing.T) {
+func TestSelectOpenAIAPIKeyTestModel(t *testing.T) {
 	// No model_mapping -> fall back to DefaultTestModel (OpenAI official APIKey).
-	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(&Account{}))
+	require.Equal(t, openai.DefaultTestModel, selectOpenAIAPIKeyTestModel(&Account{}))
+
+	// Official compatible providers use a valid provider-native model when the
+	// account has no explicit model mapping.
+	deepSeek := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+		"base_url": "https://api.deepseek.com/v1",
+	}}
+	require.Equal(t, "deepseek-v4-flash", selectOpenAIAPIKeyTestModel(deepSeek))
 
 	// model_mapping values are upstream models; pick first by sort for reproducibility.
 	acct := &Account{Credentials: map[string]any{
@@ -100,7 +107,7 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 			"client-a": "alpha-model",
 		},
 	}}
-	require.Equal(t, "alpha-model", selectResponsesProbeModel(acct))
+	require.Equal(t, "alpha-model", selectOpenAIAPIKeyTestModel(acct))
 
 	// Wildcard / blank upstream values are skipped.
 	acctWild := &Account{Credentials: map[string]any{
@@ -110,11 +117,11 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 			"c": "real-model",
 		},
 	}}
-	require.Equal(t, "real-model", selectResponsesProbeModel(acctWild))
+	require.Equal(t, "real-model", selectOpenAIAPIKeyTestModel(acctWild))
 
 	// Only wildcard mappings -> DefaultTestModel.
 	acctAllWild := &Account{Credentials: map[string]any{
 		"model_mapping": map[string]any{"a": "gpt-*"},
 	}}
-	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(acctAllWild))
+	require.Equal(t, openai.DefaultTestModel, selectOpenAIAPIKeyTestModel(acctAllWild))
 }

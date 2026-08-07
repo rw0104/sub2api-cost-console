@@ -117,6 +117,9 @@ func isOpenAIInstructionsRequiredError(upstreamStatusCode int, upstreamMsg strin
 }
 
 func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if isOpenAIModelCapacityError(upstreamMsg, upstreamBody) {
+		return true
+	}
 	if upstreamStatusCode != http.StatusBadRequest && upstreamStatusCode != http.StatusServiceUnavailable {
 		return false
 	}
@@ -160,6 +163,26 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 	}
 	if match(gjson.GetBytes(upstreamBody, "error.message").String()) {
 		return true
+	}
+	return match(string(upstreamBody))
+}
+
+const openAIModelCapacityReason = GatewayFailureReason("openai_model_capacity")
+
+func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
+	match := func(value string) bool {
+		return strings.Contains(strings.ToLower(strings.TrimSpace(value)), "selected model is at capacity")
+	}
+	if match(upstreamMsg) {
+		return true
+	}
+	if len(upstreamBody) == 0 {
+		return false
+	}
+	for _, path := range []string{"error.message", "response.error.message", "message"} {
+		if match(gjson.GetBytes(upstreamBody, path).String()) {
+			return true
+		}
 	}
 	return match(string(upstreamBody))
 }
@@ -247,12 +270,24 @@ func newOpenAIUpstreamFailoverError(
 	responseBody []byte,
 	upstreamMsg string,
 	retryableOnSameAccount bool,
+	forceNextAccount ...bool,
 ) *UpstreamFailoverError {
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        responseHeaders.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount,
+	}
+	forceSwitch := len(forceNextAccount) > 0 && forceNextAccount[0]
+	if isOpenAIModelCapacityError(upstreamMsg, responseBody) {
+		if forceSwitch || !retryableOnSameAccount {
+			failoverErr.RetryableOnSameAccount = false
+		}
+		failoverErr.Scope = GatewayFailureScopeAccount
+		failoverErr.Reason = openAIModelCapacityReason
+		failoverErr.NextAccountAction = NextAccountRetry
+	} else if forceSwitch {
+		failoverErr.RetryableOnSameAccount = false
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false

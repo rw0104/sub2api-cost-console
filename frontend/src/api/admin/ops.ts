@@ -980,7 +980,7 @@ export async function getDashboardOverview(
 
 export async function getDashboardSnapshotV2(
   params: {
-  time_range?: '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
+  time_range?: '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
   start_time?: string
   end_time?: string
   platform?: string

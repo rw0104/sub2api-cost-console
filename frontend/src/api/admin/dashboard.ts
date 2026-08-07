@@ -49,7 +49,7 @@ export interface TrendParams {
   end_date?: string
   start_time?: string
   end_time?: string
-  time_range?: '5m' | '30m' | '1h' | '6h' | '24h' | '7d'
+  time_range?: '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
   granularity?: 'day' | 'hour' | 'minute'
   user_id?: number
   api_key_id?: number
@@ -127,6 +127,7 @@ export interface GroupStatsResponse {
 }
 
 export interface DashboardSnapshotV2Params extends TrendParams {
+  model_source?: 'requested' | 'upstream' | 'mapping'
   include_stats?: boolean
   include_trend?: boolean
   include_model_stats?: boolean

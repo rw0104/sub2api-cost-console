@@ -4,7 +4,7 @@
 > 桌面应用版本：0.2.1
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
-> 本项目：[`renqw2023/sub2api-cost-console`](https://github.com/renqw2023/sub2api-cost-console)
+> 本项目：[`garciagary6/sub2api-cost-console`](https://github.com/garciagary6/sub2api-cost-console)
 
 本文档面向需要继续开发、部署、调试和维护 Sub2API Cost Console 的开发者。项目在 Sub2API 管理端基础上增加了 Windows 桌面壳、三套成本运营面板、号码采购成本模型以及桌面端连接适配。
 
@@ -457,7 +457,7 @@ Test-NetConnection 127.0.0.1 -Port 18765
 ## 10. 安装依赖
 
 ```powershell
-git clone https://github.com/renqw2023/sub2api-cost-console.git
+git clone https://github.com/garciagary6/sub2api-cost-console.git
 cd sub2api-cost-console/frontend
 corepack pnpm@9 install --frozen-lockfile
 ```
@@ -1051,13 +1051,13 @@ Invoke-WebRequest -Method Options `
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
-版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。桌面版本只显示本机安装值，不参与在线检查；用户仍从同一个“版本与更新”面板扫描和安装上游内核。
+版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。桌面整包与上游内核分别使用独立更新源，用户从同一个“版本与更新”面板检查和安装。
 
 ### 27.2 桌面版本边界
 
-`0.2.5` 起删除 Tauri updater 插件、权限和 endpoint，`createUpdaterArtifacts=false`。客户端不会访问 `renqw2023/sub2api-cost-console` 的 `latest.json`，也不会把仓库 Token 写入桌面程序。
+当前版本已恢复 Tauri updater 插件、`updater:default` 权限和固定 endpoint，`createUpdaterArtifacts=true`。客户端匿名访问 `garciagary6/sub2api-cost-console` 公开 Release 的 `latest.json`，不会把 GitHub Token 写入桌面程序。
 
-桌面升级通过新的 NSIS 安装包完成。安装器采用 `currentUser` 模式，显示原生安装目录页，并在完成页允许用户选择是否创建桌面快捷方式。
+桌面安装器采用 `currentUser` 模式，显示原生安装目录页，并在完成页允许用户选择是否创建桌面快捷方式。自动更新只接受 `tauri.conf.json` 内置公钥验证通过的签名 NSIS 资产；发现更新后仍由用户确认安装，避免工作中被强制重启。
 
 ### 27.3 内核通道
 
@@ -1094,23 +1094,24 @@ https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_wi
   "currency": "USD",
   "billing_cycle": "monthly",
   "started_at": "2026-08-04T10:00:00.000Z",
-  "algorithm_version": "1.1.0"
+  "algorithm_version": "1.3.0"
 }
 ```
 
-旧数据缺少版本时显示 `legacy-unversioned`，不会被静默归类为当前算法。修改 730 小时、汇率、起算边界或累计公式时必须：
+旧数据缺少版本时显示 `legacy-unversioned`，不会被静默归类为当前算法。修改固定订阅/API 按量分流、模型/渠道价格优先级、730 小时、汇率、起算边界或累计公式时必须：
 
 1. 提升 `frontend/ALGORITHM_VERSION`。
 2. 更新成本模型测试。
 3. 在 Release Notes 中说明规则变化和生效边界。
 4. 不回写历史成本档案的算法版本。
 
-## 28. 安装包分发与未来 CI
+## 28. 安装包分发与发布 CI
 
-GitHub 账号限制期间，直接分发本地构建的 NSIS 安装包，不需要把源码发给普通用户。构建命令：
+本地可构建 NSIS 安装包；因为启用了 updater 产物，发布构建必须提供与 `tauri.conf.json` 公钥对应的私钥：
 
 ```powershell
 cd frontend
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content C:\secure\updater.key -Raw
 corepack pnpm@9 desktop:build
 ```
 
@@ -1120,17 +1121,18 @@ corepack pnpm@9 desktop:build
 frontend/src-tauri/target/release/bundle/nsis/
 ```
 
-分享时同时提供安装包 SHA-256、版本号、上游版权和 LGPL 源码获取地址。`createUpdaterArtifacts=false`，所以构建不需要 `TAURI_SIGNING_PRIVATE_KEY`；这不等同于 Authenticode，未配置 Windows 代码签名证书时系统仍可能提示“未知发布者”。
+分享时同时提供安装包 SHA-256、版本号、上游版权和 LGPL 源码获取地址。`TAURI_SIGNING_PRIVATE_KEY` 只允许保存在发布机或 GitHub Actions Secret 中，不得写入仓库、日志或安装包。Tauri updater 签名不等同于 Authenticode；未配置 Windows 代码签名证书时系统仍可能提示“未知发布者”。
 
-仓库恢复后可继续使用 `.github/workflows/desktop-release.yml` 生成 GitHub Release，但当前客户端仍不会自动检查桌面版本。未来流水线至少应：
+`.github/workflows/desktop-release.yml` 在推送与桌面版本一致的 `v*` 标签或手动触发时生成 GitHub Release。流水线会：
 
 1. 固定 pnpm、Go 1.26.5 和 Rust 工具链。
 2. 构建后端嵌入 Web UI。
 3. 编译 Windows x86_64 Go sidecar。
 4. 构建 NSIS 安装包并生成安装包 SHA-256。
-5. 可选执行 Authenticode 代码签名。
-6. 将安装器、校验文件、许可证与源代码获取说明上传到稳定 Release。
-7. 将同一批资产保存为 GitHub Actions Artifact。
+5. 使用 Actions Secret 中的 Tauri 私钥生成安装包签名与 `latest.json`。
+6. 可选执行 Authenticode 代码签名。
+7. 将安装器、签名、校验文件、许可证与源代码获取说明上传到稳定 Release。
+8. 将同一批资产保存为 GitHub Actions Artifact。
 
 不再发布本项目自定义 `core-channel`；内核版本和校验材料由 `Wei-Shaw/sub2api` 官方 Release 提供。本项目只负责固定来源验证、下载、切换和回滚。
 
@@ -1138,19 +1140,19 @@ frontend/src-tauri/target/release/bundle/nsis/
 
 ```powershell
 # 仓库恢复后，使用 tauri.conf.json 中的版本创建安装包 Release
-gh workflow run desktop-release.yml --repo renqw2023/sub2api-cost-console
+gh workflow run desktop-release.yml --repo garciagary6/sub2api-cost-console
 
 # 或推送同版本标签
 git tag v0.2.1
-git push cost-console v0.2.1
+git push origin v0.2.6
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.5 --repo renqw2023/sub2api-cost-console
-gh release download v0.2.5 --repo renqw2023/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.6 --repo garciagary6/sub2api-cost-console
+gh release download v0.2.6 --repo garciagary6/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

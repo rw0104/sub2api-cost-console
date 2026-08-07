@@ -475,3 +475,36 @@ func TestSyncPricingModels_ValidPlatform_EmptyService(t *testing.T) {
 		require.NotNil(t, body.Data.Models, "models must not be null for platform=%s", platform)
 	}
 }
+
+func TestPricingStatus_ReportsCatalogState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := &ChannelHandler{pricingService: service.NewPricingService(nil, nil)}
+	router.GET("/channels/pricing/status", h.GetPricingStatus)
+
+	req := httptest.NewRequest(http.MethodGet, "/channels/pricing/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Data struct {
+			ModelCount int `json:"model_count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Zero(t, body.Data.ModelCount)
+}
+
+func TestRefreshPricing_ReportsUnavailableRemoteSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := &ChannelHandler{pricingService: service.NewPricingService(nil, nil)}
+	router.POST("/channels/pricing/refresh", h.RefreshPricing)
+
+	req := httptest.NewRequest(http.MethodPost, "/channels/pricing/refresh", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+}

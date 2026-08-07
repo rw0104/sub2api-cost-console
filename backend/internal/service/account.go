@@ -790,7 +790,98 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
 // 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
 // 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
+// IsK12Account reports whether the account belongs to a ChatGPT for Teachers
+// (K-12) workspace. Imports from different clients store this plan marker in
+// either credentials or extra metadata.
+func (a *Account) IsK12Account() bool {
+	if a == nil {
+		return false
+	}
+	values := make([]any, 0, 4)
+	if a.Credentials != nil {
+		values = append(values, a.Credentials["plan_type"], a.Credentials["subscription_tier"])
+	}
+	if a.Extra != nil {
+		values = append(values, a.Extra["plan_type"], a.Extra["subscription_tier"])
+	}
+	for _, value := range values {
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(raw))
+		normalized = strings.NewReplacer("-", "_", " ", "_").Replace(normalized)
+		switch normalized {
+		case "k12", "k_12", "chatgpt_k12", "chatgpt_for_teachers", "teachers", "teacher":
+			return true
+		}
+	}
+	return false
+}
+
+// GetK12AllowedModels returns the optional per-account K-12 model allowlist.
+// It supports JSON arrays, comma/newline-separated strings and model wildcards.
+// An empty list preserves existing scheduling for a gradual rollout.
+func (a *Account) GetK12AllowedModels() []string {
+	if a == nil || !a.IsK12Account() {
+		return nil
+	}
+	var raw any
+	if a.Extra != nil {
+		raw = a.Extra["k12_allowed_models"]
+	}
+	if raw == nil && a.Credentials != nil {
+		raw = a.Credentials["k12_allowed_models"]
+	}
+
+	var values []string
+	switch value := raw.(type) {
+	case string:
+		values = strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
+	case []string:
+		values = value
+	case []any:
+		values = make([]string, 0, len(value))
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				values = append(values, text)
+			}
+		}
+	}
+
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		model := strings.TrimSpace(value)
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		result = append(result, model)
+	}
+	return result
+}
+
+func (a *Account) isK12ModelAllowed(requestedModel string) bool {
+	allowedModels := a.GetK12AllowedModels()
+	if len(allowedModels) == 0 {
+		return true
+	}
+	for _, allowedModel := range allowedModels {
+		if allowedModel == requestedModel || matchWildcard(allowedModel, requestedModel) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	if !a.isK12ModelAllowed(requestedModel) {
+		return false
+	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被

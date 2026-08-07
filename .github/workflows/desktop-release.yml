@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   windows-release:
-    name: Build signed Windows release
+    name: Build signed Windows desktop release
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -62,14 +62,11 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-sidecar.mjs
 
-      - name: Prepare signed core update assets
-        id: core-assets
+      - name: Collect release metadata
+        id: release-meta
         shell: pwsh
         working-directory: frontend
-        env:
-          SUB2API_CORE_RELEASE_NOTES: Bundled core published with desktop release.
         run: |
-          node scripts/prepare-core-release.mjs
           $config = Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json
           $version = [string]$config.version
           $coreVersion = (Get-Content -Raw CORE_VERSION).Trim()
@@ -84,7 +81,6 @@ jobs:
           "core_version=$coreVersion" >> $env:GITHUB_OUTPUT
           "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
           "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
-          "core_channel=core-channel" >> $env:GITHUB_OUTPUT
 
       - name: Build and publish Tauri installer
         uses: tauri-apps/tauri-action@v1
@@ -97,10 +93,10 @@ jobs:
           releaseBody: |
             Windows 成本运维桌面工具。
 
-            - 桌面版本：v${{ steps.core-assets.outputs.version }}
-            - 上游内核基线：v${{ steps.core-assets.outputs.core_version }}（${{ steps.core-assets.outputs.upstream_commit }}）
-            - 成本算法：v${{ steps.core-assets.outputs.algorithm_version }}
-            - 包含签名更新清单、独立内核签名与 SHA-256 校验文件。
+            - 桌面版本：v${{ steps.release-meta.outputs.version }}
+            - 上游内核基线：v${{ steps.release-meta.outputs.core_version }}（${{ steps.release-meta.outputs.upstream_commit }}）
+            - 成本算法：v${{ steps.release-meta.outputs.algorithm_version }}
+            - 包含 Tauri 签名更新清单、安装包签名与 SHA-256 校验文件。
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
@@ -119,35 +115,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ steps.core-assets.outputs.tag }}" `
+          gh release upload "${{ steps.release-meta.outputs.tag }}" `
             (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) --clobber
-
-      - name: Publish independent core channel
-        shell: pwsh
-        working-directory: frontend
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $channel = "${{ steps.core-assets.outputs.core_channel }}"
-          $title = "Sub2API managed core channel"
-          $notes = "Upstream baseline: v${{ steps.core-assets.outputs.core_version }}; upstream commit: ${{ steps.core-assets.outputs.upstream_commit }}; cost algorithm: v${{ steps.core-assets.outputs.algorithm_version }}."
-          gh release view $channel --repo "${{ github.repository }}" *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $channel --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title $title --notes $notes
-          } else {
-            gh release edit $channel --repo "${{ github.repository }}" --prerelease --title $title --notes $notes
-          }
-          $payload = Get-ChildItem -File release-assets | Where-Object { $_.Name -notlike 'core-update.json*' -and $_.Name -ne 'INSTALLER_SHA256SUMS.txt' } | ForEach-Object { $_.FullName }
-          if ($payload.Count -eq 0) { throw "No versioned core assets were generated" }
-          gh release upload $channel --repo "${{ github.repository }}" $payload --clobber
-          gh release upload $channel --repo "${{ github.repository }}" `
-            (Resolve-Path release-assets/core-update.json) `
-            (Resolve-Path release-assets/core-update.json.sig) --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: sub2api-cost-console-${{ steps.core-assets.outputs.version }}-windows
+          name: sub2api-cost-console-${{ steps.release-meta.outputs.version }}-windows
           if-no-files-found: error
           path: |
             frontend/src-tauri/target/release/bundle/nsis/*
