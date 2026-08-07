@@ -211,9 +211,16 @@ sub2api-cost-console/
 
 ## 6. 成本模型
 
-成本模型位于 `frontend/src/features/cost-center/model.ts`，使用纯函数实现，便于测试和复用。
+成本中心同时维护两类口径，不能混为一个算法：
 
-### 6.1 计费周期
+| 口径 | 适用对象 | 主要实现 | 含义 |
+|---|---|---|---|
+| 固定采购成本 | OAuth、setup-token 等按套餐采购的账号 | `frontend/src/features/cost-center/model.ts` | 账号月费、周费或一次性采购款随时间摊销 |
+| 按量模型成本 | API Key、官方 API、中转站及其他按量上游 | 后端 `PricingService`、`ModelPricingResolver`、`BillingService` | 按实际模型、Token、缓存、图片/按次价格和渠道倍率核算 |
+
+`actual_cost` 表示 Sub2API 对用户侧的实际计费；`total_cost` 表示目录或渠道口径的标准成本；`account_stats_cost` 表示应用账号倍率后的上游账号成本。前端只聚合 `usage_logs` 中已经落账的值，不根据账号名称猜测费用。
+
+### 6.1 固定采购成本的计费周期
 
 ```ts
 type BillingCycle = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
@@ -229,23 +236,30 @@ type BillingCycle = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
 | monthly | 730 |
 | one_time | 不折算小时费率 |
 
-### 6.2 默认套餐成本
+### 6.2 默认订阅套餐成本
 
-默认价格为人民币月成本：
+默认值以美元月成本保存，展示为人民币时再使用当前 USD/CNY 参考汇率换算：
 
 | 套餐 | 默认月成本 |
 |---|---:|
-| Free | ¥0 |
-| K12 | ¥30 |
-| Plus | ¥140 |
-| Pro | ¥1,400 |
-| Team | ¥210 |
-| Business | ¥210 |
-| Unknown | ¥0 |
+| Free | $0 |
+| K12 | $0 |
+| Plus | $20 |
+| Pro | $100 |
+| Team | $25 |
+| Business | $25 |
+| Unknown | $0 |
 
-需要调整默认值时修改 `DEFAULT_MONTHLY_PRICES_CNY`，同时更新单元测试和本文档。
+这些只是订阅账号的采购成本默认值，不是 OpenAI、DeepSeek、Claude 等模型的 Token 单价。需要调整时修改 `DEFAULT_MONTHLY_PRICES_USD`，同时更新单元测试和本文档；实际账单与地区差异应通过账号成本档案覆盖。
 
-### 6.3 套餐识别优先级
+### 6.3 账号计费模式与套餐识别
+
+账号类型先决定成本路径：
+
+- `oauth`、`setup-token`：默认按固定订阅采购成本摊销。
+- `apikey`、`upstream`、`bedrock`、`service_account`：按量模型成本；成本档案只表示可选固定开销，不替代 Token 计价。
+
+固定订阅账号再依次检查以下套餐字段：
 
 系统依次检查以下字段：
 
@@ -260,7 +274,7 @@ type BillingCycle = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
 
 名称会转为小写并去除多余分隔符，支持 `chatgpt_plus`、`plus_plan`、`education`、`edu` 等别名。
 
-### 6.4 开始计费时间
+### 6.4 固定采购成本的开始时间
 
 没有自定义成本配置时：
 
@@ -272,7 +286,7 @@ started_at = account.created_at
 
 自定义 `started_at` 不允许早于账号 `created_at`。未来时间不会提前产生费用。
 
-### 6.5 小时成本公式
+### 6.5 固定采购成本公式
 
 除一次性费用外：
 
@@ -289,17 +303,33 @@ now < started_at  => accrued_cost = 0
 now >= started_at => accrued_cost = amount
 ```
 
-### 6.6 币种换算
+### 6.6 多厂商按量模型成本
 
-当前固定汇率：
+按量计费不是 OpenAI 专用。后端对所有能够产生真实 `usage_logs` 的上游使用同一条解析链：
+
+```text
+渠道自定义价格/区间价
+  → 每日自动同步的 LiteLLM 聚合目录
+  → 安装包内置目录与代码兜底价
+```
+
+计价维度包括输入 Token、输出 Token、缓存创建、缓存读取、图片输入/输出、长上下文区间，以及按次或按图片档位。渠道还可以按模型通配符覆盖价格并叠加账号倍率。当前界面能够识别并归类 OpenAI、Anthropic/Claude、DeepSeek、Google/Gemini、xAI/Grok、Mistral、Meta/Llama、Alibaba/Qwen、Z.ai/GLM、Moonshot/Kimi、MiniMax、Cohere、Perplexity 和其他兼容中转。
+
+远程自动价格源是 LiteLLM 社区聚合目录，不等同于逐家厂商官网的权威账单。自动任务默认每 10 分钟检查一次本地目录年龄，但自动下载间隔为 24 小时；管理员可手动立即同步。网络不可用时使用本地缓存和随安装包发布的离线目录。生产结算应优先使用渠道合同价或实际账单，并通过渠道自定义价格覆盖目录价。
+
+中转站只有在响应中返回可归属到实际模型的完整 usage 时才能精确按 Token 核算。若缺少 usage、缓存拆分或真实上游模型，界面必须标记“价格缺失/历史回退”，不能制造精确成本。
+
+### 6.7 币种换算
+
+USD/CNY 参考汇率由 `exchangeRate.ts` 获取，并在 `localStorage` 缓存 12 小时。两条网络源和有效缓存均不可用时才回退到：
 
 ```text
 1 USD = 7.2 CNY
 ```
 
-常量为 `CNY_PER_USD`。如需实时汇率，应增加服务端汇率源、更新时间和失败回退，不建议在组件中直接请求第三方汇率 API。
+回退常量为 `CNY_PER_USD`。界面同时展示汇率来源、价格日期和缓存时间，避免把兜底值误认为实时汇率。
 
-### 6.7 持久化结构
+### 6.8 固定成本档案的持久化结构
 
 自定义成本保存到账号 `extra.cost_profile`：
 
@@ -316,7 +346,7 @@ now >= started_at => accrued_cost = amount
 
 保存时会合并当前 `account.extra`，避免主动丢弃已有字段。
 
-### 6.8 输入校验
+### 6.9 输入校验
 
 自定义配置只有满足以下条件才会被采用：
 
@@ -367,12 +397,12 @@ Promise.allSettled
 
 UI 支持：
 
-- 1 小时
-- 6 小时
-- 24 小时
-- 7 天
+- 本地自然日
+- 最近 1 分钟、5 分钟、30 分钟
+- 最近 1 小时、6 小时、24 小时
+- 最近 7 天、1 个月
 
-管理仪表盘使用 `start_date`、`end_date` 和 `granularity`，Ops 接口使用 `time_range`。7 天范围在 Ops 快照中回退为 24 小时，长期趋势由管理仪表盘提供。
+本地自然日使用用户时区的起止边界，不等同于滚动 24 小时。管理仪表盘使用 `start_date`、`end_date` 和 `granularity`，Ops 接口使用 `time_range`；上游内核不支持精确分钟参数时，桌面控制台从真实 `usage_logs` 聚合短窗口。
 
 ---
 
@@ -707,7 +737,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 以增加 `enterprise` 为例：
 
 1. 在 `CostPlan` 联合类型中增加 `enterprise`。
-2. 在 `DEFAULT_MONTHLY_PRICES_CNY` 增加默认价格。
+2. 在 `DEFAULT_MONTHLY_PRICES_USD` 增加默认价格。
 3. 在 `KNOWN_PLANS` 增加套餐名。
 4. 在 `CostCenterView.vue` 的套餐排序中增加该值。
 5. 更新成本模型测试。
@@ -1167,17 +1197,13 @@ Sub2API 不是只读的个人数据查看器，而是包含用户、账号、API
 - MongoDB 可以作为未来的数据导入源或独立适配器，但无法直接承接 Ent 的关系模型、外键、事务、现有 SQL 迁移及 Redis 的协调语义。
 - SQLite 非常适合单机桌面程序。SQLite 官方也把设备本地、低写入并发、无需网络共享的数据列为优势场景；但它同时说明多客户端网络访问、高写入并发和多服务器网站更适合客户端/服务器数据库。参见 [SQLite Appropriate Uses](https://www.sqlite.org/whentouse.html)。
 
-### 29.2 为什么 Cockpit Tools 不需要单独安装数据库
+### 29.2 桌面程序与嵌入式数据库不是同一概念
 
-[`jlcodes99/cockpit-tools`](https://github.com/jlcodes99/cockpit-tools) 是以本机账号与配置管理为主的桌面应用，其 README 说明数据主要保存在本机应用数据目录；Rust 依赖直接启用了 `rusqlite` 的 `bundled` 特性，所以 SQLite 库随程序一起分发，用户不会看到独立数据库安装。参考其 [README](https://github.com/jlcodes99/cockpit-tools#安全性与隐私简明版) 和 [`src-tauri/Cargo.toml`](https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/Cargo.toml)。
+桌面壳只决定窗口、进程和安装体验，并不自动把服务端数据层变成 SQLite。单用户、本机、单进程应用可以把 SQLite 随程序分发；本项目内核还承担多账号调度、并发控制、队列、限流和持续网关请求，因此当前仍保留 PostgreSQL 与 Redis/Valkey 的事务和协调语义。若未来提供 SQLite 模式，它必须是功能边界明确的独立存储后端，而不是替换连接字符串。
 
-这与 Sub2API 的服务端网关边界不同。Cockpit Tools 的方案证明 SQLite 很适合“单用户、本机、单进程”模式，但不能证明它能无条件替换面向多用户和持续调度的 PostgreSQL/Redis。
+### 29.3 第三方参考与许可证边界
 
-### 29.3 对 Api2Business 的参考边界
-
-[`api2business/api2business`](https://github.com/api2business/api2business) 可以作为经营指标组织、数据投影、采样流程和运营面板信息架构的参考，并采用 MIT License。但它也不是免数据库方案：README 明确要求 Bun、PostgreSQL、Temporal 和可访问的 Sub2API 管理面；架构使用 PostgreSQL 保存持久化缓存与经营账本，并读取 Sub2API PostgreSQL。其 Compose 文件只启动 API、Worker 和 Web，不会自动创建数据库。参见该项目的 [README](https://github.com/api2business/api2business#架构)、[`compose.yaml`](https://github.com/api2business/api2business/blob/master/compose.yaml) 与 [MIT License](https://github.com/api2business/api2business/blob/master/LICENSE)。
-
-允许参考的内容包括指标命名、信息层级、数据投影思路和交互流程。复制代码、样式或资产时必须保留其 MIT 版权声明；Cockpit Tools 标注为 `CC-BY-NC-SA-4.0`，不得把其代码或资产直接并入本项目的可商用分发物。
+公开开发文档只记录本项目自身的技术决策，不以其他项目的当前实现作为长期事实依据。可以参考通用的信息架构、指标命名和交互思路；引入任何第三方代码、样式或资产前必须单独核对其许可证、版权声明和商业使用限制，并在仓库中保留必要的归属信息。
 
 ### 29.4 当前已实现的安装决策
 

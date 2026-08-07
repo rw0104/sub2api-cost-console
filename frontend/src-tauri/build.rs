@@ -1,4 +1,46 @@
+use std::{env, fs, path::PathBuf, process::Command};
+
+fn stage_go_zoneinfo() {
+    println!("cargo:rerun-if-env-changed=SUB2API_ZONEINFO_PATH");
+
+    let source = env::var_os("SUB2API_ZONEINFO_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let output = Command::new("go")
+                .args(["env", "GOROOT"])
+                .output()
+                .expect("Go is required to stage the desktop IANA timezone database");
+            if !output.status.success() {
+                panic!("`go env GOROOT` failed while staging the desktop timezone database");
+            }
+            let goroot = String::from_utf8(output.stdout)
+                .expect("`go env GOROOT` returned non-UTF-8 output");
+            PathBuf::from(goroot.trim())
+                .join("lib")
+                .join("time")
+                .join("zoneinfo.zip")
+        });
+    if !source.is_file() {
+        panic!(
+            "Go IANA timezone database does not exist at {}",
+            source.display()
+        );
+    }
+
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo OUT_DIR must exist"))
+        .join("zoneinfo.zip");
+    fs::copy(&source, &output).unwrap_or_else(|error| {
+        panic!(
+            "failed to stage Go timezone database {} to {}: {error}",
+            source.display(),
+            output.display()
+        )
+    });
+    println!("cargo:rerun-if-changed={}", source.display());
+}
+
 fn main() {
+    stage_go_zoneinfo();
     let core_version =
         std::fs::read_to_string("../CORE_VERSION").expect("frontend/CORE_VERSION must exist");
     let algorithm_version = std::fs::read_to_string("../ALGORITHM_VERSION")

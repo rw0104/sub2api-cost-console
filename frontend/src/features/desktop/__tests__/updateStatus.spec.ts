@@ -38,4 +38,11 @@ describe('desktop update status', () => {
     expect(describeDesktopUpdateFailure(new Error('signature rejected')))
       .toBe('桌面更新检查失败：signature rejected')
   })
+
+  it('turns transport failures into an actionable system proxy message', () => {
+    expect(describeDesktopUpdateFailure(new Error('error sending request for url')))
+      .toContain('自动跟随当前 Windows 代理')
+    expect(describeCoreUpdateFailure(new Error('tcp connect error')))
+      .toContain('系统代理或 TUN')
+  })
 })

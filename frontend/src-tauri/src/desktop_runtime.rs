@@ -29,6 +29,7 @@ const UPSTREAM_CHECKSUM_ASSET: &str = "checksums.txt";
 const MAX_CORE_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
 const CURATED_MODEL_PRICING: &[u8] =
     include_bytes!("../../../backend/resources/model-pricing/model_prices_and_context_window.json");
+const BUNDLED_ZONEINFO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zoneinfo.zip"));
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
@@ -404,6 +405,29 @@ fn ensure_curated_model_pricing(data_dir: &Path) -> Result<(), String> {
     .map_err(|error| format!("无法写入内置模型价格目录: {error}"))
 }
 
+fn ensure_backend_zoneinfo(data_dir: &Path) -> Result<PathBuf, String> {
+    let timezone_dir = data_dir.join("resources").join("timezone");
+    fs::create_dir_all(&timezone_dir).map_err(|error| format!("无法创建内核时区目录: {error}"))?;
+    let zoneinfo_path = timezone_dir.join("zoneinfo.zip");
+    let current_matches = fs::read(&zoneinfo_path)
+        .map(|bytes| bytes == BUNDLED_ZONEINFO)
+        .unwrap_or(false);
+    if current_matches {
+        return Ok(zoneinfo_path);
+    }
+
+    let temporary_path = timezone_dir.join("zoneinfo.zip.tmp");
+    fs::write(&temporary_path, BUNDLED_ZONEINFO)
+        .map_err(|error| format!("无法写入内核时区数据库: {error}"))?;
+    if zoneinfo_path.exists() {
+        fs::remove_file(&zoneinfo_path)
+            .map_err(|error| format!("无法替换旧的内核时区数据库: {error}"))?;
+    }
+    fs::rename(&temporary_path, &zoneinfo_path)
+        .map_err(|error| format!("无法提交内核时区数据库: {error}"))?;
+    Ok(zoneinfo_path)
+}
+
 pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<(), String> {
     {
         let inner = supervisor.inner.lock().expect("backend state poisoned");
@@ -426,6 +450,7 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
     let data_dir = backend_data_dir(&app)?;
     fs::create_dir_all(&data_dir).map_err(|error| format!("无法创建后端数据目录: {error}"))?;
     ensure_curated_model_pricing(&data_dir)?;
+    let zoneinfo_path = ensure_backend_zoneinfo(&data_dir)?;
     let active_path = active_core_path(&app)?;
     let executable = if active_path.is_file() {
         active_path
@@ -442,18 +467,23 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
         return Err(message);
     }
 
-    let (mut events, child) = app
+    let mut command = app
         .shell()
         .command(&executable)
         .current_dir(&data_dir)
         .env("DATA_DIR", &data_dir)
         .env("SERVER_HOST", BACKEND_HOST)
         .env("SERVER_PORT", BACKEND_PORT.to_string())
+        .env("ZONEINFO", &zoneinfo_path)
         .env("SUB2API_DESKTOP", "1")
         .env(
             "SUB2API_DESKTOP_RETURN_URL",
             "http://tauri.localhost/index.html#/admin/cost-center?desktop=1",
-        )
+        );
+    for (name, value) in crate::desktop_proxy::backend_proxy_environment() {
+        command = command.env(name, value);
+    }
+    let (mut events, child) = command
         .spawn()
         .map_err(|error| format!("无法启动 Sub2API 内核: {error}"))?;
 
@@ -533,6 +563,7 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
 
 async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation: u64) {
     let client = match Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(2))
         .user_agent("Sub2API-Cost-Console")
         .build()
@@ -1233,5 +1264,23 @@ mod tests {
         assert!(Version::parse(env!("CARGO_PKG_VERSION")).is_ok());
         assert!(Version::parse(CORE_VERSION).is_ok());
         assert!(Version::parse(ALGORITHM_VERSION).is_ok());
+    }
+
+    #[test]
+    fn desktop_runtime_stages_complete_iana_timezone_database() {
+        let root = std::env::temp_dir().join(format!(
+            "sub2api-zoneinfo-test-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let zoneinfo_path = ensure_backend_zoneinfo(&root).expect("zoneinfo should be staged");
+        let file = fs::File::open(&zoneinfo_path).expect("zoneinfo archive should exist");
+        let mut archive = zip::ZipArchive::new(file).expect("zoneinfo should be a zip archive");
+
+        assert!(archive.by_name("Asia/Shanghai").is_ok());
+        assert!(archive.by_name("America/Los_Angeles").is_ok());
+
+        drop(archive);
+        fs::remove_dir_all(root).expect("temporary zoneinfo directory should be removable");
     }
 }

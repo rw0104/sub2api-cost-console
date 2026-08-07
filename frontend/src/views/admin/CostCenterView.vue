@@ -293,7 +293,12 @@
               <h2 id="upstream-title">上游资产与实时成本</h2>
               <p>账号质量、调度、采购与产出统一运维视图</p>
             </div>
-            <button type="button" class="cost-primary-button" @click="goToAccounts"><Plus :size="17" /> 新增上游</button>
+            <div class="cost-page-heading__actions">
+              <button v-if="desktopMode" type="button" class="cost-primary-button cost-primary-button--outline" @click="openAccountPurchase">
+                <ShoppingBag :size="16" /> 采购账号 <ExternalLink :size="12" />
+              </button>
+              <button type="button" class="cost-primary-button" @click="goToAccounts"><Plus :size="17" /> 新增上游</button>
+            </div>
           </div>
 
           <div class="cost-table-tools">
@@ -494,6 +499,7 @@ import {
   Calculator,
   CircleCheck,
   Database,
+  ExternalLink,
   FlaskConical,
   Gauge,
   KeyRound,
@@ -503,6 +509,7 @@ import {
   RefreshCcw,
   Search,
   Settings2,
+  ShoppingBag,
   TriangleAlert,
   TrendingUp,
   Trophy,
@@ -537,6 +544,7 @@ import {
 import { costTrendBucketHours as resolveCostTrendBucketHours } from '@/features/cost-center/usageWindow'
 import type { ModelRouteRow } from '@/features/cost-center/modelRouteAnalysis'
 import { calculateDesktopScale } from '@/features/cost-center/desktopScale'
+import { ACCOUNT_PURCHASE_URL, openProjectExternalUrl } from '@/features/desktop/externalLinks'
 import {
   buildModelCostRows,
   describeCostAccountOrigin,
@@ -624,6 +632,12 @@ const desktopMode = computed(() => route.query.desktop === '1' || isTauriDesktop
 const desktopScale = computed(() => isTauriDesktop
   ? calculateDesktopScale(viewport.value)
   : { scale: 1, effectiveWidth: viewport.value.cssWidth, physicalWidth: viewport.value.cssWidth, useWideToolbar: false })
+
+function openAccountPurchase() {
+  openProjectExternalUrl(ACCOUNT_PURCHASE_URL).catch((reason) => {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+  })
+}
 const panelTitle = computed(() => activePanel.value === 'overview' ? '上游资产与实时成本' : activePanel.value === 'upstreams' ? '上游运行矩阵' : activePanel.value === 'oauth' ? 'OAuth 实时成本' : 'API 接入中心')
 const panelDescription = computed(() => activePanel.value === 'overview' ? '评分、调度、采购与 API 产出统一视图' : activePanel.value === 'upstreams' ? '桌面级密集账号巡检与成本操作台' : activePanel.value === 'oauth' ? '号码加入即起算的号池经济模型' : '本地网关、Agent 配置与延迟诊断')
 const rangeLabels: Record<CostCenterRange, string> = { today: '当天', '1m': '最近 1 分钟', '5m': '最近 5 分钟', '30m': '最近 30 分钟', '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 1 个月' }
@@ -1132,6 +1146,7 @@ button:active { transform: translateY(1px); }
 .cost-swatch { width: 7px; height: 7px; }.cost-ranking-list strong, .cost-ranking-list small { display: block; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cost-ranking-list strong { font-size: 10px; }.cost-ranking-list small { margin-top: 3px; color: var(--cost-muted); font: 8px 'Cascadia Mono', monospace; }.cost-ranking-list b { font: 10px 'Cascadia Mono', monospace; }
 
 .cost-page-heading { display: flex; min-height: 108px; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 6px 22px; }.cost-page-heading h2 { margin: 6px 0 0; font-size: 29px; }.cost-page-heading--compact { min-height: auto; padding: 0; }
+.cost-page-heading__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; }
 .cost-table-tools { display: flex; align-items: center; gap: 16px; min-height: 54px; padding: 0 0 12px; }
 .cost-platform-tabs { display: flex; align-items: stretch; border: 1px solid var(--cost-line-strong); }.cost-platform-tabs button { min-width: 110px; height: 38px; padding: 0 18px; color: #89948b; background: #151a15; border: 0; border-right: 1px solid var(--cost-line); }.cost-platform-tabs button:last-child { border-right: 0; }.cost-platform-tabs button.active { color: #10140f; background: var(--cost-lime); font-weight: 700; }
 .cost-refresh-stamp { color: #808b82; font: 11px 'Cascadia Mono', monospace; }.cost-search { display: flex; width: 280px; height: 36px; align-items: center; gap: 8px; margin-left: auto; padding: 0 10px; color: var(--cost-muted); background: #151a15; border: 1px solid var(--cost-line-strong); }.cost-search input { width: 100%; color: var(--cost-text); background: transparent; border: 0; outline: 0; font-size: 11px; }
@@ -1152,7 +1167,7 @@ button:active { transform: translateY(1px); }
 
 @media (max-width: 1450px) { .cost-toolbar { grid-template-columns: 300px auto 1fr; }.cost-workspaces button { min-width: 110px; }.cost-quality-strip { grid-template-columns: minmax(320px, 1.4fr) repeat(4, 1fr); }.cost-assets-row { grid-template-columns: 1fr .75fr 2.2fr; }.cost-metric-grid { grid-template-columns: repeat(2, 1fr); }.cost-oauth-header { grid-template-columns: 280px 1fr; }.cost-oauth-kpis { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1180px) { .cost-toolbar { position: relative; grid-template-columns: 1fr; }.cost-workspaces { min-height: 56px; order: 3; border-top: 1px solid var(--cost-line); }.cost-toolbar__actions { position: absolute; top: 10px; right: 0; }.cost-quality-strip { grid-template-columns: repeat(2, 1fr); }.cost-quality-strip__intro { grid-column: 1 / -1; }.cost-assets-row { grid-template-columns: 1fr 1fr; }.cost-metric-grid { grid-column: 1 / -1; border-top: 1px solid var(--cost-line); border-left: 0; }.cost-bottom-row, .cost-chart-row { grid-template-columns: 1fr; }.cost-chart-panel { border-right: 0; border-bottom: 1px solid var(--cost-line); }.cost-oauth-header { grid-template-columns: 1fr; }.cost-pool-summary { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 760px) { .cost-workspace { padding: 12px; }.cost-brand-block { padding-right: 12px; }.cost-toolbar__actions { position: static; flex-wrap: wrap; justify-content: flex-start; border-top: 1px solid var(--cost-line); }.cost-workspaces { overflow: auto; }.cost-workspaces button { flex: 1; min-width: 120px; }.cost-quality-strip, .cost-assets-row, .cost-metric-grid, .cost-bottom-row, .cost-oauth-kpis, .cost-pool-summary { grid-template-columns: 1fr; }.cost-quality-strip__intro, .cost-metric-grid { grid-column: auto; }.cost-donut-wrap { padding: 20px; }.cost-table-tools { flex-wrap: wrap; }.cost-search { width: 100%; margin-left: 0; }.cost-refresh-stamp { order: 3; width: 100%; }.cost-pool-heading-row { grid-template-columns: 1fr; }.cost-pool-heading-row > .cost-platform-tabs { width: 100%; max-width: 100%; }.cost-page-heading { align-items: flex-start; flex-direction: column; }.cost-distribution-panel__body { grid-template-columns: 1fr; }.cost-donut--small { margin: 0 auto; } }
+@media (max-width: 760px) { .cost-workspace { padding: 12px; }.cost-brand-block { padding-right: 12px; }.cost-toolbar__actions { position: static; flex-wrap: wrap; justify-content: flex-start; border-top: 1px solid var(--cost-line); }.cost-workspaces { overflow: auto; }.cost-workspaces button { flex: 1; min-width: 120px; }.cost-quality-strip, .cost-assets-row, .cost-metric-grid, .cost-bottom-row, .cost-oauth-kpis, .cost-pool-summary { grid-template-columns: 1fr; }.cost-quality-strip__intro, .cost-metric-grid { grid-column: auto; }.cost-donut-wrap { padding: 20px; }.cost-table-tools { flex-wrap: wrap; }.cost-search { width: 100%; margin-left: 0; }.cost-refresh-stamp { order: 3; width: 100%; }.cost-pool-heading-row { grid-template-columns: 1fr; }.cost-pool-heading-row > .cost-platform-tabs { width: 100%; max-width: 100%; }.cost-page-heading { align-items: flex-start; flex-direction: column; }.cost-page-heading__actions { width: 100%; flex-wrap: wrap; }.cost-distribution-panel__body { grid-template-columns: 1fr; }.cost-donut--small { margin: 0 auto; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
 
 /* Apple-inspired spatial tuning: preserve the dark/lime palette while making

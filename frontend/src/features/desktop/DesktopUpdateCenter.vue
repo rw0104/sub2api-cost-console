@@ -90,6 +90,12 @@
         >
           <History :size="14" /> 回滚内核 v{{ coreUpdate.previous_version }}
         </button>
+        <button type="button" class="desktop-update__repository" @click="openRepository">
+          <Code2 :size="14" /> 开源仓库 <ExternalLink :size="12" />
+        </button>
+        <button type="button" class="desktop-update__purchase" @click="openAccountPurchase">
+          <ShoppingBag :size="14" /> 采购账号 <ExternalLink :size="12" />
+        </button>
       </footer>
     </aside>
   </div>
@@ -102,8 +108,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
-import { CheckCircle2, Download, History, RefreshCcw, WifiOff, X } from '@lucide/vue'
+import { CheckCircle2, Code2, Download, ExternalLink, History, RefreshCcw, ShoppingBag, WifiOff, X } from '@lucide/vue'
 import { isDesktopRuntime } from '@/api/url'
+import { ACCOUNT_PURCHASE_URL, openProjectExternalUrl, PROJECT_REPOSITORY_URL } from './externalLinks'
 import { describeCoreUpdateFailure, describeDesktopUpdateFailure, resolveUpdateCheckState } from './updateStatus'
 
 interface BackendStatus {
@@ -181,6 +188,18 @@ const releaseDateLabel = computed(() => {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function openRepository() {
+  openProjectExternalUrl(PROJECT_REPOSITORY_URL).catch((error) => {
+    errorMessage.value = messageOf(error)
+  })
+}
+
+function openAccountPurchase() {
+  openProjectExternalUrl(ACCOUNT_PURCHASE_URL).catch((error) => {
+    errorMessage.value = messageOf(error)
+  })
 }
 
 async function loadRuntimeVersions() {
@@ -356,6 +375,8 @@ onBeforeUnmount(() => {
 .desktop-update__panel footer button { display: flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 11px; color: #aeb9b0; border: 1px solid #38443a; border-radius: 8px; background: transparent; font-size: 11px; }
 .desktop-update__panel footer button:hover:not(:disabled) { color: #dce6dd; border-color: #77867b; }
 .desktop-update__panel footer .desktop-update__rollback { margin-left: auto; color: #d5b079; border-color: #685138; }
+.desktop-update__panel footer .desktop-update__repository { color: #a9c978; border-color: #506638; }
+.desktop-update__panel footer .desktop-update__purchase { color: #d7bb73; border-color: #6c5934; }
 .spinning { animation: update-spin .8s linear infinite; }
 @keyframes update-spin { to { transform: rotate(360deg); } }
 @media (max-width: 520px) {
