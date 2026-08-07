@@ -1173,16 +1173,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.8
-git push origin v0.2.8
+git tag v0.2.9
+git push origin v0.2.9
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.8 --repo rw0104/sub2api-cost-console
-gh release download v0.2.8 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.9 --repo rw0104/sub2api-cost-console
+gh release download v0.2.9 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

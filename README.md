@@ -78,7 +78,7 @@ accrued_cost = hourly_rate × elapsed_hours
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
-| Desktop | `0.2.8` | Tauri 2 桌面壳、Vue 界面和安装结构 |
+| Desktop | `0.2.9` | Tauri 2 桌面壳、Vue 界面和安装结构 |
 | Core | `0.1.171` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `f0e7a9c7a23a7d02fb159b62fa809621eb0475a6`） |
 | Algorithm | `1.3.0` | 固定订阅/API 按量分流、独立观察/模型窗口、真实零桶、自适应趋势与动态价格目录 |
 
