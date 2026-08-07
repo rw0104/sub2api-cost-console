@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -149,7 +149,10 @@ const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
 const algorithmVersion = ref('1.3.0')
 const upstreamCommit = ref('unknown')
-const appUpdate = ref<Update | null>(null)
+// Tauri's Update is a class instance with JavaScript private fields. A normal
+// Vue ref would deep-proxy it and break downloadAndInstall's private-field
+// brand check when the user starts an update.
+const appUpdate = shallowRef<Update | null>(null)
 const coreUpdate = ref<CoreUpdateCheck | null>(null)
 const checking = ref(false)
 const operation = ref<'core' | 'desktop' | 'rollback' | null>(null)
