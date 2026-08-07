@@ -455,7 +455,9 @@ func (r *usageLogRepository) getModelStatsWithFiltersBySource(ctx context.Contex
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			%s,
-			%s
+			%s,
+			MIN(created_at) as first_seen,
+			MAX(created_at) as last_seen
 		FROM usage_logs
 		WHERE created_at >= $1 AND created_at < $2
 	`, modelExpr, actualCostExpr, accountCostExpr)
@@ -790,6 +792,8 @@ func scanModelStatsRows(rows *sql.Rows) ([]ModelStat, error) {
 	results := make([]ModelStat, 0)
 	for rows.Next() {
 		var row ModelStat
+		var firstSeen time.Time
+		var lastSeen time.Time
 		if err := rows.Scan(
 			&row.Model,
 			&row.Requests,
@@ -801,9 +805,13 @@ func scanModelStatsRows(rows *sql.Rows) ([]ModelStat, error) {
 			&row.Cost,
 			&row.ActualCost,
 			&row.AccountCost,
+			&firstSeen,
+			&lastSeen,
 		); err != nil {
 			return nil, err
 		}
+		row.FirstSeen = &firstSeen
+		row.LastSeen = &lastSeen
 		results = append(results, row)
 	}
 	if err := rows.Err(); err != nil {

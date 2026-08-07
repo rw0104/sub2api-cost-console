@@ -41,12 +41,33 @@ fn stage_go_zoneinfo() {
 
 fn main() {
     stage_go_zoneinfo();
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    println!(
+        "cargo:rerun-if-changed=binaries/sub2api-backend-x86_64-pc-windows-msvc.exe"
+    );
     let core_version =
         std::fs::read_to_string("../CORE_VERSION").expect("frontend/CORE_VERSION must exist");
     let algorithm_version = std::fs::read_to_string("../ALGORITHM_VERSION")
         .expect("frontend/ALGORITHM_VERSION must exist");
     let upstream_commit = std::fs::read_to_string("../UPSTREAM_SUB2API_COMMIT")
         .expect("frontend/UPSTREAM_SUB2API_COMMIT must exist");
+    let bundled_core_commit = env::var("GITHUB_SHA")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.chars().take(12).collect::<String>())
+        .unwrap_or_else(|| {
+            let output = Command::new("git")
+                .args(["rev-parse", "--short=12", "HEAD"])
+                .output()
+                .expect("git is required to identify the bundled desktop core");
+            if !output.status.success() {
+                panic!("`git rev-parse --short=12 HEAD` failed while identifying the bundled core");
+            }
+            String::from_utf8(output.stdout)
+                .expect("git returned a non-UTF-8 commit")
+                .trim()
+                .to_string()
+        });
     println!("cargo:rerun-if-changed=../CORE_VERSION");
     println!("cargo:rerun-if-changed=../ALGORITHM_VERSION");
     println!("cargo:rerun-if-changed=../UPSTREAM_SUB2API_COMMIT");
@@ -61,6 +82,10 @@ fn main() {
     println!(
         "cargo:rustc-env=SUB2API_UPSTREAM_COMMIT={}",
         upstream_commit.trim()
+    );
+    println!(
+        "cargo:rustc-env=SUB2API_BUNDLED_CORE_COMMIT={}",
+        bundled_core_commit
     );
     tauri_build::build()
 }

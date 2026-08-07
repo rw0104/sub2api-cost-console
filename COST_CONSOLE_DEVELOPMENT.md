@@ -1111,6 +1111,7 @@ https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_wi
 6. 保留当前内核到 `previous`，重启时原子激活 `pending`。
 7. 新内核必须在 30 秒内通过健康检查；失败时恢复 `previous`。
 8. 用户也可从版本面板手动回滚上一版内核。
+9. 桌面内置内核与活动内核按版本、提交和 SHA-256 三项识别；桌面升级后身份不同会要求用户选择，恢复内置内核时沿用同一套停止、验证和回滚状态机，不得手工删除 `core\active`。
 
 更新程序绝不对源码目录执行 `git pull`，也不接受其他仓库或缺少官方校验文件的 Release 资产。
 
@@ -1124,7 +1125,7 @@ https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_wi
   "currency": "USD",
   "billing_cycle": "monthly",
   "started_at": "2026-08-04T10:00:00.000Z",
-  "algorithm_version": "1.3.0"
+  "algorithm_version": "1.3.1"
 }
 ```
 
@@ -1173,16 +1174,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.9
-git push origin v0.2.9
+git tag v0.2.10
+git push origin v0.2.10
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.9 --repo rw0104/sub2api-cost-console
-gh release download v0.2.9 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.10 --repo rw0104/sub2api-cost-console
+gh release download v0.2.10 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

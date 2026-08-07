@@ -1808,6 +1808,8 @@ export interface ModelStat {
   cost: number // 标准计费
   actual_cost: number // 实际扣除
   account_cost?: number // 账号成本（仅管理员接口返回）
+  first_seen?: string // 统计窗口内首次调用
+  last_seen?: string // 统计窗口内最后调用
 }
 
 export interface EndpointStat {

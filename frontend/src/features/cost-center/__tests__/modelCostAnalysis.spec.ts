@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildModelCostRows, classifyModelProvider, summarizeModelCosts } from '../modelCostAnalysis'
+import { aggregateModelStatsFromUsageLogs, buildModelCostRows, classifyModelProvider, summarizeModelCosts } from '../modelCostAnalysis'
 
 describe('model cost analysis', () => {
   it('separates official standard cost, upstream account cost, revenue and gross profit', () => {
@@ -45,6 +45,36 @@ describe('model cost analysis', () => {
       revenue: 1.6,
       grossProfit: 0.7,
     })
+  })
+
+  it('rebuilds an exact-window model aggregate from real usage logs', () => {
+    const logs = [
+      {
+        model: 'deepseek-chat', upstream_model: 'deepseek-v4-flash',
+        input_tokens: 10, output_tokens: 20, cache_creation_tokens: 0, cache_read_tokens: 5,
+        total_cost: 0.1, actual_cost: 0.2, account_stats_cost: 0.08, account_rate_multiplier: 1,
+        created_at: '2026-08-07T07:01:00.000Z',
+      },
+      {
+        model: 'deepseek-chat', upstream_model: 'deepseek-v4-flash',
+        input_tokens: 30, output_tokens: 40, cache_creation_tokens: 0, cache_read_tokens: 10,
+        total_cost: 0.3, actual_cost: 0.5, account_stats_cost: 0.24, account_rate_multiplier: 1,
+        created_at: '2026-08-07T07:09:00.000Z',
+      },
+    ] as any
+
+    expect(aggregateModelStatsFromUsageLogs(logs, 'upstream')).toEqual([expect.objectContaining({
+      model: 'deepseek-v4-flash',
+      requests: 2,
+      input_tokens: 40,
+      output_tokens: 60,
+      cache_read_tokens: 15,
+      cost: 0.4,
+      actual_cost: 0.7,
+      account_cost: 0.32,
+      first_seen: '2026-08-07T07:01:00.000Z',
+      last_seen: '2026-08-07T07:09:00.000Z',
+    })])
   })
 
   it.each([

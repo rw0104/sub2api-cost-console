@@ -33,6 +33,7 @@ const BUNDLED_ZONEINFO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zonein
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
+pub const BUNDLED_CORE_COMMIT: &str = env!("SUB2API_BUNDLED_CORE_COMMIT");
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +54,7 @@ pub struct BackendStatus {
     pub core_version: String,
     pub algorithm_version: String,
     pub upstream_commit: String,
+    pub core_sha256: String,
     pub message: String,
     pub last_log: String,
 }
@@ -68,6 +70,7 @@ impl BackendStatus {
             core_version: versions.current_version.clone(),
             algorithm_version: versions.current_algorithm_version.clone(),
             upstream_commit: versions.upstream_commit.clone(),
+            core_sha256: versions.sha256.clone(),
             message: "正在启动本地 Sub2API 内核".into(),
             last_log: String::new(),
         }
@@ -118,12 +121,12 @@ impl BackendSupervisor {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct CoreVersionRecord {
-    version: String,
-    algorithm_version: String,
-    sha256: String,
+pub struct CoreVersionRecord {
+    pub version: String,
+    pub algorithm_version: String,
+    pub sha256: String,
     #[serde(default)]
-    upstream_commit: String,
+    pub upstream_commit: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -140,6 +143,14 @@ pub struct CoreVersions {
     current_version: String,
     current_algorithm_version: String,
     upstream_commit: String,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoreIdentityCheck {
+    pub current: CoreVersionRecord,
+    pub bundled: CoreVersionRecord,
+    pub bundled_differs: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -284,24 +295,107 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
+fn same_core_commit(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    !left.is_empty()
+        && !right.is_empty()
+        && (left.eq_ignore_ascii_case(right)
+            || left
+                .to_ascii_lowercase()
+                .starts_with(&right.to_ascii_lowercase())
+            || right
+                .to_ascii_lowercase()
+                .starts_with(&left.to_ascii_lowercase()))
+}
+
+fn same_core_identity(left: &CoreVersionRecord, right: &CoreVersionRecord) -> bool {
+    left.version.trim_start_matches('v') == right.version.trim_start_matches('v')
+        && same_core_commit(&left.upstream_commit, &right.upstream_commit)
+        && !left.sha256.trim().is_empty()
+        && left.sha256.trim().eq_ignore_ascii_case(right.sha256.trim())
+}
+
+fn bundled_core_record() -> Result<CoreVersionRecord, String> {
+    let path = bundled_core_path()?;
+    if !path.is_file() {
+        return Err(format!("安装包缺少 Sub2API 内置内核: {}", path.display()));
+    }
+    Ok(CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        sha256: sha256_file(&path)?,
+        upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
+    })
+}
+
+fn active_core_record(app: &AppHandle) -> Result<CoreVersionRecord, String> {
+    let active_path = active_core_path(app)?;
+    if !active_path.is_file() {
+        return bundled_core_record();
+    }
+    let mut record = load_core_state(app).active.unwrap_or(CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        sha256: String::new(),
+        upstream_commit: "unknown".to_string(),
+    });
+    record.sha256 = sha256_file(&active_path)?;
+    Ok(record)
+}
+
 fn current_core_versions(app: &AppHandle) -> CoreVersions {
-    let state = load_core_state(app);
-    if let Some(active) = state.active {
+    if let Ok(active) = active_core_record(app) {
         return CoreVersions {
             current_version: active.version,
             current_algorithm_version: active.algorithm_version,
-            upstream_commit: if active.upstream_commit.is_empty() {
-                UPSTREAM_SUB2API_COMMIT.to_string()
+            upstream_commit: if active.upstream_commit.trim().is_empty() {
+                "unknown".to_string()
             } else {
                 active.upstream_commit
             },
+            sha256: active.sha256,
         };
     }
     CoreVersions {
         current_version: CORE_VERSION.to_string(),
         current_algorithm_version: ALGORITHM_VERSION.to_string(),
-        upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
+        upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
+        sha256: String::new(),
     }
+}
+
+fn replace_active_core_files(
+    active_path: &Path,
+    previous_path: &Path,
+    pending_path: &Path,
+) -> Result<(), String> {
+    if !active_path.is_file() {
+        return Err(format!("当前内核文件不存在: {}", active_path.display()));
+    }
+    if !pending_path.is_file() {
+        return Err(format!("待激活内核文件不存在: {}", pending_path.display()));
+    }
+    if let Some(parent) = previous_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建回滚目录: {error}"))?;
+    }
+    fs::copy(active_path, previous_path).map_err(|error| format!("无法保留上一版内核: {error}"))?;
+    fs::remove_file(active_path).map_err(|error| format!("无法替换活动内核: {error}"))?;
+
+    let replacement = fs::rename(pending_path, active_path).or_else(|_| {
+        fs::copy(pending_path, active_path)?;
+        fs::remove_file(pending_path)
+    });
+    if let Err(error) = replacement {
+        let rollback = fs::copy(previous_path, active_path);
+        return match rollback {
+            Ok(_) => Err(format!("无法激活新内核，已恢复原内核: {error}")),
+            Err(rollback_error) => Err(format!(
+                "无法激活新内核且恢复原内核失败: {error}; {rollback_error}"
+            )),
+        };
+    }
+    Ok(())
 }
 
 pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
@@ -359,17 +453,11 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
         return Err(format!("当前内核文件不存在: {}", current_path.display()));
     }
 
-    fs::copy(&current_path, &previous_path)
-        .map_err(|error| format!("无法保留上一版内核: {error}"))?;
-    if active_path.exists() {
-        fs::remove_file(&active_path).map_err(|error| format!("无法替换活动内核: {error}"))?;
+    if !active_path.is_file() {
+        fs::copy(&current_path, &active_path)
+            .map_err(|error| format!("无法暂存当前内置内核: {error}"))?;
     }
-    fs::rename(&pending_path, &active_path)
-        .or_else(|_| {
-            fs::copy(&pending_path, &active_path)?;
-            fs::remove_file(&pending_path)
-        })
-        .map_err(|error| format!("无法激活新内核: {error}"))?;
+    replace_active_core_files(&active_path, &previous_path, &pending_path)?;
 
     state.previous = Some(current_record);
     state.active = Some(pending);
@@ -638,6 +726,7 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
                 status.core_version = versions.current_version;
                 status.algorithm_version = versions.current_algorithm_version;
                 status.upstream_commit = versions.upstream_commit;
+                status.core_sha256 = versions.sha256;
                 status.phase = BackendPhase::Starting;
                 status.message = failure.clone();
             });
@@ -686,6 +775,16 @@ pub async fn desktop_backend_prepare_relaunch(
         sleep(Duration::from_millis(100)).await;
     }
     Err("本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
+}
+
+async fn wait_for_backend_port_release() -> Result<(), String> {
+    for _ in 0..50 {
+        if !port_is_open() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    Err("本地内核仍在退出，无法安全切换；请稍后重试".into())
 }
 
 pub fn shutdown_backend(app: &AppHandle) {
@@ -968,6 +1067,17 @@ pub fn desktop_backend_status(supervisor: tauri::State<'_, BackendSupervisor>) -
 }
 
 #[tauri::command]
+pub fn inspect_core_identity(app: AppHandle) -> Result<CoreIdentityCheck, String> {
+    let current = active_core_record(&app)?;
+    let bundled = bundled_core_record()?;
+    Ok(CoreIdentityCheck {
+        bundled_differs: !same_core_identity(&current, &bundled),
+        current,
+        bundled,
+    })
+}
+
+#[tauri::command]
 pub fn desktop_backend_start(
     app: AppHandle,
     supervisor: tauri::State<'_, BackendSupervisor>,
@@ -1169,6 +1279,134 @@ pub async fn install_core_update(
 }
 
 #[tauri::command]
+pub async fn restore_bundled_core(
+    app: AppHandle,
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<CoreInstallResult, String> {
+    let _guard = supervisor.update_lock.lock().await;
+    let snapshot = supervisor.snapshot();
+    if port_is_open() && !snapshot.managed {
+        return Err("当前连接的是外部 Sub2API 服务，桌面端不能替换或停止该进程".into());
+    }
+
+    let current = active_core_record(&app)?;
+    let bundled_path = bundled_core_path()?;
+    let verified_commit = verify_upstream_core_build(&bundled_path, CORE_VERSION).await?;
+    if !same_core_commit(&verified_commit, BUNDLED_CORE_COMMIT) {
+        return Err(format!(
+            "内置内核提交校验失败：安装包声明 {BUNDLED_CORE_COMMIT}，文件报告 {verified_commit}"
+        ));
+    }
+    let bundled = CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        sha256: sha256_file(&bundled_path)?,
+        upstream_commit: verified_commit,
+    };
+    if same_core_identity(&current, &bundled) {
+        return Err("当前已经在运行桌面内置内核".into());
+    }
+
+    emit_core_progress(
+        &app,
+        "verifying",
+        0,
+        None,
+        "内置内核版本、提交与 SHA-256 已校验，正在准备安全切换",
+    );
+    let pending_path = pending_core_path(&app)?;
+    if let Some(parent) = pending_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("无法创建内核暂存目录: {error}"))?;
+    }
+    let pending_temporary = pending_path.with_extension("exe.bundled");
+    let _ = tokio::fs::remove_file(&pending_temporary).await;
+    tokio::fs::copy(&bundled_path, &pending_temporary)
+        .await
+        .map_err(|error| format!("无法暂存桌面内置内核: {error}"))?;
+    if sha256_file(&pending_temporary)? != bundled.sha256 {
+        let _ = tokio::fs::remove_file(&pending_temporary).await;
+        return Err("桌面内置内核暂存后 SHA-256 校验失败".into());
+    }
+    if pending_path.exists() {
+        tokio::fs::remove_file(&pending_path)
+            .await
+            .map_err(|error| format!("无法清理旧的待切换内核: {error}"))?;
+    }
+    tokio::fs::rename(&pending_temporary, &pending_path)
+        .await
+        .map_err(|error| format!("无法提交内置内核暂存文件: {error}"))?;
+
+    let original_state = load_core_state(&app);
+    let mut staged_state = original_state.clone();
+    staged_state.pending = Some(bundled.clone());
+    staged_state.last_error = None;
+    save_core_state(&app, &staged_state)?;
+
+    emit_core_progress(&app, "stopping", 0, None, "正在安全停止当前内核");
+    stop_backend_internal(&supervisor, false);
+    if let Err(error) = wait_for_backend_port_release().await {
+        let _ = save_core_state(&app, &original_state);
+        let _ = tokio::fs::remove_file(&pending_path).await;
+        return Err(error);
+    }
+
+    if let Err(error) = activate_pending_core(&app) {
+        let _ = save_core_state(&app, &original_state);
+        let _ = tokio::fs::remove_file(&pending_path).await;
+        {
+            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+            inner.shutting_down = false;
+            inner.consecutive_failures = 0;
+        }
+        let _ = start_backend(app.clone(), supervisor.inner().clone());
+        return Err(error);
+    }
+
+    let versions = current_core_versions(&app);
+    supervisor.update_status(|status| {
+        status.core_version = versions.current_version.clone();
+        status.algorithm_version = versions.current_algorithm_version.clone();
+        status.upstream_commit = versions.upstream_commit.clone();
+        status.core_sha256 = versions.sha256.clone();
+        status.message = "桌面内置内核已激活，正在执行健康检查".into();
+    });
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.shutting_down = false;
+        inner.consecutive_failures = 0;
+    }
+    if let Err(error) = start_backend(app.clone(), supervisor.inner().clone()) {
+        let failure = format!("桌面内置内核启动失败，已自动回滚: {error}");
+        restore_previous_core(&app, &failure)?;
+        let rollback_versions = current_core_versions(&app);
+        supervisor.update_status(|status| {
+            status.core_version = rollback_versions.current_version.clone();
+            status.algorithm_version = rollback_versions.current_algorithm_version.clone();
+            status.upstream_commit = rollback_versions.upstream_commit.clone();
+            status.core_sha256 = rollback_versions.sha256.clone();
+        });
+        start_backend(app.clone(), supervisor.inner().clone())?;
+        return Err(failure);
+    }
+
+    emit_core_progress(
+        &app,
+        "ready",
+        1,
+        Some(1),
+        "桌面内置内核已启用，健康检查失败时将自动回滚",
+    );
+    Ok(CoreInstallResult {
+        version: bundled.version,
+        algorithm_version: bundled.algorithm_version,
+        upstream_commit: bundled.upstream_commit,
+        restart_required: false,
+    })
+}
+
+#[tauri::command]
 pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String> {
     let mut state = load_core_state(&app);
     let previous = state
@@ -1198,6 +1436,56 @@ pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn core_record(version: &str, commit: &str, sha256: &str) -> CoreVersionRecord {
+        CoreVersionRecord {
+            version: version.into(),
+            algorithm_version: "1.3.1".into(),
+            sha256: sha256.into(),
+            upstream_commit: commit.into(),
+        }
+    }
+
+    #[test]
+    fn core_identity_requires_matching_version_commit_and_sha() {
+        let bundled = core_record("0.1.171", "desktop123", "aaa");
+        assert!(same_core_identity(&bundled, &bundled));
+        assert!(same_core_identity(
+            &core_record("0.1.171", "174c522a064c", "aaa"),
+            &core_record("0.1.171", "174c522a064c7920a34771960857c690499d126c", "aaa")
+        ));
+        assert!(!same_core_identity(
+            &bundled,
+            &core_record("0.1.171", "official456", "aaa")
+        ));
+        assert!(!same_core_identity(
+            &bundled,
+            &core_record("0.1.171", "desktop123", "bbb")
+        ));
+    }
+
+    #[test]
+    fn replacing_active_core_preserves_previous_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "sub2api-core-replace-test-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let active = root.join("active.exe");
+        let previous = root.join("previous.exe");
+        let pending = root.join("pending.exe");
+        fs::create_dir_all(&root).expect("temporary core directory should exist");
+        fs::write(&active, b"official-core").expect("active fixture should be written");
+        fs::write(&pending, b"bundled-core").expect("pending fixture should be written");
+
+        replace_active_core_files(&active, &previous, &pending)
+            .expect("bundled core should replace the active core");
+
+        assert_eq!(fs::read(&active).unwrap(), b"bundled-core");
+        assert_eq!(fs::read(&previous).unwrap(), b"official-core");
+        assert!(!pending.exists());
+        fs::remove_dir_all(root).expect("temporary core directory should be removable");
+    }
 
     #[test]
     fn rejects_non_https_update_urls() {

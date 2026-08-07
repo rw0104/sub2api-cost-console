@@ -71,6 +71,21 @@ describe('actual model route aggregation', () => {
       inboundEndpoint: '/v1/chat/completions',
       upstreamEndpoint: '/chat/completions',
       cacheReadTokens: 128,
+      firstSeen: '2026-08-06T20:00:00.000Z',
+      lastSeen: '2026-08-06T20:00:00.000Z',
+    })
+  })
+
+  it('keeps the first and last real call time while aggregating a route', () => {
+    const rows = buildModelRouteRows([
+      usage({ id: 1, created_at: '2026-08-06T20:00:00.000Z' }),
+      usage({ id: 2, created_at: '2026-08-06T20:08:00.000Z' }),
+    ], [])
+
+    expect(rows[0]).toMatchObject({
+      requests: 2,
+      firstSeen: '2026-08-06T20:00:00.000Z',
+      lastSeen: '2026-08-06T20:08:00.000Z',
     })
   })
 

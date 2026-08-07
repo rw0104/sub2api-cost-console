@@ -15,6 +15,8 @@ import {
   buildCostCenterDataQueries,
   DEFAULT_COST_CENTER_RANGE,
   DEFAULT_MODEL_COST_RANGE,
+  selectExactWindowModelStats,
+  snapshotMatchesRequestedWindow,
   useCostCenterData,
 } from '../useCostCenterData'
 
@@ -23,10 +25,10 @@ describe('cost center live ranges', () => {
     vi.useRealTimers()
   })
 
-  it('defaults live observation to one hour and model economics to today', () => {
+  it('defaults live observation and recent model economics to one hour', () => {
     expect(DEFAULT_COST_CENTER_RANGE).toBe('1h')
-    expect(DEFAULT_MODEL_COST_RANGE).toBe('today')
-    expect(useCostCenterData().modelCostRange.value).toBe('today')
+    expect(DEFAULT_MODEL_COST_RANGE).toBe('1h')
+    expect(useCostCenterData().modelCostRange.value).toBe('1h')
   })
 
   it('requests the current local calendar day with exact bounds', () => {
@@ -86,6 +88,32 @@ describe('cost center live ranges', () => {
       time_range: '30d',
       granularity: 'day',
     })
+  })
+
+  it('rejects a legacy snapshot that omitted the requested exact time boundary', () => {
+    const start = new Date('2026-08-07T07:00:00.000Z')
+    const end = new Date('2026-08-07T08:00:00.000Z')
+    expect(snapshotMatchesRequestedWindow({ start_date: '2026-08-07', end_date: '2026-08-07' }, start, end)).toBe(false)
+    expect(snapshotMatchesRequestedWindow({
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+    }, start, end)).toBe(true)
+  })
+
+  it('does not present a truncated compatibility sample as complete model cost', () => {
+    const start = new Date('2026-08-07T07:00:00.000Z')
+    const end = new Date('2026-08-07T08:00:00.000Z')
+    const result = selectExactWindowModelStats(
+      { models: [{ model: 'gpt-old', requests: 269 }] as any },
+      { logs: [{ model: 'deepseek-v4-flash', created_at: '2026-08-07T07:30:00.000Z' }] as any, truncated: true },
+      start,
+      end,
+      'upstream',
+    )
+
+    expect(result.models).toEqual([])
+    expect(result.compatibilityTruncated).toBe(true)
+    expect(result.usedCompatibilityAggregation).toBe(false)
   })
 })
 

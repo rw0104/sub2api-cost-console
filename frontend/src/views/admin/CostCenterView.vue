@@ -175,7 +175,7 @@
                 <label class="cost-model-controls__account">
                   <span>成本账号</span>
                   <select v-model="modelCostAccountSelection" aria-label="模型成本账号">
-                    <option value="all">全部账号</option>
+                    <option value="all">全部账号历史（含已删除）</option>
                     <option v-for="account in accounts" :key="account.id" :value="String(account.id)">
                       {{ account.name }} · {{ describeCostAccountOrigin(account) }}
                     </option>
@@ -207,15 +207,25 @@
             <p class="cost-model-note">
               DeepSeek 官方接口会区分缓存命中 Token；API 中转站按其返回的 usage、实际上游模型及渠道/账号价格核算。价格同步只影响后续请求，历史记录保留请求发生时的价格快照；上游未返回 usage 时不会伪造精确成本。
             </p>
+            <p class="cost-model-note">
+              这里展示的是“所选时间窗口内发生过的模型调用历史”，不是当前账号池支持模型清单。一天内调用多个模型会分别统计；切换或删除账号不会抹掉此前记录，可通过统计窗口和成本账号精确筛选。
+            </p>
+            <p v-if="modelStatsExactWindowFallback" class="cost-model-note cost-model-note--warning">
+              当前内核未返回可信的精确时间边界，已从真实 usage_logs 按 {{ modelCostRangeLabel }} 重新聚合，避免把全历史误标为当前窗口。
+            </p>
+            <p v-if="modelStatsCompatibilityTruncated" class="cost-model-note cost-model-note--warning">
+              当前内核未返回可信的精确时间边界，且所选窗口超过 25,000 条 usage_logs。为避免把最近样本冒充完整成本，模型汇总已停止；请缩小统计窗口或选择具体成本账号。
+            </p>
 
             <div class="cost-model-table-wrap" tabindex="0" aria-label="模型成本表，可横向滚动">
               <table class="cost-model-table">
                 <thead>
-                  <tr><th>模型</th><th>请求</th><th>输入 Token</th><th>缓存命中</th><th>输出 Token</th><th>标准 / 渠道价</th><th>上游账号成本</th><th>用户实际计费</th><th>毛利 / 毛利率</th></tr>
+                  <tr><th>模型</th><th>调用时间</th><th>请求</th><th>输入 Token</th><th>缓存命中</th><th>输出 Token</th><th>标准 / 渠道价</th><th>上游账号成本</th><th>用户实际计费</th><th>毛利 / 毛利率</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="row in modelCostRows" :key="row.model">
                     <td><strong>{{ row.model || '未知模型' }}</strong><small>{{ modelCostSourceLabel }}</small></td>
+                    <td><strong>最近 {{ formatModelTime(row.last_seen) }}</strong><small>首次 {{ formatModelTime(row.first_seen) }}</small></td>
                     <td>{{ formatInteger(row.requests) }}</td>
                     <td>{{ formatTokens(row.input_tokens) }}</td>
                     <td><strong>{{ formatTokens(row.cache_read_tokens) }}</strong><small>{{ formatCacheHitRate(row.input_tokens, row.cache_read_tokens) }}</small></td>
@@ -225,7 +235,7 @@
                     <td><strong>{{ formatUsd(row.revenue, 6) }}</strong><small>actual_cost</small></td>
                     <td><strong :class="row.grossProfit >= 0 ? 'cost-lime' : 'cost-warning-text'">{{ formatUsd(row.grossProfit, 6) }}</strong><small>{{ row.grossMargin == null ? '—' : formatPercent(row.grossMargin) }}</small></td>
                   </tr>
-                  <tr v-if="modelCostRows.length === 0"><td colspan="9" class="cost-empty-row">{{ modelCostRangeLabel }}没有可分析的模型调用</td></tr>
+                  <tr v-if="modelCostRows.length === 0"><td colspan="10" class="cost-empty-row">{{ modelCostRangeLabel }}没有可分析的模型调用</td></tr>
                 </tbody>
               </table>
             </div>
@@ -237,11 +247,12 @@
             <div class="cost-model-table-wrap" tabindex="0" aria-label="真实模型渠道接口明细，可横向滚动">
               <table class="cost-model-table cost-route-table">
                 <thead>
-                  <tr><th>请求 → 实际模型</th><th>渠道</th><th>账号</th><th>分组</th><th>入站接口</th><th>上游接口</th><th>当前单价</th><th>请求</th><th>Token / 缓存</th><th>标准 / 账号成本</th></tr>
+                  <tr><th>请求 → 实际模型</th><th>调用时间</th><th>渠道</th><th>账号</th><th>分组</th><th>入站接口</th><th>上游接口</th><th>当前单价</th><th>请求</th><th>Token / 缓存</th><th>标准 / 账号成本</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="routeRow in modelRoutes" :key="routeRow.key">
                     <td><strong>{{ routeRow.requestedModel }} → {{ routeRow.upstreamModel }}</strong><small>{{ routeRow.mappingChain }}</small></td>
+                    <td><strong>最近 {{ formatModelTime(routeRow.lastSeen) }}</strong><small>首次 {{ formatModelTime(routeRow.firstSeen) }}</small></td>
                     <td><strong>{{ routeRow.channelName }}</strong><small>{{ routeRow.channelId == null ? '无 channel_id' : `channel_id ${routeRow.channelId}` }}</small></td>
                     <td><strong>{{ routeRow.accountName }}</strong><small>{{ routeRow.accountId == null ? '历史记录' : `account_id ${routeRow.accountId}` }}</small></td>
                     <td><strong>{{ routeRow.groupName }}</strong><small>{{ routeRow.groupId == null ? '无 group_id' : `group_id ${routeRow.groupId}` }}</small></td>
@@ -252,7 +263,7 @@
                     <td><strong>{{ formatTokens(routeRow.inputTokens + routeRow.cacheReadTokens + routeRow.outputTokens) }}</strong><small>缓存 {{ formatTokens(routeRow.cacheReadTokens) }}</small></td>
                     <td><strong>{{ formatUsd(routeRow.standardCost, 6) }} / {{ formatUsd(routeRow.accountCost, 6) }}</strong><small>请求快照</small></td>
                   </tr>
-                  <tr v-if="modelRoutes.length === 0"><td colspan="10" class="cost-empty-row">{{ modelCostRangeLabel }}没有真实路由记录</td></tr>
+                  <tr v-if="modelRoutes.length === 0"><td colspan="11" class="cost-empty-row">{{ modelCostRangeLabel }}没有真实路由记录</td></tr>
                 </tbody>
               </table>
             </div>
@@ -600,7 +611,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelRoutes, modelRoutesTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
+  accounts, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
 } = data
 
 const workspaceItems = [
@@ -937,6 +948,7 @@ function formatCacheHitRate(inputTokens: number, cacheReadTokens: number): strin
 function resolveRoutePricing(row: ModelRouteRow): ChannelModelPricing | ModelDefaultPricing | undefined { return row.channelPricing ?? modelPricing.value[row.upstreamModel] }
 function routePricingSource(row: ModelRouteRow): string { return row.channelPricing ? '渠道自定义价' : modelPricing.value[row.upstreamModel]?.found ? '当前模型目录' : '未找到价格' }
 function formatCompactDate(value: string): string { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }
+function formatModelTime(value?: string): string { const date = new Date(value || ''); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—' }
 function clampUtilization(value: number): number { return Math.max(0, Math.min(100, Number(value) || 0)) }
 function formatUtilization(value: number): string { return `${Math.round(clampUtilization(value))}%` }
 function hasPrimaryUsageWindow(usage?: AccountUsageInfo): boolean { return Boolean(usage?.five_hour || usage?.seven_day) }
@@ -1888,6 +1900,7 @@ button:active { transform: translateY(1px); }
 .cost-pricing-status button:disabled { cursor: wait; opacity: .65; }
 .cost-pricing-status.is-unavailable { border-left: 2px solid #b8785e; }
 .cost-model-note { margin: 0; padding: 10px 16px; color: #89958b; background: rgb(38 47 39 / 42%); border-bottom: 1px solid var(--cost-line); font-size: 10px; line-height: 1.55; }
+.cost-model-note--warning { color: #d7bb73; border-left: 2px solid #d7bb73; background: rgb(93 72 31 / 22%); }
 .cost-route-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; background: #151c16; border-top: 1px solid #3a443b; border-bottom: 1px solid var(--cost-line); }
 .cost-route-heading strong, .cost-route-heading span { display: block; }
 .cost-route-heading strong { color: #dce5da; font-size: 12px; }

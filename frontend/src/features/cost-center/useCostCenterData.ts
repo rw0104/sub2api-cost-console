@@ -12,7 +12,7 @@ import type {
   WindowStats,
 } from '@/types'
 import type { CostProfile } from './model'
-import type { ModelCostSource } from './modelCostAnalysis'
+import { aggregateModelStatsFromUsageLogs, type ModelCostSource } from './modelCostAnalysis'
 import { buildModelRouteRows, type ModelRouteRow } from './modelRouteAnalysis'
 import { loadUsdCnyExchangeRate, type UsdCnyExchangeRate } from './exchangeRate'
 import type { AccountProbeState } from './upstreamTable'
@@ -27,7 +27,7 @@ import {
 export type CostCenterRange = 'today' | '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
 
 export const DEFAULT_COST_CENTER_RANGE: CostCenterRange = '1h'
-export const DEFAULT_MODEL_COST_RANGE: CostCenterRange = 'today'
+export const DEFAULT_MODEL_COST_RANGE: CostCenterRange = '1h'
 
 const USAGE_PAGE_SIZE = 1000
 const MAX_USAGE_PAGES = 25
@@ -61,6 +61,50 @@ export function buildCostCenterDataQueries(observationRange: CostCenterRange, mo
   }
 }
 
+export function snapshotMatchesRequestedWindow(
+  snapshot: { start_time?: string; end_time?: string },
+  requestedStart: Date,
+  requestedEnd: Date,
+): boolean {
+  const actualStart = new Date(snapshot.start_time || '').getTime()
+  const actualEnd = new Date(snapshot.end_time || '').getTime()
+  if (!Number.isFinite(actualStart) || !Number.isFinite(actualEnd)) return false
+  const toleranceMs = 60_000
+  return Math.abs(actualStart - requestedStart.getTime()) <= toleranceMs
+    && Math.abs(actualEnd - requestedEnd.getTime()) <= toleranceMs
+}
+
+export function selectExactWindowModelStats(
+  snapshot: { start_time?: string; end_time?: string; models?: ModelStat[] } | null,
+  compatibility: { logs: AdminUsageLog[]; truncated: boolean } | null,
+  requestedStart: Date,
+  requestedEnd: Date,
+  source: ModelCostSource,
+): {
+  models: ModelStat[]
+  usedCompatibilityAggregation: boolean
+  compatibilityTruncated: boolean
+} {
+  if (snapshot && snapshotMatchesRequestedWindow(snapshot, requestedStart, requestedEnd)) {
+    return {
+      models: snapshot.models ?? [],
+      usedCompatibilityAggregation: false,
+      compatibilityTruncated: false,
+    }
+  }
+  if (!compatibility) {
+    return { models: [], usedCompatibilityAggregation: false, compatibilityTruncated: false }
+  }
+  if (compatibility.truncated) {
+    return { models: [], usedCompatibilityAggregation: false, compatibilityTruncated: true }
+  }
+  return {
+    models: aggregateModelStatsFromUsageLogs(compatibility.logs, source),
+    usedCompatibilityAggregation: true,
+    compatibilityTruncated: false,
+  }
+}
+
 function buildOpsSnapshotRange(range: CostCenterRange): Exclude<CostCenterRange, 'today'> {
   // Ops snapshots only accept rolling windows. The dashboard snapshot above still
   // uses exact local-day bounds for the authoritative cost and usage trend.
@@ -84,6 +128,8 @@ export function useCostCenterData() {
   const modelCostRange = ref<CostCenterRange>(DEFAULT_MODEL_COST_RANGE)
   const modelRoutes = ref<ModelRouteRow[]>([])
   const modelRoutesTruncated = ref(false)
+  const modelStatsExactWindowFallback = ref(false)
+  const modelStatsCompatibilityTruncated = ref(false)
   const modelPricing = ref<Record<string, ModelDefaultPricing>>({})
   const pricingStatus = ref<PricingCatalogStatus | null>(null)
   const pricingRefreshing = ref(false)
@@ -185,6 +231,7 @@ export function useCostCenterData() {
     const queries = buildCostCenterDataQueries(range, modelCostRange.value)
     const { start: observationStart, end: requestedObservationEnd } = usageWindowBounds(range)
     const observationEnd = range === 'today' ? new Date() : requestedObservationEnd
+    const { start: modelStart, end: modelEnd } = usageWindowBounds(modelCostRange.value)
 
     const [accountResult, dashboardResult, modelResult, modelRoutesResult, channelsResult, pricingStatusResult, opsResult, settingsResult, exchangeRateResult] = await Promise.allSettled([
       adminAPI.accounts.list(1, 1000, {
@@ -289,7 +336,16 @@ export function useCostCenterData() {
       trendUsesAccountCost.value = false
     }
 
-    models.value = modelResult.status === 'fulfilled' ? modelResult.value.models ?? [] : []
+    const modelStatsSelection = selectExactWindowModelStats(
+      modelResult.status === 'fulfilled' ? modelResult.value : null,
+      modelRoutesResult.status === 'fulfilled' ? modelRoutesResult.value : null,
+      modelStart,
+      modelEnd,
+      modelCostSource.value,
+    )
+    models.value = modelStatsSelection.models
+    modelStatsExactWindowFallback.value = modelStatsSelection.usedCompatibilityAggregation
+    modelStatsCompatibilityTruncated.value = modelStatsSelection.compatibilityTruncated
     if (modelRoutesResult.status === 'fulfilled') {
       const channels: Channel[] = channelsResult.status === 'fulfilled' ? channelsResult.value.items ?? [] : []
       modelRoutes.value = buildModelRouteRows(modelRoutesResult.value.logs, channels)
@@ -423,6 +479,8 @@ export function useCostCenterData() {
     modelCostRange,
     modelRoutes,
     modelRoutesTruncated,
+    modelStatsExactWindowFallback,
+    modelStatsCompatibilityTruncated,
     modelPricing,
     pricingStatus,
     pricingRefreshing,

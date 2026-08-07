@@ -37,6 +37,25 @@
         <p><i :style="{ width: `${progressPercent}%` }"></i></p>
       </div>
 
+      <section v-if="showBundledCoreChoice" class="desktop-update__release desktop-update__release--bundled">
+        <div class="desktop-update__release-title">
+          <div><span>桌面内置修复内核</span><strong>v{{ coreIdentity?.bundled.version }}</strong></div>
+          <em>版本＋提交＋SHA 三重校验</em>
+        </div>
+        <p>
+          当前活动内核与本桌面安装包内置内核身份不同。当前提交 {{ shortIdentity(coreIdentity?.current.upstream_commit) }}，
+          内置提交 {{ shortIdentity(coreIdentity?.bundled.upstream_commit) }}。请选择恢复内置修复内核，或明确保留当前内核。
+        </p>
+        <div class="desktop-update__choice-actions">
+          <button type="button" :disabled="isBusy" @click="restoreBundledCore">
+            <History :size="15" /> 恢复桌面内置内核
+          </button>
+          <button type="button" class="desktop-update__secondary-action" :disabled="isBusy" @click="keepCurrentCore">
+            保留当前内核
+          </button>
+        </div>
+      </section>
+
       <section v-if="coreUpdate?.available" class="desktop-update__release desktop-update__release--primary">
         <div class="desktop-update__release-title">
           <div><span>上游内核更新</span><strong>v{{ coreUpdate.update?.version }}</strong></div>
@@ -61,7 +80,7 @@
 
       <section v-if="checkState === 'current' && !errorMessage" class="desktop-update__current">
         <CheckCircle2 :size="20" />
-        <div><strong>桌面端与内置核心均已是最新版本</strong><span>{{ lastCheckedLabel }}</span></div>
+        <div><strong>桌面端与更新通道均无新版本</strong><span>{{ lastCheckedLabel }}</span></div>
       </section>
 
       <section v-if="checkState === 'unavailable'" class="desktop-update__current desktop-update__current--warning">
@@ -117,6 +136,20 @@ interface BackendStatus {
   core_version: string
   algorithm_version: string
   upstream_commit: string
+  core_sha256?: string
+}
+
+interface CoreIdentityRecord {
+  version: string
+  algorithm_version: string
+  upstream_commit: string
+  sha256: string
+}
+
+interface CoreIdentityCheck {
+  current: CoreIdentityRecord
+  bundled: CoreIdentityRecord
+  bundled_differs: boolean
 }
 
 interface CoreManifest {
@@ -147,15 +180,17 @@ const desktop = isDesktopRuntime()
 const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
-const algorithmVersion = ref('1.3.0')
+const algorithmVersion = ref('1.3.1')
 const upstreamCommit = ref('unknown')
 // Tauri's Update is a class instance with JavaScript private fields. A normal
 // Vue ref would deep-proxy it and break downloadAndInstall's private-field
 // brand check when the user starts an update.
 const appUpdate = shallowRef<Update | null>(null)
 const coreUpdate = ref<CoreUpdateCheck | null>(null)
+const coreIdentity = ref<CoreIdentityCheck | null>(null)
+const bundledChoiceDismissed = ref(false)
 const checking = ref(false)
-const operation = ref<'core' | 'desktop' | 'rollback' | null>(null)
+const operation = ref<'core' | 'desktop' | 'rollback' | 'restore-bundled' | null>(null)
 const errorMessage = ref('')
 const updateFailures = ref<string[]>([])
 const progressStage = ref('')
@@ -167,7 +202,8 @@ let interval: number | null = null
 const unlisteners: UnlistenFn[] = []
 
 const isBusy = computed(() => operation.value !== null)
-const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available))
+const showBundledCoreChoice = computed(() => Boolean(coreIdentity.value?.bundled_differs && !bundledChoiceDismissed.value))
+const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available || showBundledCoreChoice.value))
 const checkState = computed(() => resolveUpdateCheckState({
   checking: checking.value,
   hasUpdate: hasUpdate.value,
@@ -191,6 +227,14 @@ const releaseDateLabel = computed(() => {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function shortIdentity(value: string | undefined): string {
+  return value?.trim() ? value.trim().slice(0, 12) : 'unknown'
+}
+
+function coreChoiceStorageKey(identity: CoreIdentityCheck): string {
+  return `sub2api:keep-core:${identity.current.sha256}:${identity.bundled.sha256}`
 }
 
 function openRepository() {
@@ -220,9 +264,10 @@ async function checkAll(silent = true) {
   const failures: string[] = []
   try {
     await loadRuntimeVersions()
-    const [desktopResult, coreResult] = await Promise.allSettled([
+    const [desktopResult, coreResult, identityResult] = await Promise.allSettled([
       check(),
       invoke<CoreUpdateCheck>('check_core_update'),
+      invoke<CoreIdentityCheck>('inspect_core_identity'),
     ])
     if (desktopResult.status === 'fulfilled') appUpdate.value = desktopResult.value
     else {
@@ -237,6 +282,14 @@ async function checkAll(silent = true) {
     } else {
       coreUpdate.value = null
       failures.push(describeCoreUpdateFailure(coreResult.reason))
+    }
+    if (identityResult.status === 'fulfilled') {
+      coreIdentity.value = identityResult.value
+      bundledChoiceDismissed.value = localStorage.getItem(coreChoiceStorageKey(identityResult.value)) === 'keep'
+      if (identityResult.value.bundled_differs && !bundledChoiceDismissed.value) open.value = true
+    } else {
+      coreIdentity.value = null
+      failures.push(`内核身份检查失败：${messageOf(identityResult.reason)}`)
     }
   } finally {
     updateFailures.value = failures
@@ -310,6 +363,33 @@ async function rollbackCore() {
   }
 }
 
+async function restoreBundledCore() {
+  operation.value = 'restore-bundled'
+  errorMessage.value = ''
+  progressStage.value = 'verifying'
+  progressMessage.value = '正在校验桌面内置内核'
+  try {
+    const result = await invoke<{ version: string }>('restore_bundled_core')
+    progressStage.value = 'ready'
+    progressMessage.value = `内置内核 v${result.version} 已启用，正在执行健康检查`
+    bundledChoiceDismissed.value = false
+    coreIdentity.value = await invoke<CoreIdentityCheck>('inspect_core_identity')
+    await loadRuntimeVersions()
+  } catch (error) {
+    errorMessage.value = messageOf(error)
+    progressStage.value = ''
+  } finally {
+    operation.value = null
+  }
+}
+
+function keepCurrentCore() {
+  const identity = coreIdentity.value
+  if (!identity) return
+  localStorage.setItem(coreChoiceStorageKey(identity), 'keep')
+  bundledChoiceDismissed.value = true
+}
+
 onMounted(async () => {
   if (!desktop) return
   unlisteners.push(await listen<CoreProgress>('core-update-progress', (event) => {
@@ -358,6 +438,7 @@ onBeforeUnmount(() => {
 .desktop-update__progress i { display: block; height: 100%; background: #b9e55a; transition: width .2s ease; }
 .desktop-update__release { margin: 14px; padding: 16px; border: 1px solid #303b32; background: #161c17; }
 .desktop-update__release--primary { border-color: #566d32; background: #182015; }
+.desktop-update__release--bundled { border-color: #6c5934; background: #201d14; }
 .desktop-update__release-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .desktop-update__release-title span { display: block; color: #7f8e82; font-size: 10px; }
 .desktop-update__release-title strong { display: block; margin-top: 3px; color: #e8eee8; font: 18px 'Cascadia Mono', monospace; }
@@ -365,6 +446,8 @@ onBeforeUnmount(() => {
 .desktop-update__release p { max-height: 110px; overflow: auto; margin: 12px 0; color: #9da9a0; font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
 .desktop-update__release button { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: center; gap: 8px; color: #11160f; border: 1px solid #b9e55a; background: #b9e55a; font-weight: 700; }
 .desktop-update__release button:disabled { opacity: .45; }
+.desktop-update__choice-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.desktop-update__choice-actions .desktop-update__secondary-action { width: auto; padding: 0 12px; color: #d7bb73; border-color: #6c5934; background: transparent; }
 .desktop-update__current { display: flex; align-items: center; gap: 12px; margin: 14px; padding: 13px 14px; color: #9cbd65; border: 1px solid #354735; border-radius: 11px; background: #172016; }
 .desktop-update__current strong, .desktop-update__current span { display: block; }
 .desktop-update__current strong { color: #d8e1d9; font-size: 12px; }

@@ -482,8 +482,8 @@ func TestUsageLogRepositoryGetUserModelStatsUsesRequestedModel(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"model", "requests", "input_tokens", "output_tokens",
 			"cache_creation_tokens", "cache_read_tokens", "total_tokens",
-			"cost", "actual_cost", "account_cost",
-		}).AddRow("gpt-5.5", int64(2), int64(10), int64(20), int64(0), int64(0), int64(30), 0.1, 0.08, 0.07))
+			"cost", "actual_cost", "account_cost", "first_seen", "last_seen",
+		}).AddRow("gpt-5.5", int64(2), int64(10), int64(20), int64(0), int64(0), int64(30), 0.1, 0.08, 0.07, start, end.Add(-time.Second)))
 
 	stats, err := repo.GetUserModelStats(context.Background(), 7, start, end)
 	require.NoError(t, err)
@@ -587,10 +587,10 @@ func TestUsageLogRepositoryGetModelStatsAccountCostColumn(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"model", "requests", "input_tokens", "output_tokens",
 			"cache_creation_tokens", "cache_read_tokens", "total_tokens",
-			"cost", "actual_cost", "account_cost",
+			"cost", "actual_cost", "account_cost", "first_seen", "last_seen",
 		}).
-			AddRow("claude-opus-4-6", int64(10), int64(100), int64(200), int64(5), int64(3), int64(308), 2.5, 2.0, 1.8).
-			AddRow("claude-sonnet-4-6", int64(5), int64(50), int64(100), int64(0), int64(0), int64(150), 1.0, 0.8, 0.7))
+			AddRow("claude-opus-4-6", int64(10), int64(100), int64(200), int64(5), int64(3), int64(308), 2.5, 2.0, 1.8, start.Add(time.Hour), start.Add(2*time.Hour)).
+			AddRow("claude-sonnet-4-6", int64(5), int64(50), int64(100), int64(0), int64(0), int64(150), 1.0, 0.8, 0.7, start.Add(3*time.Hour), start.Add(4*time.Hour)))
 
 	results, err := repo.GetModelStatsWithFilters(context.Background(), start, end, 0, 0, 0, 0, nil, nil, nil)
 	require.NoError(t, err)
@@ -599,6 +599,10 @@ func TestUsageLogRepositoryGetModelStatsAccountCostColumn(t *testing.T) {
 	require.Equal(t, 2.5, results[0].Cost)
 	require.Equal(t, 2.0, results[0].ActualCost)
 	require.Equal(t, 1.8, results[0].AccountCost)
+	require.NotNil(t, results[0].FirstSeen)
+	require.NotNil(t, results[0].LastSeen)
+	require.Equal(t, start.Add(time.Hour), *results[0].FirstSeen)
+	require.Equal(t, start.Add(2*time.Hour), *results[0].LastSeen)
 	require.Equal(t, "claude-sonnet-4-6", results[1].Model)
 	require.Equal(t, 0.7, results[1].AccountCost)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -617,8 +621,8 @@ func TestUsageLogRepositoryGetModelStatsWithUsageFiltersAppliesRequestedModelFil
 		WillReturnRows(sqlmock.NewRows([]string{
 			"model", "requests", "input_tokens", "output_tokens",
 			"cache_creation_tokens", "cache_read_tokens", "total_tokens",
-			"cost", "actual_cost", "account_cost",
-		}).AddRow("gpt-5", int64(1), int64(10), int64(20), int64(0), int64(0), int64(30), 0.1, 0.08, 0.07))
+			"cost", "actual_cost", "account_cost", "first_seen", "last_seen",
+		}).AddRow("gpt-5", int64(1), int64(10), int64(20), int64(0), int64(0), int64(30), 0.1, 0.08, 0.07, start, end.Add(-time.Second)))
 
 	results, err := repo.GetModelStatsWithUsageFiltersBySource(context.Background(), start, end, filters, usagestats.ModelSourceRequested)
 	require.NoError(t, err)

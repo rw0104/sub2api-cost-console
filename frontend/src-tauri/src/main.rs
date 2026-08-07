@@ -6,8 +6,9 @@ mod setup_environment;
 
 use desktop_runtime::{
     check_core_update, desktop_backend_prepare_relaunch, desktop_backend_start,
-    desktop_backend_status, desktop_backend_stop, initialize_backend, install_core_update,
-    prepare_core_rollback, shutdown_backend, start_backend,
+    desktop_backend_status, desktop_backend_stop, initialize_backend, inspect_core_identity,
+    install_core_update, prepare_core_rollback, restore_bundled_core, shutdown_backend,
+    start_backend,
 };
 use setup_environment::{detect_setup_environment, provision_quick_setup};
 use tauri::Manager;
@@ -36,7 +37,9 @@ fn main() {
             detect_setup_environment,
             provision_quick_setup,
             check_core_update,
+            inspect_core_identity,
             install_core_update,
+            restore_bundled_core,
             prepare_core_rollback,
         ])
         .build(tauri::generate_context!())

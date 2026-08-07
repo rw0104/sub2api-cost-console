@@ -24,6 +24,8 @@ export interface ModelRouteRow {
   standardCost: number
   accountCost: number
   revenue: number
+  firstSeen: string
+  lastSeen: string
 }
 
 function numeric(value: unknown): number {
@@ -73,6 +75,8 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
       existing.standardCost += numeric(log.total_cost)
       existing.accountCost += accountCost
       existing.revenue += numeric(log.actual_cost)
+      if (log.created_at < existing.firstSeen) existing.firstSeen = log.created_at
+      if (log.created_at > existing.lastSeen) existing.lastSeen = log.created_at
       continue
     }
 
@@ -98,6 +102,8 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
       standardCost: numeric(log.total_cost),
       accountCost,
       revenue: numeric(log.actual_cost),
+      firstSeen: log.created_at,
+      lastSeen: log.created_at,
     })
   }
 
