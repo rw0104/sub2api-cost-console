@@ -167,9 +167,17 @@
                 <label>
                   <span>模型口径</span>
                   <select v-model="modelCostSource" aria-label="模型统计口径">
-                    <option value="upstream">上游实际模型</option>
+                    <option value="upstream">实际发往上游模型</option>
+                    <option value="response">上游响应声明模型</option>
                     <option value="requested">用户请求模型</option>
-                    <option value="mapping">请求 → 上游映射</option>
+                    <option value="mapping">请求 → 发往上游映射</option>
+                  </select>
+                </label>
+                <label>
+                  <span>模型审计</span>
+                  <select v-model="modelAuditMismatchOnly" aria-label="上游响应模型审计筛选">
+                    <option :value="false">全部调用</option>
+                    <option :value="true">仅看不一致</option>
                   </select>
                 </label>
                 <label class="cost-model-controls__account">
@@ -204,11 +212,19 @@
               <MetricCell label="毛利 / 毛利率" :value="`${formatUsd(modelCostSummary.grossProfit, 5)} / ${modelCostSummary.grossMargin == null ? '—' : formatPercent(modelCostSummary.grossMargin)}`" :note="modelCostSummary.missingPricingCount ? `${modelCostSummary.missingPricingCount} 个模型缺少 usage 或价格` : '用户计费 − 上游账号成本'" accent="lime" />
             </div>
 
+            <div class="cost-model-summary cost-model-audit-summary">
+              <MetricCell label="审计已观测" :value="formatInteger(modelAuditSummary.observedRequests)" :note="`窗口共 ${formatInteger(modelAuditSummary.totalRequests)} 次请求`" />
+              <MetricCell label="模型一致" :value="formatInteger(modelAuditSummary.matchedRequests)" note="响应声明与实际发往上游一致" accent="lime" />
+              <MetricCell label="上游替换" :value="formatInteger(modelAuditSummary.mismatchRequests)" :note="modelAuditSummary.mismatchRate == null ? '暂无可审计响应' : `已观测中 ${formatPercent(modelAuditSummary.mismatchRate)}`" accent="gold" />
+              <MetricCell label="未观测" :value="formatInteger(modelAuditSummary.unobservedRequests)" note="旧记录或响应未声明模型" />
+              <MetricCell label="替换请求成本" :value="formatUsd(modelAuditSummary.mismatchAccountCost, 6)" :note="`标准 ${formatUsd(modelAuditSummary.mismatchStandardCost, 6)} · 用户计费 ${formatUsd(modelAuditSummary.mismatchRevenue, 6)}`" accent="blue" />
+            </div>
+
             <p class="cost-model-note">
               DeepSeek 官方接口会区分缓存命中 Token；API 中转站按其返回的 usage、实际上游模型及渠道/账号价格核算。价格同步只影响后续请求，历史记录保留请求发生时的价格快照；上游未返回 usage 时不会伪造精确成本。
             </p>
             <p class="cost-model-note">
-              这里展示的是“所选时间窗口内发生过的模型调用历史”，不是当前账号池支持模型清单。一天内调用多个模型会分别统计；切换或删除账号不会抹掉此前记录，可通过统计窗口和成本账号精确筛选。
+              这里展示的是“所选时间窗口内发生过的模型调用历史”，不是当前账号池支持模型清单。因此当前池只有 DeepSeek 时，窗口内仍可能出现此前真实调用过的 GPT；一天内调用多个模型会分别统计，切换或删除账号也不会抹掉记录。可通过统计窗口、成本账号和模型审计精确筛选。
             </p>
             <p v-if="modelStatsExactWindowFallback" class="cost-model-note cost-model-note--warning">
               当前内核未返回可信的精确时间边界，已从真实 usage_logs 按 {{ modelCostRangeLabel }} 重新聚合，避免把全历史误标为当前窗口。
@@ -247,11 +263,12 @@
             <div class="cost-model-table-wrap" tabindex="0" aria-label="真实模型渠道接口明细，可横向滚动">
               <table class="cost-model-table cost-route-table">
                 <thead>
-                  <tr><th>请求 → 实际模型</th><th>调用时间</th><th>渠道</th><th>账号</th><th>分组</th><th>入站接口</th><th>上游接口</th><th>当前单价</th><th>请求</th><th>Token / 缓存</th><th>标准 / 账号成本</th></tr>
+                  <tr><th>请求 → 发往上游</th><th>响应声明 / 审计</th><th>调用时间</th><th>渠道</th><th>账号</th><th>分组</th><th>入站接口</th><th>上游接口</th><th>当前单价</th><th>请求</th><th>Token / 缓存</th><th>标准 / 账号成本</th></tr>
                 </thead>
                 <tbody>
-                  <tr v-for="routeRow in modelRoutes" :key="routeRow.key">
+                  <tr v-for="routeRow in visibleModelRoutes" :key="routeRow.key">
                     <td><strong>{{ routeRow.requestedModel }} → {{ routeRow.upstreamModel }}</strong><small>{{ routeRow.mappingChain }}</small></td>
+                    <td><strong>{{ routeRow.upstreamResponseModel || '未声明' }}</strong><small class="cost-audit-badge" :class="`is-${routeRow.modelAuditStatus}`">{{ modelAuditStatusLabel(routeRow) }}</small></td>
                     <td><strong>最近 {{ formatModelTime(routeRow.lastSeen) }}</strong><small>首次 {{ formatModelTime(routeRow.firstSeen) }}</small></td>
                     <td><strong>{{ routeRow.channelName }}</strong><small>{{ routeRow.channelId == null ? '无 channel_id' : `channel_id ${routeRow.channelId}` }}</small></td>
                     <td><strong>{{ routeRow.accountName }}</strong><small>{{ routeRow.accountId == null ? '历史记录' : `account_id ${routeRow.accountId}` }}</small></td>
@@ -263,7 +280,7 @@
                     <td><strong>{{ formatTokens(routeRow.inputTokens + routeRow.cacheReadTokens + routeRow.outputTokens) }}</strong><small>缓存 {{ formatTokens(routeRow.cacheReadTokens) }}</small></td>
                     <td><strong>{{ formatUsd(routeRow.standardCost, 6) }} / {{ formatUsd(routeRow.accountCost, 6) }}</strong><small>请求快照</small></td>
                   </tr>
-                  <tr v-if="modelRoutes.length === 0"><td colspan="11" class="cost-empty-row">{{ modelCostRangeLabel }}没有真实路由记录</td></tr>
+                  <tr v-if="visibleModelRoutes.length === 0"><td colspan="12" class="cost-empty-row">{{ modelAuditMismatchOnly ? `${modelCostRangeLabel}没有确认的模型不一致记录` : `${modelCostRangeLabel}没有真实路由记录` }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -611,7 +628,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
+  accounts, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
 } = data
 
 const workspaceItems = [
@@ -654,7 +671,12 @@ const panelDescription = computed(() => activePanel.value === 'overview' ? '评�
 const rangeLabels: Record<CostCenterRange, string> = { today: '当天', '1m': '最近 1 分钟', '5m': '最近 5 分钟', '30m': '最近 30 分钟', '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 1 个月' }
 const rangeLabel = computed(() => rangeLabels[range.value])
 const modelCostRangeLabel = computed(() => rangeLabels[modelCostRange.value])
-const modelCostSourceLabel = computed(() => ({ requested: '用户请求模型', upstream: '实际上游模型', mapping: '请求 → 上游映射' })[modelCostSource.value])
+const modelCostSourceLabel = computed(() => ({
+  requested: '用户请求模型',
+  upstream: '实际发往上游模型',
+  response: '上游响应声明模型（成本仍用请求快照）',
+  mapping: '请求 → 发往上游映射',
+})[modelCostSource.value])
 const lastUpdatedLabel = computed(() => lastUpdated.value ? lastUpdated.value.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '等待首次刷新')
 const exchangeRateLabel = computed(() => {
   const date = exchangeRate.value.rateDate ? ` · ${exchangeRate.value.rateDate}` : ''
@@ -664,6 +686,9 @@ const exchangeRateLabel = computed(() => {
 })
 const modelCostRows = computed(() => buildModelCostRows(models.value))
 const modelCostSummary = computed(() => summarizeModelCosts(modelCostRows.value))
+const visibleModelRoutes = computed(() => modelAuditMismatchOnly.value
+  ? modelRoutes.value.filter((row) => row.modelAuditStatus === 'mismatch')
+  : modelRoutes.value)
 const pricingCatalogLabel = computed(() => {
   if (!pricingStatus.value) return '状态不可用'
   const synchronized = pricingStatus.value.catalog_source !== ''
@@ -922,7 +947,7 @@ const poolGroups = computed(() => {
 
 watch(activePanel, (panel) => router.replace({ query: { ...route.query, panel } }))
 watch(range, () => reload())
-watch([modelCostSource, modelCostAccountId, modelCostRange], () => reload())
+watch([modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly], () => reload())
 watch(refreshIntervalSeconds, (seconds) => { countdown.value = seconds })
 watch(upstreamProviderTabs, (tabs) => {
   if (!tabs.some((tab) => tab.key === platformFilter.value)) platformFilter.value = 'all'
@@ -949,6 +974,7 @@ function resolveRoutePricing(row: ModelRouteRow): ChannelModelPricing | ModelDef
 function routePricingSource(row: ModelRouteRow): string { return row.channelPricing ? '渠道自定义价' : modelPricing.value[row.upstreamModel]?.found ? '当前模型目录' : '未找到价格' }
 function formatCompactDate(value: string): string { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—' }
 function formatModelTime(value?: string): string { const date = new Date(value || ''); return Number.isFinite(date.getTime()) ? date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—' }
+function modelAuditStatusLabel(row: ModelRouteRow): string { return row.modelAuditStatus === 'mismatch' ? '不一致 · 疑似上游替换' : row.modelAuditStatus === 'matched' ? '一致' : '未观测' }
 function clampUtilization(value: number): number { return Math.max(0, Math.min(100, Number(value) || 0)) }
 function formatUtilization(value: number): string { return `${Math.round(clampUtilization(value))}%` }
 function hasPrimaryUsageWindow(usage?: AccountUsageInfo): boolean { return Boolean(usage?.five_hour || usage?.seven_day) }
@@ -1868,6 +1894,7 @@ button:active { transform: translateY(1px); }
 }
 .cost-model-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .cost-model-summary .cost-metric-cell { min-width: 0; border-bottom: 1px solid var(--cost-line); }
+.cost-model-audit-summary { background: rgb(25 34 27 / 74%); border-top: 1px solid #354236; }
 .cost-pricing-status {
   display: flex;
   align-items: center;
@@ -1905,6 +1932,10 @@ button:active { transform: translateY(1px); }
 .cost-route-heading strong, .cost-route-heading span { display: block; }
 .cost-route-heading strong { color: #dce5da; font-size: 12px; }
 .cost-route-heading span, .cost-route-heading small { margin-top: 4px; color: #778379; font-size: 9px; }
+.cost-audit-badge { width: fit-content; padding: 3px 6px; border: 1px solid #475348; border-radius: 999px; }
+.cost-audit-badge.is-matched { color: var(--cost-lime); border-color: rgb(185 229 90 / 45%); background: rgb(185 229 90 / 8%); }
+.cost-audit-badge.is-mismatch { color: #efbd69; border-color: rgb(239 189 105 / 55%); background: rgb(118 75 18 / 22%); }
+.cost-audit-badge.is-unobserved { color: #7f8a81; }
 .cost-model-table-wrap { max-width: 100%; overflow: auto; }
 .cost-model-table { width: 100%; min-width: 1050px; border-collapse: collapse; font-size: 11px; }
 .cost-route-table { min-width: 1500px; }

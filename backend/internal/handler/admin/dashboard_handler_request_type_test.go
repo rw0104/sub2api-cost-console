@@ -20,6 +20,9 @@ type dashboardUsageRepoCapture struct {
 	modelRequestType *int16
 	modelStream      *bool
 	modelSource      string
+	trendMismatch    *bool
+	modelMismatch    *bool
+	groupMismatch    *bool
 	rankingLimit     int
 	ranking          []usagestats.UserSpendingRankingItem
 	rankingTotal     float64
@@ -40,6 +43,18 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithFiltersBySource(
 	return []usagestats.ModelStat{}, nil
 }
 
+func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	filters usagestats.UsageLogFilters,
+) ([]usagestats.TrendDataPoint, error) {
+	s.trendRequestType = filters.RequestType
+	s.trendStream = filters.Stream
+	s.trendMismatch = filters.UpstreamModelMismatch
+	return []usagestats.TrendDataPoint{}, nil
+}
+
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -53,6 +68,28 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
 	s.trendRequestType = requestType
 	s.trendStream = stream
 	return []usagestats.TrendDataPoint{}, nil
+}
+
+func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	filters usagestats.UsageLogFilters,
+	source string,
+) ([]usagestats.ModelStat, error) {
+	s.modelRequestType = filters.RequestType
+	s.modelStream = filters.Stream
+	s.modelMismatch = filters.UpstreamModelMismatch
+	s.modelSource = source
+	return []usagestats.ModelStat{}, nil
+}
+
+func (s *dashboardUsageRepoCapture) GetGroupStatsWithUsageFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	filters usagestats.UsageLogFilters,
+) ([]usagestats.GroupStat, error) {
+	s.groupMismatch = filters.UpstreamModelMismatch
+	return []usagestats.GroupStat{}, nil
 }
 
 func (s *dashboardUsageRepoCapture) GetModelStatsWithFilters(
@@ -90,6 +127,7 @@ func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Eng
 	router.GET("/admin/dashboard/trend", handler.GetUsageTrend)
 	router.GET("/admin/dashboard/models", handler.GetModelStats)
 	router.GET("/admin/dashboard/snapshot-v2", handler.GetSnapshotV2)
+	router.GET("/admin/dashboard/groups", handler.GetGroupStats)
 	router.GET("/admin/dashboard/users-ranking", handler.GetUserSpendingRanking)
 	return router
 }
@@ -178,15 +216,19 @@ func TestDashboardModelStatsInvalidModelSource(t *testing.T) {
 }
 
 func TestDashboardModelStatsValidModelSource(t *testing.T) {
-	repo := &dashboardUsageRepoCapture{}
-	router := newDashboardRequestTypeTestRouter(repo)
+	for _, source := range []string{usagestats.ModelSourceUpstream, usagestats.ModelSourceResponse} {
+		t.Run(source, func(t *testing.T) {
+			repo := &dashboardUsageRepoCapture{}
+			router := newDashboardRequestTypeTestRouter(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/models?model_source=upstream", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/models?model_source="+source, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, usagestats.ModelSourceUpstream, repo.modelSource)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, source, repo.modelSource)
+		})
+	}
 }
 
 func TestDashboardSnapshotV2UsesRequestedModelSource(t *testing.T) {
@@ -202,6 +244,19 @@ func TestDashboardSnapshotV2UsesRequestedModelSource(t *testing.T) {
 	require.Equal(t, usagestats.ModelSourceUpstream, repo.modelSource)
 }
 
+func TestDashboardSnapshotV2UsesResponseModelSource(t *testing.T) {
+	dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?time_range=1m&granularity=minute&include_stats=false&include_trend=false&include_model_stats=true&model_source=response", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, usagestats.ModelSourceResponse, repo.modelSource)
+}
+
 func TestDashboardSnapshotV2RejectsInvalidModelSource(t *testing.T) {
 	dashboardSnapshotV2Cache = newSnapshotCache(30 * time.Second)
 	repo := &dashboardUsageRepoCapture{}
@@ -212,6 +267,46 @@ func TestDashboardSnapshotV2RejectsInvalidModelSource(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestDashboardModelAuditFilterPropagatesToTrendModelAndGroupQueries(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?upstream_model_mismatch=true",
+		"/admin/dashboard/models?upstream_model_mismatch=true",
+		"/admin/dashboard/groups?upstream_model_mismatch=true",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	require.NotNil(t, repo.trendMismatch)
+	require.True(t, *repo.trendMismatch)
+	require.NotNil(t, repo.modelMismatch)
+	require.True(t, *repo.modelMismatch)
+	require.NotNil(t, repo.groupMismatch)
+	require.True(t, *repo.groupMismatch)
+}
+
+func TestDashboardModelAuditFilterRejectsInvalidBoolean(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?upstream_model_mismatch=invalid",
+		"/admin/dashboard/models?upstream_model_mismatch=invalid",
+		"/admin/dashboard/groups?upstream_model_mismatch=invalid",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, path)
+	}
 }
 
 func TestDashboardUsersRankingLimitAndCache(t *testing.T) {

@@ -59,6 +59,7 @@ export interface TrendParams {
   request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
+	upstream_model_mismatch?: boolean
 }
 
 export interface TrendResponse {
@@ -84,12 +85,13 @@ export interface ModelStatsParams {
   user_id?: number
   api_key_id?: number
   model?: string
-  model_source?: 'requested' | 'upstream' | 'mapping'
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   account_id?: number
   group_id?: number
   request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
+	upstream_model_mismatch?: boolean
 }
 
 export interface ModelStatsResponse {
@@ -118,6 +120,7 @@ export interface GroupStatsParams {
   request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
+	upstream_model_mismatch?: boolean
 }
 
 export interface GroupStatsResponse {
@@ -127,7 +130,7 @@ export interface GroupStatsResponse {
 }
 
 export interface DashboardSnapshotV2Params extends TrendParams {
-  model_source?: 'requested' | 'upstream' | 'mapping'
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   include_stats?: boolean
   include_trend?: boolean
   include_model_stats?: boolean
@@ -169,7 +172,7 @@ export interface UserBreakdownParams {
   end_date?: string
   group_id?: number
   model?: string
-  model_source?: 'requested' | 'upstream' | 'mapping'
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   endpoint?: string
   endpoint_type?: 'inbound' | 'upstream' | 'path'
   limit?: number

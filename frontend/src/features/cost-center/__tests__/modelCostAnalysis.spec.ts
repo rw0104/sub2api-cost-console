@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateModelStatsFromUsageLogs, buildModelCostRows, classifyModelProvider, summarizeModelCosts } from '../modelCostAnalysis'
+import {
+  aggregateModelStatsFromUsageLogs,
+  buildModelCostRows,
+  classifyModelProvider,
+  summarizeModelAudit,
+  summarizeModelCosts,
+} from '../modelCostAnalysis'
 
 describe('model cost analysis', () => {
   it('separates official standard cost, upstream account cost, revenue and gross profit', () => {
@@ -75,6 +81,67 @@ describe('model cost analysis', () => {
       first_seen: '2026-08-07T07:01:00.000Z',
       last_seen: '2026-08-07T07:09:00.000Z',
     })])
+  })
+
+  it('groups audited costs by the model declared in the upstream response without repricing the log', () => {
+    const logs = [{
+      model: 'deepseek-chat',
+      upstream_model: 'deepseek-v4-pro',
+      upstream_response_model: 'deepseek-v4-flash',
+      upstream_model_mismatch: true,
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_cost: 0.25,
+      actual_cost: 0.5,
+      account_stats_cost: 0.2,
+      created_at: '2026-08-07T08:00:00.000Z',
+    }] as any
+
+    expect(aggregateModelStatsFromUsageLogs(logs, 'response')).toEqual([
+      expect.objectContaining({
+        model: 'deepseek-v4-flash',
+        cost: 0.25,
+        account_cost: 0.2,
+        actual_cost: 0.5,
+      }),
+    ])
+  })
+
+  it('summarizes matched, mismatched and unobserved upstream model declarations without losing cost snapshots', () => {
+    const logs = [
+      {
+        upstream_model_mismatch: false,
+        total_cost: 0.1,
+        account_stats_cost: 0.08,
+        actual_cost: 0.2,
+      },
+      {
+        upstream_model_mismatch: true,
+        total_cost: 0.3,
+        account_stats_cost: 0.24,
+        actual_cost: 0.5,
+      },
+      {
+        upstream_model_mismatch: null,
+        total_cost: 0.4,
+        account_stats_cost: 0.32,
+        actual_cost: 0.6,
+      },
+    ] as any
+
+    expect(summarizeModelAudit(logs)).toEqual({
+      totalRequests: 3,
+      observedRequests: 2,
+      matchedRequests: 1,
+      mismatchRequests: 1,
+      unobservedRequests: 1,
+      mismatchRate: 0.5,
+      mismatchStandardCost: 0.3,
+      mismatchAccountCost: 0.24,
+      mismatchRevenue: 0.5,
+    })
   })
 
   it.each([

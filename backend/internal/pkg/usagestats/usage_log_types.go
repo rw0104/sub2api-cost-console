@@ -6,12 +6,13 @@ import "time"
 const (
 	ModelSourceRequested = "requested"
 	ModelSourceUpstream  = "upstream"
+	ModelSourceResponse  = "response"
 	ModelSourceMapping   = "mapping"
 )
 
 func IsValidModelSource(source string) bool {
 	switch source {
-	case ModelSourceRequested, ModelSourceUpstream, ModelSourceMapping:
+	case ModelSourceRequested, ModelSourceUpstream, ModelSourceResponse, ModelSourceMapping:
 		return true
 	default:
 		return false
@@ -151,6 +152,7 @@ type UserUsageTrendPoint struct {
 type UserSpendingRankingItem struct {
 	UserID     int64   `json:"user_id"`
 	Email      string  `json:"email"`
+	Username   string  `json:"username"`
 	ActualCost float64 `json:"actual_cost"` // 实际扣除
 	Requests   int64   `json:"requests"`
 	Tokens     int64   `json:"tokens"`
@@ -182,7 +184,7 @@ type UserBreakdownItem struct {
 type UserBreakdownDimension struct {
 	GroupID      int64  // filter by group_id (>0 to enable)
 	Model        string // filter by model name (non-empty to enable)
-	ModelType    string // "requested", "upstream", or "mapping"
+	ModelType    string // "requested", "upstream", "response", or "mapping"
 	Endpoint     string // filter by endpoint value (non-empty to enable)
 	EndpointType string // "inbound", "upstream", or "path"
 	// Additional filter conditions
@@ -275,13 +277,14 @@ type UsageLogFilters struct {
 	RequestID string
 	Model     string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
-	ModelFilterSource string
-	RequestType       *int16
-	Stream            *bool
-	BillingType       *int8
-	BillingMode       string
-	StartTime         *time.Time
-	EndTime           *time.Time
+	ModelFilterSource     string
+	RequestType           *int16
+	Stream                *bool
+	BillingType           *int8
+	BillingMode           string
+	UpstreamModelMismatch *bool
+	StartTime             *time.Time
+	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }

@@ -42,9 +42,7 @@ fn stage_go_zoneinfo() {
 fn main() {
     stage_go_zoneinfo();
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
-    println!(
-        "cargo:rerun-if-changed=binaries/sub2api-backend-x86_64-pc-windows-msvc.exe"
-    );
+    println!("cargo:rerun-if-changed=binaries/sub2api-backend-x86_64-pc-windows-msvc.exe");
     let core_version =
         std::fs::read_to_string("../CORE_VERSION").expect("frontend/CORE_VERSION must exist");
     let algorithm_version = std::fs::read_to_string("../ALGORITHM_VERSION")

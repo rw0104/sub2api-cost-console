@@ -6,6 +6,9 @@ export interface ModelRouteRow {
   key: string
   requestedModel: string
   upstreamModel: string
+  upstreamResponseModel: string
+  upstreamModelMismatch: boolean | null
+  modelAuditStatus: 'matched' | 'mismatch' | 'unobserved'
   mappingChain: string
   provider: string
   accountId: number | null
@@ -56,11 +59,16 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
   for (const log of logs) {
     const requestedModel = text(log.model, '未知请求模型')
     const upstreamModel = text(log.upstream_model, requestedModel)
+    const upstreamResponseModel = text(log.upstream_response_model, '')
+    const upstreamModelMismatch = log.upstream_model_mismatch == null ? null : Boolean(log.upstream_model_mismatch)
+    const modelAuditStatus = upstreamModelMismatch == null
+      ? 'unobserved'
+      : upstreamModelMismatch ? 'mismatch' : 'matched'
     const accountId = log.account_id == null ? null : Number(log.account_id)
     const channelId = log.channel_id == null ? null : Number(log.channel_id)
     const inboundEndpoint = text(log.inbound_endpoint, '未记录')
     const upstreamEndpoint = text(log.upstream_endpoint, '未记录')
-    const key = [requestedModel, upstreamModel, accountId ?? 'deleted', channelId ?? 'direct', inboundEndpoint, upstreamEndpoint].join('|')
+    const key = [requestedModel, upstreamModel, upstreamResponseModel, modelAuditStatus, accountId ?? 'deleted', channelId ?? 'direct', inboundEndpoint, upstreamEndpoint].join('|')
     const accountMultiplier = log.account_rate_multiplier == null ? 1 : numeric(log.account_rate_multiplier)
     const accountCost = log.account_stats_cost == null
       ? numeric(log.total_cost) * accountMultiplier
@@ -84,6 +92,9 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
       key,
       requestedModel,
       upstreamModel,
+      upstreamResponseModel,
+      upstreamModelMismatch,
+      modelAuditStatus,
       mappingChain: text(log.model_mapping_chain, requestedModel === upstreamModel ? '未映射' : `${requestedModel} → ${upstreamModel}`),
       provider: classifyModelProvider(upstreamModel),
       accountId,

@@ -1077,7 +1077,7 @@ Invoke-WebRequest -Method Options `
 | 字段 | 来源 | 作用 |
 |---|---|---|
 | `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
-| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.171` |
+| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.172` |
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
@@ -1125,7 +1125,7 @@ https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_wi
   "currency": "USD",
   "billing_cycle": "monthly",
   "started_at": "2026-08-04T10:00:00.000Z",
-  "algorithm_version": "1.3.1"
+  "algorithm_version": "1.4.0"
 }
 ```
 
@@ -1135,6 +1135,19 @@ https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_wi
 2. 更新成本模型测试。
 3. 在 Release Notes 中说明规则变化和生效边界。
 4. 不回写历史成本档案的算法版本。
+
+### 27.5 上游响应模型审计
+
+Sub2API `0.1.172` 为 `usage_logs` 增加 `upstream_response_model` 与三态 `upstream_model_mismatch`。桌面成本算法 `1.4.0` 同时保留用户请求模型、实际发往上游模型和上游响应声明模型：
+
+1. 请求时的渠道匹配和价格快照使用实际发往上游模型。
+2. 响应声明模型只用于审计和可选汇总维度，不允许重算历史成本。
+3. `NULL` 表示旧记录或响应未声明模型，不能计入“一致”。
+4. 当前账号池与历史调用严格分离；删除账号或切换池模型不会清除旧 `usage_logs`。
+5. Dashboard `model_source` 支持 `requested/upstream/response/mapping`；用量、趋势、模型、分组和 Snapshot 支持 `upstream_model_mismatch` 筛选。
+6. 成本控制台显示首次/最近调用时间、上游响应声明和审计状态，并提供“仅看不一致”。
+
+数据库新增 `194_add_usage_log_upstream_response_model.sql` 和 `195_add_usage_log_upstream_model_mismatch_index_notx.sql`。本项目原有 `194_preserve_usage_logs_when_accounts_deleted.sql` 继续保留；迁移器以完整文件名记录执行状态，所以相同数字前缀不会互相覆盖。完整字段、SQL 口径和验收清单见 `docs/UPSTREAM_RESPONSE_MODEL_AUDIT.md`。
 
 ## 28. 安装包分发与发布 CI
 
@@ -1174,16 +1187,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.10
-git push origin v0.2.10
+git tag v0.2.11
+git push origin v0.2.11
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.10 --repo rw0104/sub2api-cost-console
-gh release download v0.2.10 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.11 --repo rw0104/sub2api-cost-console
+gh release download v0.2.11 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

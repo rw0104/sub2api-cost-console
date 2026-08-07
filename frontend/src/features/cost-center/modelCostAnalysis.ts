@@ -1,7 +1,7 @@
 import type { Account, AdminUsageLog, ModelStat } from '@/types'
 import { describeUpstreamOrigin } from './upstreamProvider'
 
-export type ModelCostSource = 'requested' | 'upstream' | 'mapping'
+export type ModelCostSource = 'requested' | 'upstream' | 'response' | 'mapping'
 
 export interface ModelCostRow extends ModelStat {
   provider: string
@@ -25,6 +25,18 @@ export interface ModelCostSummary {
   missingPricingCount: number
 }
 
+export interface ModelAuditSummary {
+  totalRequests: number
+  observedRequests: number
+  matchedRequests: number
+  mismatchRequests: number
+  unobservedRequests: number
+  mismatchRate: number | null
+  mismatchStandardCost: number
+  mismatchAccountCost: number
+  mismatchRevenue: number
+}
+
 function finiteNumber(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
@@ -42,9 +54,18 @@ function normalizedModel(value: unknown, fallback = '未知模型'): string {
 function modelDimension(log: AdminUsageLog, source: ModelCostSource): string {
   const requested = normalizedModel(log.model)
   const upstream = normalizedModel(log.upstream_model, requested)
+  const response = normalizedModel(log.upstream_response_model, upstream)
   if (source === 'upstream') return upstream
+  if (source === 'response') return response
   if (source === 'mapping') return `${requested} -> ${upstream}`
   return requested
+}
+
+function accountCostSnapshot(log: AdminUsageLog): number {
+  const accountMultiplier = log.account_rate_multiplier == null ? 1 : finiteNumber(log.account_rate_multiplier)
+  return log.account_stats_cost == null
+    ? finiteNumber(log.total_cost) * accountMultiplier
+    : finiteNumber(log.account_stats_cost)
 }
 
 export function aggregateModelStatsFromUsageLogs(logs: AdminUsageLog[], source: ModelCostSource): ModelStat[] {
@@ -52,10 +73,7 @@ export function aggregateModelStatsFromUsageLogs(logs: AdminUsageLog[], source: 
   for (const log of logs) {
     const model = modelDimension(log, source)
     const createdAt = String(log.created_at || '')
-    const accountMultiplier = log.account_rate_multiplier == null ? 1 : finiteNumber(log.account_rate_multiplier)
-    const accountCost = log.account_stats_cost == null
-      ? finiteNumber(log.total_cost) * accountMultiplier
-      : finiteNumber(log.account_stats_cost)
+    const accountCost = accountCostSnapshot(log)
     const existing = rows.get(model)
     if (existing) {
       existing.requests += 1
@@ -87,6 +105,46 @@ export function aggregateModelStatsFromUsageLogs(logs: AdminUsageLog[], source: 
     })
   }
   return [...rows.values()].sort((left, right) => finiteNumber(right.account_cost) - finiteNumber(left.account_cost) || right.requests - left.requests)
+}
+
+export function summarizeModelAudit(logs: AdminUsageLog[]): ModelAuditSummary {
+  const summary = logs.reduce((result, log) => {
+    result.totalRequests += 1
+    if (log.upstream_model_mismatch == null) {
+      result.unobservedRequests += 1
+      return result
+    }
+
+    result.observedRequests += 1
+    if (!log.upstream_model_mismatch) {
+      result.matchedRequests += 1
+      return result
+    }
+
+    result.mismatchRequests += 1
+    result.mismatchStandardCost += finiteNumber(log.total_cost)
+    result.mismatchAccountCost += accountCostSnapshot(log)
+    result.mismatchRevenue += finiteNumber(log.actual_cost)
+    return result
+  }, {
+    totalRequests: 0,
+    observedRequests: 0,
+    matchedRequests: 0,
+    mismatchRequests: 0,
+    unobservedRequests: 0,
+    mismatchRate: null as number | null,
+    mismatchStandardCost: 0,
+    mismatchAccountCost: 0,
+    mismatchRevenue: 0,
+  })
+
+  summary.mismatchRate = summary.observedRequests > 0
+    ? summary.mismatchRequests / summary.observedRequests
+    : null
+  summary.mismatchStandardCost = roundedMoney(summary.mismatchStandardCost)
+  summary.mismatchAccountCost = roundedMoney(summary.mismatchAccountCost)
+  summary.mismatchRevenue = roundedMoney(summary.mismatchRevenue)
+  return summary
 }
 
 export function classifyModelProvider(model: string): string {

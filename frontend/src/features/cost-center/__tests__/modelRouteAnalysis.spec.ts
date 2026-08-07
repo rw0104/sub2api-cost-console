@@ -57,6 +57,24 @@ function usage(overrides: Partial<AdminUsageLog> = {}): AdminUsageLog {
 }
 
 describe('actual model route aggregation', () => {
+  it('distinguishes the sent model from a mismatched model declared by upstream', () => {
+    const [row] = buildModelRouteRows([
+      usage({
+        upstream_model: 'deepseek-v4-pro',
+        upstream_response_model: 'deepseek-v4-flash',
+        upstream_model_mismatch: true,
+      } as any),
+    ], [])
+
+    expect(row).toMatchObject({
+      requestedModel: 'deepseek-chat',
+      upstreamModel: 'deepseek-v4-pro',
+      upstreamResponseModel: 'deepseek-v4-flash',
+      upstreamModelMismatch: true,
+      modelAuditStatus: 'mismatch',
+    })
+  })
+
   it('uses only stored request, upstream, channel and endpoint values', () => {
     const channels = [{ id: 7, name: '官方直连', model_pricing: [] }] as Channel[]
     const rows = buildModelRouteRows([usage()], channels)

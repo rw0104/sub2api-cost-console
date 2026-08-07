@@ -57,11 +57,12 @@ accrued_cost = hourly_rate × elapsed_hours
 
 支持 `hourly`、`daily`、`weekly`、`monthly` 和 `one_time` 五种计费周期。自定义成本配置写入 `account.extra.cost_profile`，不会覆盖账号已有的 `extra` 数据。默认月成本、套餐识别优先级、汇率和边界条件参见[成本模型文档](COST_CONSOLE_DEVELOPMENT.md#6-成本模型)。
 
-每项指标的实测来源、推导公式、当前号池与历史数据边界参见[成本数据真实性与口径](docs/COST_DATA_PROVENANCE.md)。
+每项指标的实测来源、推导公式、当前号池与历史数据边界参见[成本数据真实性与口径](docs/COST_DATA_PROVENANCE.md)；三层模型身份、不一致筛选和成本快照边界参见[上游响应模型审计与成本归因](docs/UPSTREAM_RESPONSE_MODEL_AUDIT.md)。
 
 ### 模型、渠道与实时价格目录
 
 - 模型和渠道只从真实路由与 `usage_logs` 展示，不预置“只有 Codex / Grok”的假筛选项。
+- 每条请求区分“用户请求模型、实际发往上游模型、上游响应声明模型”；可筛选仅看不一致，识别中转站自行替换或降级模型。响应声明只用于审计和分组，历史成本仍使用请求发生时的价格快照。
 - 官方按量 API 使用模型输入、输出、缓存创建和缓存命中 Token 分别核算；DeepSeek、Claude 等无需填写月费成本档案。
 - OpenAI 兼容中转站返回完整 usage 时，按实际上游模型、Token 和账号/渠道自定义价格核算；缺少 usage 或真实模型时明确标记数据缺口。
 - 默认远程价格源为 LiteLLM 社区聚合目录，后端自动下载间隔为 24 小时；离线时使用本地缓存和随安装包发布的兜底目录。生产结算可用渠道合同价覆盖目录价，历史记录保留请求发生时的价格快照。
@@ -78,9 +79,9 @@ accrued_cost = hourly_rate × elapsed_hours
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
-| Desktop | `0.2.10` | Tauri 2 桌面壳、Vue 界面和安装结构 |
-| Core | `0.1.171` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `f0e7a9c7a23a7d02fb159b62fa809621eb0475a6`） |
-| Algorithm | `1.3.1` | 固定订阅/API 按量分流、精确模型历史窗口、真实零桶、自适应趋势与动态价格目录 |
+| Desktop | `0.2.11` | Tauri 2 桌面壳、Vue 界面和安装结构 |
+| Core | `0.1.172` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `155c494964c3ea6ecc31f52679525c1034bf0f16`） |
+| Algorithm | `1.4.0` | 三层模型身份、响应模型审计、历史成本快照、精确时间窗口与动态价格目录 |
 
 每条成本档案记录其算法版本。旧数据如果没有版本会显示为 `legacy-unversioned`，不会被静默归类为当前算法。
 

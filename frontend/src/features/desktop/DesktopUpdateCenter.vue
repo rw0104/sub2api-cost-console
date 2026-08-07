@@ -180,7 +180,7 @@ const desktop = isDesktopRuntime()
 const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
-const algorithmVersion = ref('1.3.1')
+const algorithmVersion = ref('1.4.0')
 const upstreamCommit = ref('unknown')
 // Tauri's Update is a class instance with JavaScript private fields. A normal
 // Vue ref would deep-proxy it and break downloadAndInstall's private-field

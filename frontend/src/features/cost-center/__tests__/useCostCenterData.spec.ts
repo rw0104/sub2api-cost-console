@@ -15,6 +15,7 @@ import {
   buildCostCenterDataQueries,
   DEFAULT_COST_CENTER_RANGE,
   DEFAULT_MODEL_COST_RANGE,
+  filterModelAuditLogs,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
   useCostCenterData,
@@ -114,6 +115,17 @@ describe('cost center live ranges', () => {
     expect(result.models).toEqual([])
     expect(result.compatibilityTruncated).toBe(true)
     expect(result.usedCompatibilityAggregation).toBe(false)
+  })
+
+  it('keeps only confirmed upstream model mismatches when the audit filter is enabled', () => {
+    const logs = [
+      { id: 1, upstream_model_mismatch: true },
+      { id: 2, upstream_model_mismatch: false },
+      { id: 3, upstream_model_mismatch: null },
+    ] as any
+
+    expect(filterModelAuditLogs(logs, true).map((log) => log.id)).toEqual([1])
+    expect(filterModelAuditLogs(logs, false)).toBe(logs)
   })
 })
 

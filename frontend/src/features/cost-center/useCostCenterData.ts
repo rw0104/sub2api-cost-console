@@ -12,7 +12,12 @@ import type {
   WindowStats,
 } from '@/types'
 import type { CostProfile } from './model'
-import { aggregateModelStatsFromUsageLogs, type ModelCostSource } from './modelCostAnalysis'
+import {
+  aggregateModelStatsFromUsageLogs,
+  summarizeModelAudit,
+  type ModelAuditSummary,
+  type ModelCostSource,
+} from './modelCostAnalysis'
 import { buildModelRouteRows, type ModelRouteRow } from './modelRouteAnalysis'
 import { loadUsdCnyExchangeRate, type UsdCnyExchangeRate } from './exchangeRate'
 import type { AccountProbeState } from './upstreamTable'
@@ -33,6 +38,10 @@ const USAGE_PAGE_SIZE = 1000
 const MAX_USAGE_PAGES = 25
 const MAX_MODEL_PRICING_LOOKUPS = 100
 const ACCOUNT_USAGE_CACHE_TTL_MS = 5 * 60 * 1000
+
+export function filterModelAuditLogs(logs: AdminUsageLog[], mismatchOnly: boolean): AdminUsageLog[] {
+  return mismatchOnly ? logs.filter((log) => log.upstream_model_mismatch === true) : logs
+}
 
 export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
   time_range?: Exclude<CostCenterRange, 'today'>
@@ -126,6 +135,8 @@ export function useCostCenterData() {
   const modelCostSource = ref<ModelCostSource>('upstream')
   const modelCostAccountId = ref<number | null>(null)
   const modelCostRange = ref<CostCenterRange>(DEFAULT_MODEL_COST_RANGE)
+  const modelAuditMismatchOnly = ref(false)
+  const modelAuditSummary = ref<ModelAuditSummary>(summarizeModelAudit([]))
   const modelRoutes = ref<ModelRouteRow[]>([])
   const modelRoutesTruncated = ref(false)
   const modelStatsExactWindowFallback = ref(false)
@@ -251,6 +262,7 @@ export function useCostCenterData() {
         ...queries.model,
         account_id: modelCostAccountId.value ?? undefined,
         model_source: modelCostSource.value,
+        upstream_model_mismatch: modelAuditMismatchOnly.value ? true : undefined,
         include_stats: false,
         include_trend: false,
         include_model_stats: true,
@@ -336,9 +348,15 @@ export function useCostCenterData() {
       trendUsesAccountCost.value = false
     }
 
+    const modelCompatibility = modelRoutesResult.status === 'fulfilled'
+      ? {
+          ...modelRoutesResult.value,
+          logs: filterModelAuditLogs(modelRoutesResult.value.logs, modelAuditMismatchOnly.value),
+        }
+      : null
     const modelStatsSelection = selectExactWindowModelStats(
       modelResult.status === 'fulfilled' ? modelResult.value : null,
-      modelRoutesResult.status === 'fulfilled' ? modelRoutesResult.value : null,
+      modelCompatibility,
       modelStart,
       modelEnd,
       modelCostSource.value,
@@ -348,6 +366,7 @@ export function useCostCenterData() {
     modelStatsCompatibilityTruncated.value = modelStatsSelection.compatibilityTruncated
     if (modelRoutesResult.status === 'fulfilled') {
       const channels: Channel[] = channelsResult.status === 'fulfilled' ? channelsResult.value.items ?? [] : []
+      modelAuditSummary.value = summarizeModelAudit(modelRoutesResult.value.logs)
       modelRoutes.value = buildModelRouteRows(modelRoutesResult.value.logs, channels)
       modelRoutesTruncated.value = modelRoutesResult.value.truncated
       const actualModels = [...new Set(modelRoutes.value.map((row) => row.upstreamModel))].slice(0, MAX_MODEL_PRICING_LOOKUPS)
@@ -358,6 +377,7 @@ export function useCostCenterData() {
         return result.status === 'fulfilled' ? [[model, result.value]] : []
       }))
     } else {
+      modelAuditSummary.value = summarizeModelAudit([])
       modelRoutes.value = []
       modelRoutesTruncated.value = false
       modelPricing.value = {}
@@ -477,6 +497,8 @@ export function useCostCenterData() {
     modelCostSource,
     modelCostAccountId,
     modelCostRange,
+    modelAuditMismatchOnly,
+    modelAuditSummary,
     modelRoutes,
     modelRoutesTruncated,
     modelStatsExactWindowFallback,
