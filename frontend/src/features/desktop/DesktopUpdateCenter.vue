@@ -379,8 +379,8 @@ async function restoreBundledCore() {
   progressMessage.value = '正在校验桌面内置内核'
   try {
     const result = await invoke<{ version: string }>('restore_bundled_core')
-    progressStage.value = 'ready'
-    progressMessage.value = `内置内核 v${result.version} 已启用，正在执行健康检查`
+    progressStage.value = 'finished'
+    progressMessage.value = `内核已完成更新：内置内核 v${result.version} 已启用且健康检查通过`
     bundledChoiceDismissed.value = false
     coreIdentity.value = await invoke<CoreIdentityCheck>('inspect_core_identity')
     await loadRuntimeVersions()

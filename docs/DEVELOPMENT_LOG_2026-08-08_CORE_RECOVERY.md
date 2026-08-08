@@ -123,5 +123,5 @@ corepack pnpm@9 desktop:build
 - [x] Go 全仓测试通过。
 - [x] `cargo build --release --features custom-protocol` 的窗口加载内置界面。
 - [x] 现场“恢复桌面内置内核”完成，状态文件和监听进程一致。
-- [ ] 提交并推送源码，创建 `v0.2.12` 标签。
-- [ ] Desktop Release 工作流成功，Release 包含 NSIS、签名、`latest.json` 和 SHA-256。
+- [x] 提交并推送源码，创建 `v0.2.12` 标签。
+- [x] Desktop Release 工作流成功，Release 包含 NSIS、签名、`latest.json` 和 SHA-256。

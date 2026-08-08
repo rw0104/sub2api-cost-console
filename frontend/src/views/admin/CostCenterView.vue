@@ -1048,7 +1048,21 @@ async function saveSelectedCostProfile(profile: CostProfile) {
     appStore.showError(saveError?.message || '成本档案保存失败')
   }
 }
-async function toggleFullscreen() { if ('__TAURI_INTERNALS__' in (window as any)) { const { getCurrentWindow } = await import('@tauri-apps/api/window'); const current = getCurrentWindow(); await current.setFullscreen(!(await current.isFullscreen())) } else if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen() }
+async function toggleFullscreen() {
+  try {
+    if ('__TAURI_INTERNALS__' in (window as any)) {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const current = getCurrentWindow()
+      await current.setFullscreen(!(await current.isFullscreen()))
+    } else if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen()
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch (fullscreenError) {
+    error.value = `切换全屏失败：${fullscreenError instanceof Error ? fullscreenError.message : String(fullscreenError)}`
+  }
+}
 
 function handleKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') { event.preventDefault(); reload(); return }

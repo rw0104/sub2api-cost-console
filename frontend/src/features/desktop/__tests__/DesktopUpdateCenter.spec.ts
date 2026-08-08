@@ -133,6 +133,8 @@ describe('DesktopUpdateCenter', () => {
 
     expect(mocks.invoke).toHaveBeenCalledWith('restore_bundled_core')
     expect(mocks.relaunch).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('内核已完成更新')
+    expect(wrapper.text()).not.toContain('正在执行健康检查')
     wrapper.unmount()
   })
 

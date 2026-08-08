@@ -1,7 +1,7 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
 > 文档版本：1.0  
-> 桌面应用版本：0.2.12
+> 桌面应用版本：0.2.13
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
@@ -1187,16 +1187,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.12
-git push origin v0.2.12
+git tag v0.2.13
+git push origin v0.2.13
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.12 --repo rw0104/sub2api-cost-console
-gh release download v0.2.12 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.13 --repo rw0104/sub2api-cost-console
+gh release download v0.2.13 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---
@@ -1261,3 +1261,15 @@ PostgreSQL 官方 Windows 下载页提供适合被其他应用安装程序集成
 5. 提供 PostgreSQL ↔ SQLite 的导出、导入、备份、算法版本和审计记录迁移。
 
 在以上工作完成前，不能把 SQLite 或 MongoDB 暴露为可选择但不完整的数据库类型。当前发布版本以 PostgreSQL + Redis/Valkey 为唯一经过验证的核心数据合同。
+
+---
+
+## 30. Windows 窗口控制、系统托盘与更新完成反馈
+
+桌面版本 `0.2.13` 补齐三项桌面壳行为：
+
+1. `restore_bundled_core` 返回时，Rust 侧已经完成新内核健康检查。前端因此把进度阶段切换为 `finished`，显示“内核已完成更新：内置内核已启用且健康检查通过”，不再在 100% 时保留进行中文案。
+2. 成本中心全屏按钮原先只有 `core:window:default` 的读取权限；Tauri 2 默认能力包含 `is_fullscreen`，但不包含 `set_fullscreen`。`capabilities/default.json` 现在显式授予 `core:window:allow-set-fullscreen`，按钮和 `F11` 共用同一切换路径，异常会显示在页面错误区。
+3. Rust 桌面壳启用 Tauri `tray-icon` 特性。最小化或关闭主窗口时隐藏到系统托盘；左键单击托盘图标显示、取消最小化并聚焦主窗口；右键菜单提供“显示主窗口”和“退出 Sub2API”。只有显式退出才结束受管后端，更新器的进程重启不受关闭拦截影响。
+
+具体变更、行为合同与验证记录参见 [`docs/DEVELOPMENT_LOG_2026-08-08_DESKTOP_SHELL_UX.md`](docs/DEVELOPMENT_LOG_2026-08-08_DESKTOP_SHELL_UX.md)。
