@@ -79,7 +79,7 @@ accrued_cost = hourly_rate × elapsed_hours
 
 | 版本 | 当前值 | 作用 |
 | --- | --- | --- |
-| Desktop | `0.2.11` | Tauri 2 桌面壳、Vue 界面和安装结构 |
+| Desktop | `0.2.12` | Tauri 2 桌面壳、Vue 界面和安装结构；修复 Windows 遗留内核导致的启动闪退 |
 | Core | `0.1.172` | 当前桌面包绑定的 Sub2API 上游基线（上游提交 `155c494964c3ea6ecc31f52679525c1034bf0f16`） |
 | Algorithm | `1.4.0` | 三层模型身份、响应模型审计、历史成本快照、精确时间窗口与动态价格目录 |
 

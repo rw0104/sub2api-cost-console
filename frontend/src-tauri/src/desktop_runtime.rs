@@ -1,3 +1,4 @@
+use crate::managed_core_process::stop_owned_listener;
 use reqwest::{Client, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,13 @@ struct CoreState {
     last_error: Option<String>,
 }
 
+fn defer_pending_activation_failure(state: &mut CoreState, error: &str) -> String {
+    let warning =
+        format!("内核更新暂未切换：{error}。桌面已继续启动，请关闭占用内核的进程后稍后重试");
+    state.last_error = Some(warning.clone());
+    warning
+}
+
 #[derive(Clone, Debug)]
 pub struct CoreVersions {
     current_version: String,
@@ -151,6 +159,8 @@ pub struct CoreIdentityCheck {
     pub current: CoreVersionRecord,
     pub bundled: CoreVersionRecord,
     pub bundled_differs: bool,
+    pub pending: Option<CoreVersionRecord>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -431,6 +441,10 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
 
     let active_path = active_core_path(app)?;
     let previous_path = previous_core_path(app)?;
+    if port_is_open() {
+        stop_owned_listener(BACKEND_PORT, &active_path)?;
+        wait_for_backend_port_release_blocking()?;
+    }
     if let Some(parent) = active_path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建活动内核目录: {error}"))?;
     }
@@ -468,10 +482,22 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn initialize_backend(app: &AppHandle) -> Result<BackendSupervisor, String> {
-    activate_pending_core(app)?;
+    let activation_warning = activate_pending_core(app).err().map(|error| {
+        let mut state = load_core_state(app);
+        let warning = defer_pending_activation_failure(&mut state, &error);
+        let _ = save_core_state(app, &state);
+        warning
+    });
     let data_dir = backend_data_dir(app)?;
     let versions = current_core_versions(app);
-    Ok(BackendSupervisor::new(&data_dir, &versions))
+    let supervisor = BackendSupervisor::new(&data_dir, &versions);
+    if let Some(warning) = activation_warning {
+        supervisor.update_status(|status| {
+            status.message = "内核更新等待安全恢复，桌面仍可继续启动".into();
+            status.last_log = warning;
+        });
+    }
+    Ok(supervisor)
 }
 
 fn port_is_open() -> bool {
@@ -765,16 +791,28 @@ fn stop_backend_internal(supervisor: &BackendSupervisor, shutting_down: bool) {
 /// Tauri's `relaunch` can otherwise race child shutdown on Windows.
 #[tauri::command]
 pub async fn desktop_backend_prepare_relaunch(
+    app: AppHandle,
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<(), String> {
     stop_backend_internal(&supervisor, false);
+    if wait_for_backend_port_release().await.is_ok() {
+        return Ok(());
+    }
+    let active_path = active_core_path(&app)?;
+    stop_owned_listener(BACKEND_PORT, &active_path)?;
+    wait_for_backend_port_release()
+        .await
+        .map_err(|_| "本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
+}
+
+fn wait_for_backend_port_release_blocking() -> Result<(), String> {
     for _ in 0..50 {
         if !port_is_open() {
             return Ok(());
         }
-        sleep(Duration::from_millis(100)).await;
+        std::thread::sleep(Duration::from_millis(100));
     }
-    Err("本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
+    Err("本地内核仍在退出，无法安全切换；请稍后重试".into())
 }
 
 async fn wait_for_backend_port_release() -> Result<(), String> {
@@ -1070,10 +1108,13 @@ pub fn desktop_backend_status(supervisor: tauri::State<'_, BackendSupervisor>) -
 pub fn inspect_core_identity(app: AppHandle) -> Result<CoreIdentityCheck, String> {
     let current = active_core_record(&app)?;
     let bundled = bundled_core_record()?;
+    let state = load_core_state(&app);
     Ok(CoreIdentityCheck {
         bundled_differs: !same_core_identity(&current, &bundled),
         current,
         bundled,
+        pending: state.pending,
+        last_error: state.last_error,
     })
 }
 
@@ -1284,11 +1325,6 @@ pub async fn restore_bundled_core(
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<CoreInstallResult, String> {
     let _guard = supervisor.update_lock.lock().await;
-    let snapshot = supervisor.snapshot();
-    if port_is_open() && !snapshot.managed {
-        return Err("当前连接的是外部 Sub2API 服务，桌面端不能替换或停止该进程".into());
-    }
-
     let current = active_core_record(&app)?;
     let bundled_path = bundled_core_path()?;
     let verified_commit = verify_upstream_core_build(&bundled_path, CORE_VERSION).await?;
@@ -1346,22 +1382,39 @@ pub async fn restore_bundled_core(
 
     emit_core_progress(&app, "stopping", 0, None, "正在安全停止当前内核");
     stop_backend_internal(&supervisor, false);
-    if let Err(error) = wait_for_backend_port_release().await {
-        let _ = save_core_state(&app, &original_state);
-        let _ = tokio::fs::remove_file(&pending_path).await;
-        return Err(error);
+    if wait_for_backend_port_release().await.is_err() {
+        let active_path = active_core_path(&app)?;
+        if let Err(error) = stop_owned_listener(BACKEND_PORT, &active_path) {
+            return Err(abort_bundled_restore_and_restart(
+                &app,
+                supervisor.inner(),
+                &original_state,
+                &pending_path,
+                error,
+            )
+            .await);
+        }
+        if let Err(error) = wait_for_backend_port_release().await {
+            return Err(abort_bundled_restore_and_restart(
+                &app,
+                supervisor.inner(),
+                &original_state,
+                &pending_path,
+                error,
+            )
+            .await);
+        }
     }
 
     if let Err(error) = activate_pending_core(&app) {
-        let _ = save_core_state(&app, &original_state);
-        let _ = tokio::fs::remove_file(&pending_path).await;
-        {
-            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
-            inner.shutting_down = false;
-            inner.consecutive_failures = 0;
-        }
-        let _ = start_backend(app.clone(), supervisor.inner().clone());
-        return Err(error);
+        return Err(abort_bundled_restore_and_restart(
+            &app,
+            supervisor.inner(),
+            &original_state,
+            &pending_path,
+            error,
+        )
+        .await);
     }
 
     let versions = current_core_versions(&app);
@@ -1404,6 +1457,36 @@ pub async fn restore_bundled_core(
         upstream_commit: bundled.upstream_commit,
         restart_required: false,
     })
+}
+
+async fn abort_bundled_restore_and_restart(
+    app: &AppHandle,
+    supervisor: &BackendSupervisor,
+    original_state: &CoreState,
+    pending_path: &Path,
+    primary_error: String,
+) -> String {
+    let mut errors = vec![primary_error];
+    if let Err(error) = save_core_state(app, original_state) {
+        errors.push(format!("恢复原内核状态失败: {error}"));
+    }
+    if let Err(error) = tokio::fs::remove_file(pending_path).await {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            errors.push(format!("清理待切换内核失败: {error}"));
+        }
+    }
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.shutting_down = false;
+        inner.consecutive_failures = 0;
+    }
+    if let Err(error) = wait_for_backend_port_release().await {
+        errors.push(format!("等待原内核端口释放失败: {error}"));
+    }
+    if let Err(error) = start_backend(app.clone(), supervisor.clone()) {
+        errors.push(format!("重新启动原内核失败: {error}"));
+    }
+    errors.join("；")
 }
 
 #[tauri::command]
@@ -1485,6 +1568,22 @@ mod tests {
         assert_eq!(fs::read(&previous).unwrap(), b"official-core");
         assert!(!pending.exists());
         fs::remove_dir_all(root).expect("temporary core directory should be removable");
+    }
+
+    #[test]
+    fn pending_activation_failure_is_deferred_without_discarding_the_update() {
+        let pending = core_record("0.1.172", "155c4949", "pending-sha");
+        let mut state = CoreState {
+            pending: Some(pending.clone()),
+            ..CoreState::default()
+        };
+
+        let warning =
+            defer_pending_activation_failure(&mut state, "无法替换活动内核: 拒绝访问 (os error 5)");
+
+        assert_eq!(state.pending.unwrap().sha256, pending.sha256);
+        assert!(state.last_error.unwrap().contains("拒绝访问"));
+        assert!(warning.contains("稍后重试"));
     }
 
     #[test]

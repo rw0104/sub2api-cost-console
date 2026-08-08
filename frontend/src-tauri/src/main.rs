@@ -2,6 +2,7 @@
 
 mod desktop_proxy;
 mod desktop_runtime;
+mod managed_core_process;
 mod setup_environment;
 
 use desktop_runtime::{

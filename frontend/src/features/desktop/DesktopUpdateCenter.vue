@@ -37,6 +37,13 @@
         <p><i :style="{ width: `${progressPercent}%` }"></i></p>
       </div>
 
+      <div v-if="coreIdentity?.last_error" class="desktop-update__errors" role="alert">
+        <div>
+          <WifiOff :size="15" />
+          <span>{{ coreIdentity.last_error }}</span>
+        </div>
+      </div>
+
       <section v-if="showBundledCoreChoice" class="desktop-update__release desktop-update__release--bundled">
         <div class="desktop-update__release-title">
           <div><span>桌面内置修复内核</span><strong>v{{ coreIdentity?.bundled.version }}</strong></div>
@@ -150,6 +157,8 @@ interface CoreIdentityCheck {
   current: CoreIdentityRecord
   bundled: CoreIdentityRecord
   bundled_differs: boolean
+  pending: CoreIdentityRecord | null
+  last_error: string | null
 }
 
 interface CoreManifest {

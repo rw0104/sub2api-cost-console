@@ -135,4 +135,35 @@ describe('DesktopUpdateCenter', () => {
     expect(mocks.relaunch).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  it('shows a deferred pending-core recovery error without preventing the desktop UI from loading', async () => {
+    mocks.check.mockResolvedValue(null)
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'desktop_backend_status') {
+        return { core_version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', core_sha256: 'old' }
+      }
+      if (command === 'check_core_update') {
+        return { available: false, current_version: '0.1.171', current_algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', update: null, previous_version: null }
+      }
+      if (command === 'inspect_core_identity') {
+        return {
+          bundled_differs: true,
+          current: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', sha256: 'old' },
+          bundled: { version: '0.1.172', algorithm_version: '1.4.0', upstream_commit: 'desktop123', sha256: 'new' },
+          pending: { version: '0.1.172', algorithm_version: '1.4.0', upstream_commit: '155c4949', sha256: 'pending' },
+          last_error: '内核更新暂未切换：无法替换活动内核。桌面已继续启动，请稍后重试',
+        }
+      }
+      return undefined
+    })
+
+    const wrapper = mount(DesktopUpdateCenter)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_800)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('内核更新暂未切换')
+    expect(wrapper.find('div[role="alert"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
