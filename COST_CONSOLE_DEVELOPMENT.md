@@ -1,7 +1,7 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
 > 文档版本：1.0  
-> 桌面应用版本：0.2.15
+> 桌面应用版本：0.2.16
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
@@ -1187,16 +1187,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.15
-git push origin v0.2.15
+git tag v0.2.16
+git push origin v0.2.16
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.15 --repo rw0104/sub2api-cost-console
-gh release download v0.2.15 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.16 --repo rw0104/sub2api-cost-console
+gh release download v0.2.16 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---
@@ -1278,7 +1278,7 @@ PostgreSQL 官方 Windows 下载页提供适合被其他应用安装程序集成
 
 ## 31. 本地采购账号终局封禁损失账本
 
-桌面版本 `0.2.15`、成本算法 `1.5.0` 新增独立的“账号成本损失”模块。运行时账号错误不会直接修改采购成本；只有后端已经确认的终局事件才进入不可变账本。
+桌面版本 `0.2.16`、成本算法 `1.5.0` 新增独立的“账号成本损失”模块。运行时账号错误不会直接修改采购成本；只有后端已经确认的终局事件才进入不可变账本。
 
 1. 适用对象仅为本地采购的 OAuth / Setup Token 账号；API Key、Service Account、Bedrock、中转池、影子账号、自定义中转和 CRS 导入账号均排除。
 2. 自动确认信号包括 OpenAI `token_revoked` / `token_invalidated`、明确永久 Unauthorized、OAuth 缺少 refresh token 和 `deactivated_workspace`；普通 OAuth 401 与泛化 402 不自动核销。

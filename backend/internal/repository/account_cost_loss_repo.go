@@ -146,7 +146,7 @@ func (r *accountCostLossRepository) ListStates(ctx context.Context) ([]service.A
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	states := make([]service.AccountCostLossState, 0)
 	for rows.Next() {
