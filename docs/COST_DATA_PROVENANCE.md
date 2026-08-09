@@ -14,6 +14,8 @@
 | 单账号探测耗时 | `/admin/accounts/:id/test` SSE | 实测 | 会发送一次真实最小上游请求，展示端到端完成耗时，并可能产生少量调用成本 |
 | 采购小时费率 | `account.extra.cost_profile` | 确定性计算 | 按用户填写金额与计费周期折算 |
 | 累计采购成本 | 成本档案、起算时间与当前时间 | 确定性计算 | `hourly_rate × elapsed_hours`；账号加入即起算 |
+| 账号封禁净损失 | `account_cost_loss_events` | 后端确认事件 + 确定性计算 | 仅接受终局原因；当前预付周期未摊销余额减退款与恢复冲销 |
+| 经济总成本 | 累计采购成本 + 账号封禁净损失 | 确定性计算 | 终局时停止该账号继续累计；已删除账号仍按快照保留 |
 | 预计月采购 | 当前筛选号池的小时采购费率 × 730 | 确定性预测 | 是当前现存账号合计，不是单账号值 |
 | 滚动平均 | 真实时间桶的移动平均 | 派生 | 只用于平滑趋势，界面明确标记为滚动平均 |
 | 剩余预期、月产出预期 | 当前实测速率线性外推 | 预测 | 不是已经发生的账单，不应视为结算值 |
@@ -24,6 +26,7 @@
 
 - “当前号池”来自当前仍存在的账号记录，并按所选渠道/账号类型过滤。
 - 删除账号后，手动刷新会立即将其移出当前号池；开启自动刷新时最长等待 30 秒。
+- 删除账号不会删除 `account_cost_loss_events`；成本中心的经济总成本仍包含其最新终局快照。
 - 已经写入的 `usage_logs` 不会因为账号删除而删除，所以全局历史趋势仍会包含旧账号曾经产生的请求。
 - OAuth 页的账号数、采购成本、今日产出与预计月采购只汇总当前平台的现存 OAuth 账号。
 - 全局历史趋势明确标记为 `usage_logs` 范围，可能包含已经删除的账号。
@@ -43,7 +46,7 @@
 
 ## 4. 默认成本与算法版本
 
-当前成本算法版本为 `1.4.0`。固定订阅采购与 API 按量成本分开计算：
+当前成本算法版本为 `1.5.0`。固定订阅采购、终局封禁损失与 API 按量成本分开计算：
 
 ```text
 fixed_hourly_rate = amount / billing_cycle_hours
@@ -55,7 +58,13 @@ metered_model_cost = input_tokens × input_price
                    + output_tokens × output_price
 metered_account_cost = metered_model_cost × account_rate_multiplier
 combined_cost = fixed_accrued_cost + metered_account_cost
+
+terminal_unamortized = current_prepaid_cycle_price - accrued_in_current_cycle
+terminal_net_loss = max(0, terminal_unamortized - refund - reversal)
+economic_total = fixed_accrued_cost_at_terminal + terminal_net_loss + metered_account_cost
 ```
+
+`1.5.0` 新增独立的深层“账号成本损失” Module。它的 Interface 只接受后端已经确认的终局事件：OpenAI `token_revoked` / `token_invalidated`、明确永久 Unauthorized、OAuth 缺少 refresh token、`deactivated_workspace`，以及管理员确认。普通 OAuth 401 仍进入临时不可调度，泛化 402 仍只停用账号，二者都不会仅凭 HTTP 状态推导封禁损失。账号恢复、供应商退款只追加冲销事件，不修改原终局事件；幂等键负责去重。适用范围仅为本地采购的 OAuth / Setup Token，CRS 导入、中转池、影子账号、自定义中转、API Key、Upstream、Bedrock 与 Service Account 均排除。
 
 `1.4.0` 仅对 OAuth / Setup Token 订阅账号应用美国默认月价；API Key、Service Account、Bedrock 与中转账号默认按 usage 和模型价格自动计算，不要求用户填写采购金额。中转渠道优先使用渠道自定义价格，没有渠道价时再使用模型目录价和账号倍率；缺少 usage 或价格时明确标记，不伪造成本。价格目录每 24 小时自动同步一次，远程目录优先；仓库内按官方页面核验的条目只在远程缺少模型或断网时兜底，不能阻止后续自动更新。
 

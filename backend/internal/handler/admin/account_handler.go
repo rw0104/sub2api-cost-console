@@ -64,6 +64,7 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	accountCostLoss         *service.AccountCostLossService
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -73,6 +74,10 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
+}
+
+func (h *AccountHandler) SetAccountCostLossService(costLoss *service.AccountCostLossService) {
+	h.accountCostLoss = costLoss
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -1508,6 +1513,11 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if h.accountCostLoss != nil {
+		if _, reverseErr := h.accountCostLoss.ReverseActiveLossesForAccount(c.Request.Context(), accountID, time.Now().UTC(), "account error cleared by administrator"); reverseErr != nil {
+			log.Printf("[WARN] Failed to reverse account cost loss for account %d: %v", accountID, reverseErr)
+		}
+	}
 
 	// 清除错误后，同时清除 token 缓存，确保下次请求会获取最新的 token（触发刷新或从 DB 读取）
 	// 这解决了管理员重置账号状态后，旧的失效 token 仍在缓存中导致立即再次 401 的问题
@@ -1709,6 +1719,11 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 				})
 				mu.Unlock()
 				return nil
+			}
+			if h.accountCostLoss != nil {
+				if _, reverseErr := h.accountCostLoss.ReverseActiveLossesForAccount(gctx, accountID, time.Now().UTC(), "account error batch-cleared by administrator"); reverseErr != nil {
+					log.Printf("[WARN] Failed to reverse account cost loss for account %d: %v", accountID, reverseErr)
+				}
 			}
 
 			// 清除错误后，同时清除 token 缓存

@@ -27,6 +27,79 @@ import type {
   OllamaCloudUsageState
 } from '@/types'
 
+export interface AccountCostLossState {
+  account_id: number
+  account_name: string
+  platform: string
+  account_type: string
+  terminal_event_id: number
+  occurred_at: string
+  currency: 'USD' | 'CNY'
+  accrued_cost: number
+  gross_loss: number
+  refund_amount: number
+  reversal_amount: number
+  net_loss: number
+  recognized_cost: number
+  active: boolean
+  account_deleted: boolean
+}
+
+export interface AccountCostLossStatesResponse {
+  algorithm_version: string
+  states: AccountCostLossState[]
+}
+
+export interface AccountCostLossEvent {
+  id: number
+  account_id?: number
+  account_id_snapshot: number
+  account_name: string
+  platform: string
+  account_type: string
+  event_type: 'terminal_loss' | 'refund' | 'reversal'
+  reason: string
+  occurred_at: string
+  currency: 'USD' | 'CNY'
+  amount: number
+  accrued_cost: number
+  recognized_cost: number
+  source_event_id?: number
+  idempotency_key: string
+  algorithm_version: string
+}
+
+export async function listCostLossStates(): Promise<AccountCostLossStatesResponse> {
+  const { data } = await apiClient.get<AccountCostLossStatesResponse>('/admin/accounts/cost-loss-states')
+  return data
+}
+
+export async function confirmCostLoss(id: number, input: {
+  message?: string
+  status_code?: number
+  upstream_code?: string
+  occurred_at?: string
+  idempotency_key?: string
+} = {}): Promise<{ event: AccountCostLossEvent; created: boolean }> {
+  const { data } = await apiClient.post<{ event: AccountCostLossEvent; created: boolean }>(`/admin/accounts/${id}/cost-loss/confirm`, input)
+  return data
+}
+
+export async function recordCostLossRefund(eventId: number, input: {
+  amount: number
+  message?: string
+  occurred_at?: string
+  idempotency_key: string
+}): Promise<{ event: AccountCostLossEvent; created: boolean }> {
+  const { data } = await apiClient.post<{ event: AccountCostLossEvent; created: boolean }>(`/admin/accounts/cost-loss-events/${eventId}/refund`, input)
+  return data
+}
+
+export async function reverseCostLoss(id: number): Promise<{ reversed: number }> {
+  const { data } = await apiClient.post<{ reversed: number }>(`/admin/accounts/${id}/cost-loss/reverse`)
+  return data
+}
+
 /**
  * List all accounts with pagination
  * @param page - Page number (default: 1)
@@ -1084,7 +1157,11 @@ export const accountsAPI = {
   saveOllamaCloudUsageSession,
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
-  refreshOllamaCloudUsage
+  refreshOllamaCloudUsage,
+  listCostLossStates,
+  confirmCostLoss,
+  recordCostLossRefund,
+  reverseCostLoss
 }
 
 export default accountsAPI

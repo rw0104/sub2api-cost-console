@@ -111,6 +111,8 @@
               <MetricCell label="平滑产出速率" :value="formatUsd(rollingOutputUsd, 2)" :note="`${rollingTrendLabel} · API 美元 / 小时`" accent="gold" />
               <MetricCell label="当前采购成本（配置推算）" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="用户成本档案 / 美国套餐默认价折算" accent="blue" />
               <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" accent="blue" />
+              <MetricCell label="已确认封禁损失" :value="formatCny(totalImpairmentCny, 2)" note="终局事件未摊销余额 − 退款 − 冲销" accent="gold" />
+              <MetricCell label="经济总成本" :value="formatCny(totalEconomicCostCny, 2)" :note="`采购累计 + 封禁净损失 · 含 ${archivedLossAccountCount} 个已删除账号`" accent="gold" />
               <MetricCell label="今日 API 账号成本" :value="formatUsd(todayAccountCostUsd, 3)" note="上游账号实际成本" />
               <MetricCell label="最近窗口 API 产出" :value="formatUsd(windowActualOutputUsd, 3)" note="用户实际计费" />
               <MetricCell label="预计月度采购" :value="formatCny(monthlyProcurementForecastCny, 2)" note="当前号码结构 × 730h" />
@@ -410,9 +412,9 @@
                   </td>
                   <td><span class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><small>{{ row.scoreRaw == null ? '质量分回退' : `${row.scoreRaw.toFixed(2)} / ${row.scoreMax.toFixed(2)}` }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
                   <td><strong>{{ row.account.priority }}</strong><small>当前</small></td>
-                  <td><strong>{{ formatCompactDate(row.account.created_at) }}</strong><small>{{ row.elapsedHours.toFixed(1) }}h 已计费</small></td>
+                  <td><strong>{{ formatCompactDate(row.account.created_at) }}</strong><small>{{ row.lossState?.active ? `终局于 ${formatCompactDate(row.lossState.occurred_at)}` : `${row.elapsedHours.toFixed(1)}h 已计费` }}</small></td>
                   <td><strong class="cost-lime">{{ row.billingMode === 'metered' && row.profile.source !== 'custom' ? '按 Token' : `${formatCny(row.hourlyCost, 5)}/h` }}</strong><small>{{ row.billingMode === 'metered' ? (row.profile.source === 'custom' ? '自动按量 + 固定附加' : '模型/渠道价格自动计算') : `配置推算 · ${row.profile.source === 'custom' ? '用户自定义' : '美国套餐默认'}` }}</small></td>
-                  <td><strong class="cost-lime">{{ row.billingMode === 'metered' && row.profile.source !== 'custom' ? '无需设置' : formatCny(row.accrued, 3) }}</strong><small>{{ row.billingMode === 'metered' ? (row.profile.source === 'custom' ? `固定附加 · ${row.profile.billing_cycle}` : '不存在固定采购成本') : `配置推算 · ${row.profile.billing_cycle}` }}</small></td>
+                  <td><strong class="cost-lime">{{ row.billingMode === 'metered' && row.profile.source !== 'custom' ? '无需设置' : formatCny(row.accrued, 3) }}</strong><small>{{ row.lossState?.active ? `终局核销 · 封禁损失 ${formatCny(row.impairmentCny, 3)}` : row.billingMode === 'metered' ? (row.profile.source === 'custom' ? `固定附加 · ${row.profile.billing_cycle}` : '不存在固定采购成本') : `配置推算 · ${row.profile.billing_cycle}` }}</small></td>
                   <td><strong>{{ formatUsd(row.today.cost, 4) }}</strong><small>标准 {{ formatUsd(row.today.standard_cost || 0, 4) }}</small></td>
                   <td><strong class="cost-lime">{{ formatUsd(actualUserCost(row.today), 3) }}</strong><small>今日用户计费</small></td>
                   <td><strong>{{ formatInteger(row.today.requests) }}</strong><small>{{ formatTokens(row.today.tokens) }} Token</small></td>
@@ -454,8 +456,8 @@
 
           <div class="cost-scope-notice">
             <strong>当前号池口径</strong>
-              <span>这里只核算当前仍存在的 {{ selectedPlatformLabel }} 账号；删除账号后手动刷新立即移出，自动刷新最多等待 {{ refreshIntervalSeconds }} 秒。</span>
-            <small>历史请求不会随账号删除而清空，仍保留在全局 usage_logs 趋势中。当前池起点：{{ currentPoolStartedAtLabel }}</small>
+            <span>运行表只展示当前仍存在的 {{ selectedPlatformLabel }} 账号；删除账号的已确认损失仍保留在独立账本和经济总成本中。</span>
+            <small>历史请求与损失事件都不会随账号删除而清空。当前池起点：{{ currentPoolStartedAtLabel }}</small>
           </div>
 
           <div class="cost-pool-heading-row">
@@ -468,7 +470,8 @@
 
           <div class="cost-pool-summary">
             <MetricCell label="渠道账号" :value="formatInteger(oauthAccounts.length)" :note="`${oauthActiveCount} 个已产生请求`" />
-            <MetricCell label="净采购成本（配置推算）" :value="formatCny(oauthAccruedCny, 2)" :note="`推算小时成本 ${formatCny(oauthHourlyCny, 4)}`" />
+            <MetricCell label="号池经济成本" :value="formatCny(oauthAccruedCny, 2)" :note="`采购累计 + 封禁损失 · 当前费率 ${formatCny(oauthHourlyCny, 4)}/h`" />
+            <MetricCell label="封禁净损失" :value="formatCny(oauthImpairmentCny, 2)" note="当前池已确认终局事件" accent="gold" />
             <MetricCell label="今日 API 账号成本" :value="formatUsd(oauthTodayCostUsd, 4)" note="真实账号成本" accent="lime" />
             <MetricCell label="今日 API 产出" :value="formatUsd(oauthTodayOutputUsd, 4)" :note="`预估利润 ${formatUsd(oauthTodayOutputUsd - oauthTodayCostUsd, 3)}`" accent="blue" />
             <MetricCell label="号池状态" :value="`${oauthNormalCount} 正常`" :note="`限流 ${oauthLimitedCount} · 错误 ${oauthErrorCount}`" />
@@ -490,13 +493,13 @@
 
           <div class="cost-pool-table-wrap">
             <table class="cost-pool-table">
-              <thead><tr><th>核算范围</th><th>账号类型</th><th>账号数</th><th>有产出</th><th>状态分布</th><th>采购成本（推算）</th><th>平均单价（推算）</th><th>当前产出 / 实时预期 / 月预期</th><th>成本计算</th><th>请求</th><th>Token</th></tr></thead>
+              <thead><tr><th>核算范围</th><th>账号类型</th><th>账号数</th><th>有产出</th><th>状态分布</th><th>经济成本</th><th>平均经济成本</th><th>当前产出 / 实时预期 / 月预期</th><th>成本计算</th><th>请求</th><th>Token</th></tr></thead>
               <tbody>
                 <tr v-for="group in poolGroups" :key="group.plan">
                   <td><strong>当前号池</strong></td><td><strong>{{ group.planLabel }}</strong></td><td>{{ group.count }}</td><td>{{ group.productive }}</td>
                   <td><div class="cost-status-ring" :style="{ background: group.statusRing }"><span></span></div><small>正常 {{ group.normal }} · 限流 {{ group.limited }} · 错误 {{ group.errors }} · 窗口余量 {{ formatPercent(group.quotaRemaining) }}</small></td>
                   <td><strong>{{ formatCny(group.accruedCny, 2) }}</strong><small>小时 {{ formatCny(group.hourlyCny, 4) }}</small></td>
-                  <td><strong>{{ formatCny(group.averageCostCny, 2) }}</strong><small>累计采购成本 / 号</small></td>
+                  <td><strong>{{ formatCny(group.averageCostCny, 2) }}</strong><small>采购累计 + 封禁损失 / 号</small></td>
                   <td><strong class="cost-lime">{{ formatUsd(group.outputUsd, 2) }} / {{ formatUsd(group.outputForecastUsd, 2) }} / {{ formatUsd(group.monthForecastUsd, 2) }}</strong><div class="cost-pool-progress"><i :style="{ width: `${group.progress}%` }"></i></div><small>当前产出 / 实时预期 / 月预期</small></td>
                   <td><strong class="cost-lime">{{ formatCny(group.hourlyCny, 5) }} / {{ formatUsd(group.apiCostUsd, 5) }}</strong><small>采购小时成本 / API 账号成本</small></td>
                   <td>{{ formatInteger(group.requests) }}</td><td>{{ formatTokens(group.tokens) }}</td>
@@ -551,13 +554,12 @@ import CostApiAccessPanel from '@/features/cost-center/components/CostApiAccessP
 import CostProfileInspector from '@/features/cost-center/components/CostProfileInspector.vue'
 import UpstreamProbeCell from '@/features/cost-center/components/UpstreamProbeCell.vue'
 import {
-  accruedCost,
   actualUserCost,
   COST_ALGORITHM_VERSION,
   convertCurrency,
+  economicCostSnapshot,
   elapsedHours,
   formatMoney,
-  hourlyRate,
   inferPlan,
   isDefaultSubscriptionCostProfile,
   resolveAccountBillingMode,
@@ -628,7 +630,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
+  accounts, costLossStates, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
 } = data
 
 const workspaceItems = [
@@ -733,18 +735,35 @@ const qualityScore = computed(() => {
 const qualityGrade = computed(() => scoreGrade(qualityScore.value))
 const schedulerBaseScoreMax = computed(() => resolveSchedulerBaseScoreMax(systemSettings.value as Record<string, unknown> | null))
 
+const latestCostLossByAccount = computed(() => {
+  const states = new Map<number, typeof costLossStates.value[number]>()
+  for (const state of costLossStates.value) {
+    const previous = states.get(state.account_id)
+    if (!previous || new Date(state.occurred_at).getTime() > new Date(previous.occurred_at).getTime()) {
+      states.set(state.account_id, state)
+    }
+  }
+  return states
+})
+
 const accountLedgers = computed(() => accounts.value.map((account) => {
   const profile = resolveCostProfile(account)
   const today = data.accountStats.value(account)
   const usage = accountUsage.value[String(account.id)]
+  const lossState = latestCostLossByAccount.value.get(account.id)
+  const economic = economicCostSnapshot(profile, lossState, now.value)
+  const economicCurrency = lossState?.active ? lossState.currency : profile.currency
   return {
     account,
     billingMode: resolveAccountBillingMode(account),
     profile,
     usage,
     plan: inferPlan(account),
-    hourlyCny: convertCurrency(hourlyRate(profile), profile.currency, 'CNY', exchangeRate.value.rate),
-    accruedCny: convertCurrency(accruedCost(profile, now.value), profile.currency, 'CNY', exchangeRate.value.rate),
+    lossState,
+    hourlyCny: convertCurrency(economic.hourlyRate, economicCurrency, 'CNY', exchangeRate.value.rate),
+    procurementCny: convertCurrency(economic.procurementCost, economicCurrency, 'CNY', exchangeRate.value.rate),
+    impairmentCny: convertCurrency(economic.impairmentLoss, economicCurrency, 'CNY', exchangeRate.value.rate),
+    accruedCny: convertCurrency(economic.economicCost, economicCurrency, 'CNY', exchangeRate.value.rate),
     elapsedHours: elapsedHours(profile.started_at, now.value),
     today,
   }
@@ -752,6 +771,17 @@ const accountLedgers = computed(() => accounts.value.map((account) => {
 const usageSyncedCount = computed(() => accountLedgers.value.filter((row) => hasPrimaryUsageWindow(row.usage)).length)
 const quotaRemainingAverage = computed(() => averageQuotaRemaining(accountLedgers.value.map((row) => row.usage)))
 const totalAccruedCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.accruedCny, 0))
+const archivedLatestCostLossStates = computed(() => [...latestCostLossByAccount.value.values()].filter((state) => state.account_deleted))
+const archivedEconomicCostCny = computed(() => archivedLatestCostLossStates.value.reduce(
+  (sum, state) => sum + convertCurrency(state.recognized_cost, state.currency, 'CNY', exchangeRate.value.rate), 0,
+))
+const archivedImpairmentCny = computed(() => archivedLatestCostLossStates.value.reduce(
+  (sum, state) => sum + convertCurrency(state.net_loss, state.currency, 'CNY', exchangeRate.value.rate), 0,
+))
+const archivedLossAccountCount = computed(() => archivedLatestCostLossStates.value.length)
+const currentImpairmentCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.impairmentCny, 0))
+const totalImpairmentCny = computed(() => currentImpairmentCny.value + archivedImpairmentCny.value)
+const totalEconomicCostCny = computed(() => totalAccruedCny.value + archivedEconomicCostCny.value)
 const procurementHourlyCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.hourlyCny, 0))
 const monthlyProcurementForecastCny = computed(() => procurementHourlyCny.value * 730)
 const defaultCostProfileCount = computed(() => accountLedgers.value.filter((row) => isDefaultSubscriptionCostProfile(row.account)).length)
@@ -789,7 +819,9 @@ const platformDistribution = computed(() => {
   return [...totals.entries()].sort((a, b) => b[1] - a[1])
 })
 const platformDonutBackground = computed(() => donutGradient(platformDistribution.value.map(([label, value], index) => ({ label, value, color: distributionColors[index % distributionColors.length] }))))
-const platformDonutModeLabel = computed(() => platformDistributionUsesCost.value ? '累计采购（配置推算）' : '采购未配置 · 环图为账号结构')
+const platformDonutModeLabel = computed(() => currentImpairmentCny.value > 0
+  ? '经济成本（含封禁损失）'
+  : platformDistributionUsesCost.value ? '累计采购（配置推算）' : '采购未配置 · 环图为账号结构')
 const platformDonutLabel = computed(() => platformDistribution.value.map(([name, value]) => platformDistributionUsesCost.value ? `${name} ${formatCny(value, 2)}` : `${name} ${formatInteger(value)} 个账号`).join('，'))
 
 const accountDistribution = computed(() => {
@@ -889,6 +921,7 @@ const selectedPlatformLabel = computed(() => poolPlatform.value === 'all'
   : accountPoolProviderTabs.value.find((item) => item.key === poolPlatform.value)?.label || '当前渠道')
 const defaultCostAccountCount = computed(() => oauthAccounts.value.filter((row) => isDefaultSubscriptionCostProfile(row.account)).length)
 const oauthAccruedCny = computed(() => oauthAccounts.value.reduce((sum, row) => sum + row.accruedCny, 0))
+const oauthImpairmentCny = computed(() => oauthAccounts.value.reduce((sum, row) => sum + row.impairmentCny, 0))
 const oauthHourlyCny = computed(() => oauthAccounts.value.reduce((sum, row) => sum + row.hourlyCny, 0))
 const oauthTodayCostUsd = computed(() => oauthAccounts.value.reduce((sum, row) => sum + Number(row.today.cost || 0), 0))
 const oauthTodayOutputUsd = computed(() => oauthAccounts.value.reduce((sum, row) => sum + actualUserCost(row.today), 0))

@@ -3,6 +3,7 @@ import { adminAPI } from '@/api/admin'
 import type { OpsDashboardOverview, OpsThroughputTrendPoint } from '@/api/admin/ops'
 import type { SystemSettings } from '@/api/admin/settings'
 import type { Channel, ModelDefaultPricing, PricingCatalogStatus } from '@/api/admin/channels'
+import type { AccountCostLossState } from '@/api/admin/accounts'
 import type {
   Account,
   AccountUsageInfo,
@@ -126,6 +127,7 @@ function emptyTodayStats(): WindowStats {
 
 export function useCostCenterData() {
   const accounts = ref<Account[]>([])
+  const costLossStates = ref<AccountCostLossState[]>([])
   const accountUsage = ref<Record<string, AccountUsageInfo>>({})
   const todayStats = ref<Record<string, WindowStats>>({})
   const stats = ref<DashboardStats | null>(null)
@@ -244,12 +246,13 @@ export function useCostCenterData() {
     const observationEnd = range === 'today' ? new Date() : requestedObservationEnd
     const { start: modelStart, end: modelEnd } = usageWindowBounds(modelCostRange.value)
 
-    const [accountResult, dashboardResult, modelResult, modelRoutesResult, channelsResult, pricingStatusResult, opsResult, settingsResult, exchangeRateResult] = await Promise.allSettled([
+    const [accountResult, costLossResult, dashboardResult, modelResult, modelRoutesResult, channelsResult, pricingStatusResult, opsResult, settingsResult, exchangeRateResult] = await Promise.allSettled([
       adminAPI.accounts.list(1, 1000, {
         include_scheduler_score: 'true',
         sort_by: 'created_at',
         sort_order: 'asc',
       }),
+      adminAPI.accounts.listCostLossStates(),
       adminAPI.dashboard.getSnapshotV2({
         ...queries.observation,
         include_stats: true,
@@ -278,6 +281,7 @@ export function useCostCenterData() {
     ])
 
     if (sequence !== requestSequence) return
+    costLossStates.value = costLossResult.status === 'fulfilled' ? costLossResult.value.states ?? [] : []
 
     const compatibilityTrend = dashboardResult.status === 'fulfilled'
       && (!dashboardResult.value.start_time || !dashboardResult.value.end_time)
@@ -488,6 +492,7 @@ export function useCostCenterData() {
 
   return {
     accounts,
+    costLossStates,
     accountUsage,
     todayStats,
     stats,

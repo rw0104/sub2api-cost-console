@@ -150,6 +150,78 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 	})
 }
 
+func TestRateLimitService_OnlyConfirmedTerminalFailuresReachCostLossLedger(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("revoked token is recognized", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		ledger := &memoryCostLossRepository{event: &AccountCostLossEvent{ID: 77}}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		svc.SetAccountCostLossService(NewAccountCostLossService(ledger))
+		account := &Account{
+			ID: 42, Name: "local-plus", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			CreatedAt: startedAt, UpdatedAt: startedAt, Extra: map[string]any{"plan_type": "plus"},
+			Credentials: map[string]any{"refresh_token": "rt-42"},
+		}
+
+		disabled := svc.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte(`{"error":{"code":"token_revoked","message":"revoked"}}`))
+
+		require.True(t, disabled)
+		require.Equal(t, int64(42), ledger.recorded.AccountID)
+		require.Equal(t, TerminalFailureTokenRevoked, ledger.recorded.Failure.Reason)
+		require.Equal(t, 0, repo.setErrorCalls, "the ledger transaction owns terminal account disabling")
+	})
+
+	t.Run("ordinary oauth 401 stays temporary", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		ledger := &memoryCostLossRepository{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		svc.SetAccountCostLossService(NewAccountCostLossService(ledger))
+		account := &Account{
+			ID: 43, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			CreatedAt: startedAt, UpdatedAt: startedAt,
+			Credentials: map[string]any{"refresh_token": "rt-43"},
+		}
+
+		disabled := svc.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte(`{"error":{"message":"expired"}}`))
+
+		require.True(t, disabled)
+		require.Zero(t, ledger.recorded.AccountID)
+		require.Equal(t, 1, repo.tempCalls)
+	})
+
+	t.Run("generic 402 does not imply terminal loss", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		ledger := &memoryCostLossRepository{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		svc.SetAccountCostLossService(NewAccountCostLossService(ledger))
+		account := &Account{ID: 44, Platform: PlatformOpenAI, Type: AccountTypeOAuth, CreatedAt: startedAt, UpdatedAt: startedAt}
+
+		disabled := svc.HandleUpstreamError(context.Background(), account, 402, http.Header{}, []byte(`{"error":{"message":"insufficient balance"}}`))
+
+		require.True(t, disabled)
+		require.Zero(t, ledger.recorded.AccountID)
+		require.Equal(t, 1, repo.setErrorCalls)
+	})
+
+	t.Run("deactivated workspace 402 is recognized", func(t *testing.T) {
+		repo := &rateLimitAccountRepoStub{}
+		ledger := &memoryCostLossRepository{event: &AccountCostLossEvent{ID: 78}}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		svc.SetAccountCostLossService(NewAccountCostLossService(ledger))
+		account := &Account{
+			ID: 45, Name: "workspace", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			CreatedAt: startedAt, UpdatedAt: startedAt, Extra: map[string]any{"plan_type": "team"},
+		}
+
+		disabled := svc.HandleUpstreamError(context.Background(), account, 402, http.Header{}, []byte(`{"detail":{"code":"deactivated_workspace"}}`))
+
+		require.True(t, disabled)
+		require.Equal(t, TerminalFailureWorkspaceDeactivated, ledger.recorded.Failure.Reason)
+		require.Equal(t, 0, repo.setErrorCalls)
+	})
+}
+
 // TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent 外审第9轮:影子无独立凭据,
 // 401(母账号 token 问题)必须重定向到凭据 owner(母账号)——母账号 temp-unschedulable + token cache 失效,
 // 影子不得被永久禁用(否则母账号可恢复的 token 问题会把影子永久打死)。

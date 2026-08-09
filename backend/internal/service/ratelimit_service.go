@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,7 @@ type RateLimitService struct {
 	openAI403CounterCache OpenAI403CounterCache
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
+	accountCostLoss       *AccountCostLossService
 	runtimeBlocker        AccountRuntimeBlocker
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
@@ -110,6 +112,10 @@ func (s *RateLimitService) SetSettingService(settingService *SettingService) {
 // SetTokenCacheInvalidator 设置 token 缓存清理器（可选依赖）
 func (s *RateLimitService) SetTokenCacheInvalidator(invalidator TokenCacheInvalidator) {
 	s.tokenCacheInvalidator = invalidator
+}
+
+func (s *RateLimitService) SetAccountCostLossService(costLoss *AccountCostLossService) {
+	s.accountCostLoss = costLoss
 }
 
 func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocker) {
@@ -265,7 +271,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if upstreamMsg != "" {
 				msg = "Token revoked (401): " + upstreamMsg
 			}
-			s.handleAuthError(ctx, authAccount, msg)
+			s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
+				Reason: TerminalFailureTokenRevoked, StatusCode: http.StatusUnauthorized,
+				UpstreamCode: openai401Code, Message: msg,
+			}, msg)
 			shouldDisable = true
 			break
 		}
@@ -275,7 +284,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if upstreamMsg != "" {
 				msg = "Unauthorized (401): " + upstreamMsg
 			}
-			s.handleAuthError(ctx, authAccount, msg)
+			s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
+				Reason: TerminalFailureUnauthorizedPermanent, StatusCode: http.StatusUnauthorized,
+				UpstreamCode: "unauthorized", Message: msg,
+			}, msg)
 			shouldDisable = true
 			break
 		}
@@ -294,7 +306,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 				if upstreamMsg != "" {
 					msg = "OAuth 401 (no refresh_token): " + upstreamMsg
 				}
-				s.handleAuthError(ctx, authAccount, msg)
+				s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
+					Reason: TerminalFailureRefreshUnavailable, StatusCode: http.StatusUnauthorized,
+					UpstreamCode: "refresh_token_missing", Message: msg,
+				}, msg)
 				shouldDisable = true
 				break
 			}
@@ -348,7 +363,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
 		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
 			msg := "Workspace deactivated (402): workspace has been deactivated"
-			s.handleAuthError(ctx, account, msg)
+			s.handleTerminalAccountFailure(ctx, account, TerminalFailure{
+				Reason: TerminalFailureWorkspaceDeactivated, StatusCode: http.StatusPaymentRequired,
+				UpstreamCode: "deactivated_workspace", Message: msg,
+			}, msg)
 			shouldDisable = true
 			break
 		}
@@ -775,6 +793,31 @@ func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account
 		return
 	}
 	slog.Warn("account_disabled_auth_error", "account_id", account.ID, "error", errorMsg)
+}
+
+// handleTerminalAccountFailure is the narrow Interface into the cost-loss Module.
+// Only callers that already possess a confirmed terminal reason may use it.
+func (s *RateLimitService) handleTerminalAccountFailure(ctx context.Context, account *Account, failure TerminalFailure, errorMsg string) {
+	if account == nil {
+		return
+	}
+	failure.OccurredAt = time.Now().UTC()
+	if failure.Message == "" {
+		failure.Message = errorMsg
+	}
+	if s.accountCostLoss != nil {
+		event, created, err := s.accountCostLoss.ConfirmTerminalFailure(ctx, account, failure, errorMsg)
+		if err == nil {
+			s.notifyAccountSchedulingBlocked(account, time.Time{}, "terminal_account_failure")
+			slog.Warn("account_terminal_cost_loss_recorded", "account_id", account.ID, "event_id", event.ID, "created", created, "reason", failure.Reason)
+			return
+		}
+		if !errors.Is(err, ErrAccountCostLossIneligible) {
+			slog.Warn("account_terminal_cost_loss_failed", "account_id", account.ID, "reason", failure.Reason, "error", err)
+		}
+	}
+	// Ineligible account types and persistence failures retain the existing safety behavior.
+	s.handleAuthError(ctx, account, errorMsg)
 }
 
 func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody []byte, fallback string) string {
@@ -1777,6 +1820,11 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 			return nil, err
 		}
 		result.ClearedError = true
+		if s.accountCostLoss != nil {
+			if _, reverseErr := s.accountCostLoss.ReverseActiveLossesForAccount(ctx, accountID, time.Now().UTC(), "account state recovered"); reverseErr != nil {
+				slog.Warn("account_cost_loss_reversal_failed", "account_id", accountID, "error", reverseErr)
+			}
+		}
 		if options.InvalidateToken && s.tokenCacheInvalidator != nil && account.IsOAuth() {
 			if invalidateErr := s.tokenCacheInvalidator.InvalidateToken(ctx, account); invalidateErr != nil {
 				slog.Warn("recover_account_state_invalidate_token_failed", "account_id", accountID, "error", invalidateErr)

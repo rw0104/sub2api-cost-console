@@ -34,6 +34,7 @@ export const COST_ALGORITHM_MANIFEST = Object.freeze({
   default_price_checked_at: '2026-08-05',
   accrual: 'linear_elapsed_milliseconds',
   start_boundary: 'account_created_at',
+  terminal_loss: 'confirmed_terminal_event_stops_accrual_and_recognizes_unamortized_prepaid_balance',
   account_billing_modes: Object.freeze({
     subscription: Object.freeze(['oauth', 'setup-token']),
     metered: Object.freeze(['apikey', 'upstream', 'bedrock', 'service_account']),
@@ -241,6 +242,48 @@ export function accruedCost(profile: CostProfile, now: DateInput = Date.now()): 
   if (profile.billing_cycle === 'one_time') return profile.amount
 
   return hourlyRate(profile) * elapsedHours(startedAtMs, nowMs)
+}
+
+export interface CostLossStateLike {
+  occurred_at: string
+  accrued_cost: number
+  net_loss: number
+  recognized_cost: number
+  active: boolean
+}
+
+export interface EconomicCostSnapshot {
+  procurementCost: number
+  impairmentLoss: number
+  economicCost: number
+  hourlyRate: number
+  accrualEndedAt: string | null
+}
+
+export function economicCostSnapshot(
+  profile: CostProfile,
+  loss: CostLossStateLike | null | undefined,
+  now: DateInput = Date.now(),
+): EconomicCostSnapshot {
+  if (loss?.active) {
+    const procurementCost = Number.isFinite(loss.accrued_cost) ? Math.max(0, loss.accrued_cost) : 0
+    const impairmentLoss = Number.isFinite(loss.net_loss) ? Math.max(0, loss.net_loss) : 0
+    return {
+      procurementCost,
+      impairmentLoss,
+      economicCost: procurementCost + impairmentLoss,
+      hourlyRate: 0,
+      accrualEndedAt: loss.occurred_at || null,
+    }
+  }
+  const procurementCost = accruedCost(profile, now)
+  return {
+    procurementCost,
+    impairmentLoss: 0,
+    economicCost: procurementCost,
+    hourlyRate: hourlyRate(profile),
+    accrualEndedAt: null,
+  }
 }
 
 export function convertCurrency(

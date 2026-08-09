@@ -220,8 +220,12 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 	}
 	cache := &tempUnschedCacheRecorder{}
 	blocker := &runtimeBlockRecorder{}
+	ledger := &memoryCostLossRepository{states: []AccountCostLossState{{
+		AccountIDSnapshot: 42, TerminalEventID: 77, Active: true, NetLoss: 0,
+	}}}
 	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, cache)
 	svc.SetAccountRuntimeBlocker(blocker)
+	svc.SetAccountCostLossService(NewAccountCostLossService(ledger))
 
 	result, err := svc.RecoverAccountAfterSuccessfulTest(context.Background(), 42)
 	require.NoError(t, err)
@@ -237,6 +241,9 @@ func TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLi
 	require.Equal(t, 1, repo.clearTempUnschedCalls)
 	require.Equal(t, []int64{42}, cache.deletedIDs)
 	require.Equal(t, []int64{42}, blocker.clearedIDs)
+	require.Len(t, ledger.adjustments, 1)
+	require.Equal(t, AccountCostLossEventReversal, ledger.adjustments[0].EventType)
+	require.Equal(t, 0.0, ledger.adjustments[0].Amount)
 }
 
 func TestRateLimitService_RecoverAccountAfterSuccessfulTest_NoRecoverableStateIsNoop(t *testing.T) {

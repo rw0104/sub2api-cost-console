@@ -4,6 +4,7 @@ import {
   actualUserCost,
   convertCurrency,
   elapsedHours,
+  economicCostSnapshot,
   formatMoney,
   hourlyRate,
   inferPlan,
@@ -57,6 +58,22 @@ describe('cost center model', () => {
     expect(elapsedHours(resolved.started_at, afterOneDay)).toBe(24)
     expect(hourlyRate(resolved)).toBeCloseTo(20 / 730)
     expect(accruedCost(resolved, afterOneDay)).toBeCloseTo((20 * 24) / 730)
+  })
+
+  it('stops accrual at a terminal loss and adds the remaining prepaid impairment', () => {
+    const resolved = resolveCostProfile(account({ extra: { subscription_tier: 'plus' } }))
+    const snapshot = economicCostSnapshot(resolved, {
+      occurred_at: '2026-08-02T00:00:00.000Z',
+      accrued_cost: (20 * 24) / 730,
+      net_loss: 20 - (20 * 24) / 730,
+      recognized_cost: 20,
+      active: true,
+    }, '2026-08-20T00:00:00.000Z')
+
+    expect(snapshot.procurementCost).toBeCloseTo((20 * 24) / 730)
+    expect(snapshot.impairmentLoss).toBeCloseTo(20 - (20 * 24) / 730)
+    expect(snapshot.economicCost).toBeCloseTo(20)
+    expect(snapshot.hourlyRate).toBe(0)
   })
 
   it('does not accrue recurring or one-time cost before the start', () => {
