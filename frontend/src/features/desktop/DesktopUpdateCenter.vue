@@ -25,11 +25,12 @@
       <dl class="desktop-update__versions">
         <div><dt>桌面端</dt><dd>v{{ appVersion }}</dd></div>
         <div><dt>Sub2API 上游基线</dt><dd :title="`上游提交 ${upstreamCommit}`">v{{ coreVersion }}</dd></div>
-        <div><dt>成本算法</dt><dd>v{{ algorithmVersion }}</dd></div>
+        <div><dt>成本扩展</dt><dd>{{ extensionVersion ? `v${extensionVersion}` : '未安装' }}</dd></div>
+        <div><dt>成本算法</dt><dd>{{ algorithmVersionLabel }}</dd></div>
       </dl>
 
       <p class="desktop-update__managed-note">
-        启动后及每 6 小时自动检查两条签名更新通道：桌面整包来自 rw0104/sub2api-cost-console，内置核心来自 Wei-Shaw/sub2api。发现新版本后由你确认安装，并保留签名校验、安全重启与核心回滚保护。
+        启动后及每 6 小时自动检查桌面与内核通道：持续跟踪 Wei-Shaw/sub2api 上游，扩展兼容内核由 rw0104/sub2api-cost-console 自动构建。兼容内核自动下载、校验并在下次安全启动时切换。
       </p>
 
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
@@ -46,32 +47,40 @@
 
       <section v-if="showBundledCoreChoice" class="desktop-update__release desktop-update__release--bundled">
         <div class="desktop-update__release-title">
-          <div><span>桌面内置修复内核</span><strong>v{{ coreIdentity?.bundled.version }}</strong></div>
-          <em>版本＋提交＋SHA 三重校验</em>
+          <div><span>扩展兼容内核</span><strong>v{{ coreIdentity?.bundled.version }}</strong></div>
+          <em>上游＋扩展＋能力＋SHA 校验</em>
         </div>
         <p>
-          当前活动内核与本桌面安装包内置内核身份不同。当前提交 {{ shortIdentity(coreIdentity?.current.upstream_commit) }}，
-          内置提交 {{ shortIdentity(coreIdentity?.bundled.upstream_commit) }}。请选择恢复内置修复内核，或明确保留当前内核。
+          当前内核缺少 {{ coreIdentity?.missing_capabilities.join('、') || '必要扩展能力' }}。兼容内核基于同版或更新的上游提交
+          {{ shortIdentity(coreIdentity?.bundled.upstream_commit) }} 构建，不会为了成本扩展降级上游内核。
         </p>
         <div class="desktop-update__choice-actions">
           <button type="button" :disabled="isBusy" @click="restoreBundledCore">
-            <History :size="15" /> 恢复桌面内置内核
+            <History :size="15" /> 安装扩展兼容内核
           </button>
           <button type="button" class="desktop-update__secondary-action" :disabled="isBusy" @click="keepCurrentCore">
-            保留当前内核
+            稍后处理
           </button>
         </div>
       </section>
 
       <section v-if="coreUpdate?.available" class="desktop-update__release desktop-update__release--primary">
         <div class="desktop-update__release-title">
-          <div><span>上游内核更新</span><strong>v{{ coreUpdate.update?.version }}</strong></div>
-          <em>Wei-Shaw/sub2api · {{ releaseDateLabel }}</em>
+          <div><span>扩展兼容内核更新</span><strong>v{{ coreUpdate.update?.version }} / ext {{ coreUpdate.update?.extension_version }}</strong></div>
+          <em>跟随 Wei-Shaw/sub2api · {{ releaseDateLabel }}</em>
         </div>
         <p>{{ coreUpdate.update?.notes || '稳定性、成本核算与本地服务更新。' }}</p>
-        <button type="button" :disabled="isBusy" @click="installCore">
+        <button type="button" :disabled="isBusy" @click="installCore(false)">
           <Download :size="15" /> 下载、校验并安全重启
         </button>
+      </section>
+
+      <section v-if="coreUpdate?.compatibility_pending" class="desktop-update__release desktop-update__release--pending">
+        <div class="desktop-update__release-title">
+          <div><span>上游内核更新</span><strong>v{{ coreUpdate.upstream_latest_version }}</strong></div>
+          <em>等待扩展兼容构建</em>
+        </div>
+        <p>官方内核 v{{ coreUpdate.upstream_latest_version }} 已发布，兼容内核构建中。当前内核继续运行，不会自动降级或被原版二进制覆盖。</p>
       </section>
 
       <section v-if="appUpdate" class="desktop-update__release">
@@ -142,6 +151,8 @@ import { describeCoreUpdateFailure, describeDesktopUpdateFailure, resolveUpdateC
 interface BackendStatus {
   core_version: string
   algorithm_version: string
+  extension_version: string
+  capabilities: string[]
   upstream_commit: string
   core_sha256?: string
 }
@@ -149,6 +160,8 @@ interface BackendStatus {
 interface CoreIdentityRecord {
   version: string
   algorithm_version: string
+  extension_version: string
+  capabilities: string[]
   upstream_commit: string
   sha256: string
 }
@@ -156,7 +169,10 @@ interface CoreIdentityRecord {
 interface CoreIdentityCheck {
   current: CoreIdentityRecord
   bundled: CoreIdentityRecord
+  action: 'none' | 'install_bundled' | 'wait_for_compatible_update'
   bundled_differs: boolean
+  missing_capabilities: string[]
+  integrity_valid: boolean
   pending: CoreIdentityRecord | null
   last_error: string | null
 }
@@ -164,6 +180,8 @@ interface CoreIdentityCheck {
 interface CoreManifest {
   version: string
   algorithm_version: string
+  extension_version: string
+  capabilities: string[]
   upstream_commit?: string
   published_at: string
   notes: string
@@ -171,8 +189,13 @@ interface CoreManifest {
 
 interface CoreUpdateCheck {
   available: boolean
+  staged: boolean
+  compatibility_pending: boolean
+  upstream_latest_version: string | null
   current_version: string
   current_algorithm_version: string
+  current_extension_version: string
+  current_capabilities: string[]
   upstream_commit: string
   update: CoreManifest | null
   previous_version: string | null
@@ -190,6 +213,7 @@ const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
 const algorithmVersion = ref('1.4.0')
+const extensionVersion = ref('')
 const upstreamCommit = ref('unknown')
 // Tauri's Update is a class instance with JavaScript private fields. A normal
 // Vue ref would deep-proxy it and break downloadAndInstall's private-field
@@ -211,8 +235,11 @@ let interval: number | null = null
 const unlisteners: UnlistenFn[] = []
 
 const isBusy = computed(() => operation.value !== null)
-const showBundledCoreChoice = computed(() => Boolean(coreIdentity.value?.bundled_differs && !bundledChoiceDismissed.value))
-const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available || showBundledCoreChoice.value))
+const algorithmVersionLabel = computed(() => algorithmVersion.value === 'unavailable'
+  ? '不可用（缺少账本能力）'
+  : `v${algorithmVersion.value}`)
+const showBundledCoreChoice = computed(() => Boolean(coreIdentity.value?.action === 'install_bundled' && !bundledChoiceDismissed.value))
+const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available || coreUpdate.value?.compatibility_pending || showBundledCoreChoice.value))
 const checkState = computed(() => resolveUpdateCheckState({
   checking: checking.value,
   hasUpdate: hasUpdate.value,
@@ -263,6 +290,7 @@ async function loadRuntimeVersions() {
   const backend = await invoke<BackendStatus>('desktop_backend_status')
   coreVersion.value = backend.core_version
   algorithmVersion.value = backend.algorithm_version
+  extensionVersion.value = backend.extension_version || ''
   upstreamCommit.value = backend.upstream_commit
 }
 
@@ -287,6 +315,7 @@ async function checkAll(silent = true) {
       coreUpdate.value = coreResult.value
       coreVersion.value = coreResult.value.current_version
       algorithmVersion.value = coreResult.value.current_algorithm_version
+      extensionVersion.value = coreResult.value.current_extension_version || ''
       upstreamCommit.value = coreResult.value.upstream_commit
     } else {
       coreUpdate.value = null
@@ -295,10 +324,13 @@ async function checkAll(silent = true) {
     if (identityResult.status === 'fulfilled') {
       coreIdentity.value = identityResult.value
       bundledChoiceDismissed.value = localStorage.getItem(coreChoiceStorageKey(identityResult.value)) === 'keep'
-      if (identityResult.value.bundled_differs && !bundledChoiceDismissed.value) open.value = true
+      if (identityResult.value.last_error) open.value = true
     } else {
       coreIdentity.value = null
       failures.push(`内核身份检查失败：${messageOf(identityResult.reason)}`)
+    }
+    if (coreResult.status === 'fulfilled' && coreResult.value.available && operation.value === null) {
+      await installCore(true)
     }
   } finally {
     updateFailures.value = failures
@@ -337,7 +369,7 @@ async function installDesktop() {
   }
 }
 
-async function installCore() {
+async function installCore(automatic = false) {
   operation.value = 'core'
   errorMessage.value = ''
   progressStage.value = 'checking'
@@ -345,9 +377,14 @@ async function installCore() {
   try {
     const result = await invoke<{ version: string; algorithm_version: string }>('install_core_update')
     progressStage.value = 'ready'
-    progressMessage.value = `内核 v${result.version} 已验证，正在安全重启`
-    await invoke('desktop_backend_prepare_relaunch')
-    await relaunch()
+    if (automatic) {
+      progressMessage.value = `兼容内核 v${result.version} 已自动下载并验证，将在下次安全启动时启用`
+      if (coreUpdate.value) coreUpdate.value.available = false
+    } else {
+      progressMessage.value = `内核 v${result.version} 已验证，正在安全重启`
+      await invoke('desktop_backend_prepare_relaunch')
+      await relaunch()
+    }
   } catch (error) {
     errorMessage.value = messageOf(error)
     progressStage.value = ''
@@ -434,7 +471,7 @@ onBeforeUnmount(() => {
 .desktop-update__panel h2 { margin: 4px 0 0; font-size: 18px; }
 .desktop-update__panel header button { display: grid; width: 30px; height: 30px; place-items: center; color: #718078; border: 0; background: transparent; }
 .desktop-update__panel header button:hover { color: #e7eee8; background: #232c25; }
-.desktop-update__versions { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; border-bottom: 1px solid #29332b; }
+.desktop-update__versions { display: grid; grid-template-columns: repeat(4, 1fr); margin: 0; border-bottom: 1px solid #29332b; }
 .desktop-update__versions div { padding: 14px 16px; border-right: 1px solid #29332b; }
 .desktop-update__versions div:last-child { border-right: 0; }
 .desktop-update__versions dt { color: #718078; font-size: 10px; }

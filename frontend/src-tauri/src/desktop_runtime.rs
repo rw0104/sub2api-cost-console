@@ -26,13 +26,18 @@ const BACKEND_PORT: u16 = 18_765;
 const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
 const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest";
 const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
+const COMPATIBLE_CORE_REPOSITORY: &str = "rw0104/sub2api-cost-console";
 const UPSTREAM_CHECKSUM_ASSET: &str = "checksums.txt";
+const COMPATIBLE_CORE_MANIFEST_URL: &str =
+    "https://github.com/rw0104/sub2api-cost-console/releases/download/core-stable/core-latest.json";
 const MAX_CORE_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
 const CURATED_MODEL_PRICING: &[u8] =
     include_bytes!("../../../backend/resources/model-pricing/model_prices_and_context_window.json");
 const BUNDLED_ZONEINFO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zoneinfo.zip"));
 pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
 pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
+pub const CORE_EXTENSION_VERSION: &str = env!("SUB2API_CORE_EXTENSION_VERSION");
+pub const CORE_CAPABILITIES: &str = env!("SUB2API_CORE_CAPABILITIES");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
 pub const BUNDLED_CORE_COMMIT: &str = env!("SUB2API_BUNDLED_CORE_COMMIT");
 
@@ -54,6 +59,8 @@ pub struct BackendStatus {
     pub data_dir: String,
     pub core_version: String,
     pub algorithm_version: String,
+    pub extension_version: String,
+    pub capabilities: Vec<String>,
     pub upstream_commit: String,
     pub core_sha256: String,
     pub message: String,
@@ -70,6 +77,8 @@ impl BackendStatus {
             data_dir: data_dir.display().to_string(),
             core_version: versions.current_version.clone(),
             algorithm_version: versions.current_algorithm_version.clone(),
+            extension_version: versions.current_extension_version.clone(),
+            capabilities: versions.capabilities.clone(),
             upstream_commit: versions.upstream_commit.clone(),
             core_sha256: versions.sha256.clone(),
             message: "正在启动本地 Sub2API 内核".into(),
@@ -125,9 +134,21 @@ impl BackendSupervisor {
 pub struct CoreVersionRecord {
     pub version: String,
     pub algorithm_version: String,
+    #[serde(default)]
+    pub extension_version: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub sha256: String,
     #[serde(default)]
     pub upstream_commit: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreCompatibilityAction {
+    None,
+    InstallBundled,
+    WaitForCompatibleUpdate,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -150,6 +171,8 @@ fn defer_pending_activation_failure(state: &mut CoreState, error: &str) -> Strin
 pub struct CoreVersions {
     current_version: String,
     current_algorithm_version: String,
+    current_extension_version: String,
+    capabilities: Vec<String>,
     upstream_commit: String,
     sha256: String,
 }
@@ -158,7 +181,10 @@ pub struct CoreVersions {
 pub struct CoreIdentityCheck {
     pub current: CoreVersionRecord,
     pub bundled: CoreVersionRecord,
+    pub action: CoreCompatibilityAction,
     pub bundled_differs: bool,
+    pub missing_capabilities: Vec<String>,
+    pub integrity_valid: bool,
     pub pending: Option<CoreVersionRecord>,
     pub last_error: Option<String>,
 }
@@ -177,11 +203,68 @@ pub struct CoreUpdateManifest {
     pub version: String,
     pub algorithm_version: String,
     #[serde(default)]
+    pub extension_version: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
     pub upstream_commit: String,
     pub published_at: String,
     pub notes: String,
     pub release_url: String,
     pub platforms: HashMap<String, CoreArtifact>,
+}
+
+fn validate_compatible_core_manifest(
+    manifest: &CoreUpdateManifest,
+    required_capabilities: &[String],
+) -> Result<(), String> {
+    if manifest.schema != 2 {
+        return Err(format!("不支持的兼容内核清单版本: {}", manifest.schema));
+    }
+    Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核上游版本无效: {error}"))?;
+    Version::parse(&manifest.extension_version)
+        .map_err(|error| format!("兼容内核扩展版本无效: {error}"))?;
+    let missing = required_capabilities
+        .iter()
+        .filter(|required| !manifest.capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "兼容内核清单缺少桌面所需能力: {}",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn compatible_update_available(
+    current: &CoreVersionRecord,
+    manifest: &CoreUpdateManifest,
+) -> Result<bool, String> {
+    let current_upstream = Version::parse(current.version.trim_start_matches('v'))
+        .map_err(|error| format!("当前内核版本无效: {error}"))?;
+    let remote_upstream = Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核版本无效: {error}"))?;
+    if remote_upstream != current_upstream {
+        return Ok(remote_upstream > current_upstream);
+    }
+    let remote_extension = Version::parse(&manifest.extension_version)
+        .map_err(|error| format!("兼容内核扩展版本无效: {error}"))?;
+    let current_extension = Version::parse(&current.extension_version).ok();
+    Ok(current_extension.is_none_or(|version| remote_extension > version))
+}
+
+fn core_record_matches_manifest(record: &CoreVersionRecord, manifest: &CoreUpdateManifest) -> bool {
+    record.version.trim_start_matches('v') == manifest.version.trim_start_matches('v')
+        && record.algorithm_version == manifest.algorithm_version
+        && record.extension_version == manifest.extension_version
+        && same_core_commit(&record.upstream_commit, &manifest.upstream_commit)
+        && manifest
+            .capabilities
+            .iter()
+            .all(|required| record.capabilities.iter().any(|value| value == required))
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -204,8 +287,13 @@ struct GitHubRelease {
 #[derive(Clone, Debug, Serialize)]
 pub struct CoreUpdateCheck {
     pub available: bool,
+    pub staged: bool,
+    pub compatibility_pending: bool,
+    pub upstream_latest_version: Option<String>,
     pub current_version: String,
     pub current_algorithm_version: String,
+    pub current_extension_version: String,
+    pub current_capabilities: Vec<String>,
     pub upstream_commit: String,
     pub update: Option<CoreUpdateManifest>,
     pub previous_version: Option<String>,
@@ -215,6 +303,8 @@ pub struct CoreUpdateCheck {
 pub struct CoreInstallResult {
     pub version: String,
     pub algorithm_version: String,
+    pub extension_version: String,
+    pub capabilities: Vec<String>,
     pub upstream_commit: String,
     pub restart_required: bool,
 }
@@ -326,6 +416,53 @@ fn same_core_identity(left: &CoreVersionRecord, right: &CoreVersionRecord) -> bo
         && left.sha256.trim().eq_ignore_ascii_case(right.sha256.trim())
 }
 
+fn required_capabilities() -> Vec<String> {
+    CORE_CAPABILITIES
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn supports_required_capabilities(record: &CoreVersionRecord) -> bool {
+    required_capabilities()
+        .iter()
+        .all(|required| record.capabilities.iter().any(|value| value == required))
+}
+
+fn effective_algorithm_version(record: &CoreVersionRecord) -> String {
+    if supports_required_capabilities(record) {
+        record.algorithm_version.clone()
+    } else {
+        "unavailable".to_string()
+    }
+}
+
+fn required_core_action(
+    current: &CoreVersionRecord,
+    bundled: &CoreVersionRecord,
+    integrity_valid: bool,
+    required_capabilities: &[String],
+) -> CoreCompatibilityAction {
+    if integrity_valid
+        && required_capabilities
+            .iter()
+            .all(|required| current.capabilities.iter().any(|value| value == required))
+    {
+        CoreCompatibilityAction::None
+    } else {
+        let current_version = Version::parse(current.version.trim_start_matches('v'));
+        let bundled_version = Version::parse(bundled.version.trim_start_matches('v'));
+        if matches!((current_version, bundled_version), (Ok(current), Ok(bundled)) if bundled >= current)
+        {
+            CoreCompatibilityAction::InstallBundled
+        } else {
+            CoreCompatibilityAction::WaitForCompatibleUpdate
+        }
+    }
+}
+
 fn bundled_core_record() -> Result<CoreVersionRecord, String> {
     let path = bundled_core_path()?;
     if !path.is_file() {
@@ -334,6 +471,8 @@ fn bundled_core_record() -> Result<CoreVersionRecord, String> {
     Ok(CoreVersionRecord {
         version: CORE_VERSION.to_string(),
         algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
         sha256: sha256_file(&path)?,
         upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
     })
@@ -347,6 +486,8 @@ fn active_core_record(app: &AppHandle) -> Result<CoreVersionRecord, String> {
     let mut record = load_core_state(app).active.unwrap_or(CoreVersionRecord {
         version: CORE_VERSION.to_string(),
         algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: String::new(),
+        capabilities: Vec::new(),
         sha256: String::new(),
         upstream_commit: "unknown".to_string(),
     });
@@ -357,8 +498,10 @@ fn active_core_record(app: &AppHandle) -> Result<CoreVersionRecord, String> {
 fn current_core_versions(app: &AppHandle) -> CoreVersions {
     if let Ok(active) = active_core_record(app) {
         return CoreVersions {
-            current_version: active.version,
-            current_algorithm_version: active.algorithm_version,
+            current_version: active.version.clone(),
+            current_algorithm_version: effective_algorithm_version(&active),
+            current_extension_version: active.extension_version.clone(),
+            capabilities: active.capabilities.clone(),
             upstream_commit: if active.upstream_commit.trim().is_empty() {
                 "unknown".to_string()
             } else {
@@ -370,6 +513,8 @@ fn current_core_versions(app: &AppHandle) -> CoreVersions {
     CoreVersions {
         current_version: CORE_VERSION.to_string(),
         current_algorithm_version: ALGORITHM_VERSION.to_string(),
+        current_extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
         upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
         sha256: String::new(),
     }
@@ -423,6 +568,8 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
             let previous = state.active.clone().unwrap_or(CoreVersionRecord {
                 version: CORE_VERSION.to_string(),
                 algorithm_version: ALGORITHM_VERSION.to_string(),
+                extension_version: CORE_EXTENSION_VERSION.to_string(),
+                capabilities: required_capabilities(),
                 sha256: String::new(),
                 upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
             });
@@ -455,6 +602,8 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
     let current_record = state.active.clone().unwrap_or(CoreVersionRecord {
         version: CORE_VERSION.to_string(),
         algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
         sha256: String::new(),
         upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
     });
@@ -751,6 +900,8 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
             supervisor.update_status(|status| {
                 status.core_version = versions.current_version;
                 status.algorithm_version = versions.current_algorithm_version;
+                status.extension_version = versions.current_extension_version;
+                status.capabilities = versions.capabilities;
                 status.upstream_commit = versions.upstream_commit;
                 status.core_sha256 = versions.sha256;
                 status.phase = BackendPhase::Starting;
@@ -874,6 +1025,29 @@ fn validate_upstream_asset_url(value: &str, tag: &str, filename: &str) -> Result
     Ok(url)
 }
 
+fn validate_compatible_core_asset_url(value: &str, filename: &str) -> Result<Url, String> {
+    let url = validate_https_url(value)?;
+    let prefix = format!("/{COMPATIBLE_CORE_REPOSITORY}/releases/download/");
+    let suffix = format!("/{filename}");
+    let release_tag = url
+        .path()
+        .strip_prefix(&prefix)
+        .and_then(|path| path.strip_suffix(&suffix))
+        .filter(|tag| !tag.is_empty() && !tag.contains('/'));
+    if url.host_str() != Some("github.com")
+        || release_tag.is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "兼容内核资产地址不属于固定仓库 {COMPATIBLE_CORE_REPOSITORY}: {value}"
+        ));
+    }
+    Ok(url)
+}
+
 fn checksum_for_asset(checksums: &str, filename: &str) -> Result<String, String> {
     for line in checksums.lines() {
         let mut fields = line.split_whitespace();
@@ -938,6 +1112,8 @@ fn build_upstream_manifest(
         schema: 1,
         version,
         algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: String::new(),
+        capabilities: Vec::new(),
         upstream_commit: String::new(),
         published_at: release.published_at,
         notes: release.body,
@@ -993,6 +1169,32 @@ async fn fetch_upstream_manifest(client: &Client) -> Result<CoreUpdateManifest, 
         .map_err(|error| format!("无法读取上游 checksums.txt: {error}"))?;
 
     build_upstream_manifest(release, &checksums)
+}
+
+async fn fetch_compatible_core_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
+    let manifest = client
+        .get(COMPATIBLE_CORE_MANIFEST_URL)
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+        .map_err(|error| format!("无法获取兼容内核清单: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("兼容内核清单返回错误: {error}"))?
+        .json::<CoreUpdateManifest>()
+        .await
+        .map_err(|error| format!("无法解析兼容内核清单: {error}"))?;
+    validate_compatible_core_manifest(&manifest, &required_capabilities())?;
+    for artifact in manifest.platforms.values() {
+        if artifact.size == 0 || artifact.size > MAX_CORE_ARCHIVE_BYTES {
+            return Err(format!("兼容内核压缩包大小异常: {} 字节", artifact.size));
+        }
+        let checksum = artifact.sha256.trim();
+        if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("{} 的 SHA-256 格式无效", artifact.archive_name));
+        }
+        validate_compatible_core_asset_url(&artifact.url, &artifact.archive_name)?;
+    }
+    Ok(manifest)
 }
 
 fn platform_key() -> Result<&'static str, String> {
@@ -1059,7 +1261,62 @@ fn parse_verified_core_build(output: &str, expected_version: &str) -> Result<Str
     Ok(commit.to_string())
 }
 
-async fn verify_upstream_core_build(path: &Path, expected_version: &str) -> Result<String, String> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VerifiedCompatibleCoreBuild {
+    upstream_commit: String,
+    extension_version: String,
+    capabilities: Vec<String>,
+}
+
+fn parse_verified_compatible_core_build(
+    output: &str,
+    expected_version: &str,
+    required_capabilities: &[String],
+) -> Result<VerifiedCompatibleCoreBuild, String> {
+    let upstream_commit = parse_verified_core_build(output, expected_version)?;
+    let extension_version = output
+        .split("extension:")
+        .nth(1)
+        .and_then(|value| value.split([',', ')']).next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "候选内核未声明成本扩展版本".to_string())?;
+    Version::parse(extension_version)
+        .map_err(|error| format!("候选内核成本扩展版本无效: {error}"))?;
+    let capabilities = output
+        .split("capabilities:")
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .map(|value| {
+            value
+                .split('|')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| "候选内核未声明扩展能力".to_string())?;
+    let missing = required_capabilities
+        .iter()
+        .filter(|required| !capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!("候选内核缺少桌面所需能力: {}", missing.join(", ")));
+    }
+    Ok(VerifiedCompatibleCoreBuild {
+        upstream_commit,
+        extension_version: extension_version.to_string(),
+        capabilities,
+    })
+}
+
+async fn verify_compatible_core_build(
+    path: &Path,
+    expected_version: &str,
+    required_capabilities: &[String],
+) -> Result<VerifiedCompatibleCoreBuild, String> {
     let mut command = tokio::process::Command::new(path);
     command
         .arg("--version")
@@ -1068,17 +1325,17 @@ async fn verify_upstream_core_build(path: &Path, expected_version: &str) -> Resu
         .stderr(Stdio::piped());
     let output = timeout(Duration::from_secs(15), command.output())
         .await
-        .map_err(|_| "验证上游内核版本超时".to_string())?
-        .map_err(|error| format!("无法执行待验证内核: {error}"))?;
+        .map_err(|_| "验证兼容内核版本超时".to_string())?
+        .map_err(|error| format!("无法执行待验证兼容内核: {error}"))?;
     if !output.status.success() {
-        return Err(format!("待验证内核退出码异常: {}", output.status));
+        return Err(format!("待验证兼容内核退出码异常: {}", output.status));
     }
     let combined = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    parse_verified_core_build(&combined, expected_version)
+    parse_verified_compatible_core_build(&combined, expected_version, required_capabilities)
 }
 
 fn emit_core_progress(
@@ -1109,8 +1366,31 @@ pub fn inspect_core_identity(app: AppHandle) -> Result<CoreIdentityCheck, String
     let current = active_core_record(&app)?;
     let bundled = bundled_core_record()?;
     let state = load_core_state(&app);
+    let active_path = active_core_path(&app)?;
+    let integrity_valid = if active_path.is_file() {
+        state
+            .active
+            .as_ref()
+            .map(|record| {
+                !record.sha256.trim().is_empty()
+                    && record.sha256.eq_ignore_ascii_case(&current.sha256)
+            })
+            .unwrap_or(false)
+    } else {
+        true
+    };
+    let required = required_capabilities();
+    let missing_capabilities = required
+        .iter()
+        .filter(|required| !current.capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    let action = required_core_action(&current, &bundled, integrity_valid, &required);
     Ok(CoreIdentityCheck {
+        action,
         bundled_differs: !same_core_identity(&current, &bundled),
+        missing_capabilities,
+        integrity_valid,
         current,
         bundled,
         pending: state.pending,
@@ -1141,17 +1421,34 @@ pub fn desktop_backend_stop(supervisor: tauri::State<'_, BackendSupervisor>) -> 
 #[tauri::command]
 pub async fn check_core_update(app: AppHandle) -> Result<CoreUpdateCheck, String> {
     let client = update_client()?;
-    let manifest = fetch_upstream_manifest(&client).await?;
-    let current = current_core_versions(&app);
-    let current_version = Version::parse(current.current_version.trim_start_matches('v'))
-        .map_err(|error| format!("当前内核版本无效: {error}"))?;
-    let remote_version = Version::parse(manifest.version.trim_start_matches('v'))
-        .map_err(|error| format!("远端内核版本无效: {error}"))?;
-    let previous_version = load_core_state(&app).previous.map(|record| record.version);
+    let manifest = fetch_compatible_core_manifest(&client).await?;
+    let upstream_latest_version = fetch_upstream_manifest(&client)
+        .await
+        .ok()
+        .map(|upstream| upstream.version);
+    let compatible_version = Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核版本无效: {error}"))?;
+    let compatibility_pending = upstream_latest_version
+        .as_deref()
+        .and_then(|value| Version::parse(value.trim_start_matches('v')).ok())
+        .is_some_and(|upstream| upstream > compatible_version);
+    let current = active_core_record(&app)?;
+    let state = load_core_state(&app);
+    let staged = state
+        .pending
+        .as_ref()
+        .is_some_and(|pending| core_record_matches_manifest(pending, &manifest));
+    let available = compatible_update_available(&current, &manifest)? && !staged;
+    let previous_version = state.previous.map(|record| record.version);
     Ok(CoreUpdateCheck {
-        available: remote_version > current_version,
-        current_version: current.current_version,
-        current_algorithm_version: current.current_algorithm_version,
+        available,
+        staged,
+        compatibility_pending,
+        upstream_latest_version,
+        current_version: current.version.clone(),
+        current_algorithm_version: effective_algorithm_version(&current),
+        current_extension_version: current.extension_version.clone(),
+        current_capabilities: current.capabilities.clone(),
         upstream_commit: current.upstream_commit,
         update: Some(manifest),
         previous_version,
@@ -1165,21 +1462,11 @@ pub async fn install_core_update(
 ) -> Result<CoreInstallResult, String> {
     let _guard = supervisor.update_lock.lock().await;
     let client = update_client()?;
-    emit_core_progress(
-        &app,
-        "checking",
-        0,
-        None,
-        "正在扫描上游 Release 与 checksums",
-    );
-    let manifest = fetch_upstream_manifest(&client).await?;
-    let current = current_core_versions(&app);
-    let current_version = Version::parse(current.current_version.trim_start_matches('v'))
-        .map_err(|error| format!("当前内核版本无效: {error}"))?;
-    let remote_version = Version::parse(manifest.version.trim_start_matches('v'))
-        .map_err(|error| format!("远端内核版本无效: {error}"))?;
-    if remote_version <= current_version {
-        return Err("当前内核已是最新版本".into());
+    emit_core_progress(&app, "checking", 0, None, "正在扫描扩展兼容内核更新");
+    let manifest = fetch_compatible_core_manifest(&client).await?;
+    let current = active_core_record(&app)?;
+    if !compatible_update_available(&current, &manifest)? {
+        return Err("当前兼容内核已是最新版本".into());
     }
 
     let artifact = manifest
@@ -1187,11 +1474,7 @@ pub async fn install_core_update(
         .get(platform_key()?)
         .ok_or_else(|| "更新清单不包含当前 Windows 架构".to_string())?
         .clone();
-    let artifact_url = validate_upstream_asset_url(
-        &artifact.url,
-        &format!("v{}", manifest.version),
-        &artifact.archive_name,
-    )?;
+    let artifact_url = validate_compatible_core_asset_url(&artifact.url, &artifact.archive_name)?;
 
     let mut response = client
         .get(artifact_url)
@@ -1237,7 +1520,7 @@ pub async fn install_core_update(
             "downloading",
             downloaded,
             total,
-            "正在下载上游 Windows 内核包",
+            "正在下载扩展兼容 Windows 内核包",
         );
     }
     file.flush()
@@ -1249,7 +1532,7 @@ pub async fn install_core_update(
     if !archive_sha256.eq_ignore_ascii_case(artifact.sha256.trim()) {
         let _ = tokio::fs::remove_file(&temporary_archive).await;
         return Err(format!(
-            "上游压缩包 SHA-256 校验失败：期望 {}，实际 {}",
+            "兼容内核压缩包 SHA-256 校验失败：期望 {}，实际 {}",
             artifact.sha256, archive_sha256
         ));
     }
@@ -1259,7 +1542,7 @@ pub async fn install_core_update(
         "extracting",
         downloaded,
         total,
-        "上游 SHA-256 已通过，正在提取 sub2api.exe",
+        "兼容内核 SHA-256 已通过，正在提取 sub2api.exe",
     );
     if let Err(error) =
         extract_upstream_core(temporary_archive.clone(), temporary_core.clone()).await
@@ -1268,22 +1551,43 @@ pub async fn install_core_update(
         let _ = tokio::fs::remove_file(&temporary_core).await;
         return Err(error);
     }
-    let upstream_commit = match verify_upstream_core_build(&temporary_core, &manifest.version).await
+    let verified = match verify_compatible_core_build(
+        &temporary_core,
+        &manifest.version,
+        &required_capabilities(),
+    )
+    .await
     {
-        Ok(commit) => commit,
+        Ok(verified) => verified,
         Err(error) => {
             let _ = tokio::fs::remove_file(&temporary_archive).await;
             let _ = tokio::fs::remove_file(&temporary_core).await;
             return Err(error);
         }
     };
+    if !same_core_commit(&verified.upstream_commit, &manifest.upstream_commit) {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(format!(
+            "兼容内核上游提交校验失败：清单声明 {}，文件报告 {}",
+            manifest.upstream_commit, verified.upstream_commit
+        ));
+    }
+    if verified.extension_version != manifest.extension_version {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(format!(
+            "兼容内核扩展版本校验失败：清单声明 {}，文件报告 {}",
+            manifest.extension_version, verified.extension_version
+        ));
+    }
     let core_sha256 = sha256_file(&temporary_core)?;
     emit_core_progress(
         &app,
         "verified",
         downloaded,
         total,
-        "上游 checksums、内核版本与提交号验证通过",
+        "兼容内核 SHA-256、上游提交与扩展能力验证通过",
     );
     let _ = tokio::fs::remove_file(&temporary_archive).await;
 
@@ -1299,8 +1603,10 @@ pub async fn install_core_update(
     state.pending = Some(CoreVersionRecord {
         version: manifest.version.clone(),
         algorithm_version: manifest.algorithm_version.clone(),
+        extension_version: verified.extension_version.clone(),
+        capabilities: verified.capabilities.clone(),
         sha256: core_sha256,
-        upstream_commit: upstream_commit.clone(),
+        upstream_commit: verified.upstream_commit.clone(),
     });
     state.last_error = None;
     save_core_state(&app, &state)?;
@@ -1314,7 +1620,9 @@ pub async fn install_core_update(
     Ok(CoreInstallResult {
         version: manifest.version,
         algorithm_version: manifest.algorithm_version,
-        upstream_commit,
+        extension_version: verified.extension_version,
+        capabilities: verified.capabilities,
+        upstream_commit: verified.upstream_commit,
         restart_required: true,
     })
 }
@@ -1327,17 +1635,27 @@ pub async fn restore_bundled_core(
     let _guard = supervisor.update_lock.lock().await;
     let current = active_core_record(&app)?;
     let bundled_path = bundled_core_path()?;
-    let verified_commit = verify_upstream_core_build(&bundled_path, CORE_VERSION).await?;
-    if !same_core_commit(&verified_commit, BUNDLED_CORE_COMMIT) {
+    let verified =
+        verify_compatible_core_build(&bundled_path, CORE_VERSION, &required_capabilities()).await?;
+    if !same_core_commit(&verified.upstream_commit, BUNDLED_CORE_COMMIT) {
         return Err(format!(
-            "内置内核提交校验失败：安装包声明 {BUNDLED_CORE_COMMIT}，文件报告 {verified_commit}"
+            "内置内核提交校验失败：安装包声明 {BUNDLED_CORE_COMMIT}，文件报告 {}",
+            verified.upstream_commit
+        ));
+    }
+    if verified.extension_version != CORE_EXTENSION_VERSION {
+        return Err(format!(
+            "内置内核扩展版本校验失败：安装包声明 {CORE_EXTENSION_VERSION}，文件报告 {}",
+            verified.extension_version
         ));
     }
     let bundled = CoreVersionRecord {
         version: CORE_VERSION.to_string(),
         algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: verified.extension_version,
+        capabilities: verified.capabilities,
         sha256: sha256_file(&bundled_path)?,
-        upstream_commit: verified_commit,
+        upstream_commit: verified.upstream_commit,
     };
     if same_core_identity(&current, &bundled) {
         return Err("当前已经在运行桌面内置内核".into());
@@ -1421,6 +1739,8 @@ pub async fn restore_bundled_core(
     supervisor.update_status(|status| {
         status.core_version = versions.current_version.clone();
         status.algorithm_version = versions.current_algorithm_version.clone();
+        status.extension_version = versions.current_extension_version.clone();
+        status.capabilities = versions.capabilities.clone();
         status.upstream_commit = versions.upstream_commit.clone();
         status.core_sha256 = versions.sha256.clone();
         status.message = "桌面内置内核已激活，正在执行健康检查".into();
@@ -1437,6 +1757,8 @@ pub async fn restore_bundled_core(
         supervisor.update_status(|status| {
             status.core_version = rollback_versions.current_version.clone();
             status.algorithm_version = rollback_versions.current_algorithm_version.clone();
+            status.extension_version = rollback_versions.current_extension_version.clone();
+            status.capabilities = rollback_versions.capabilities.clone();
             status.upstream_commit = rollback_versions.upstream_commit.clone();
             status.core_sha256 = rollback_versions.sha256.clone();
         });
@@ -1454,6 +1776,8 @@ pub async fn restore_bundled_core(
     Ok(CoreInstallResult {
         version: bundled.version,
         algorithm_version: bundled.algorithm_version,
+        extension_version: bundled.extension_version,
+        capabilities: bundled.capabilities,
         upstream_commit: bundled.upstream_commit,
         restart_required: false,
     })
@@ -1511,6 +1835,8 @@ pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String
     Ok(CoreInstallResult {
         version: previous.version,
         algorithm_version: previous.algorithm_version,
+        extension_version: previous.extension_version,
+        capabilities: previous.capabilities,
         upstream_commit: previous.upstream_commit,
         restart_required: true,
     })
@@ -1524,9 +1850,63 @@ mod tests {
         CoreVersionRecord {
             version: version.into(),
             algorithm_version: "1.3.1".into(),
+            extension_version: String::new(),
+            capabilities: Vec::new(),
             sha256: sha256.into(),
             upstream_commit: commit.into(),
         }
+    }
+
+    #[test]
+    fn compatible_active_core_does_not_prompt_for_a_different_bundled_payload() {
+        let current = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(
+                &current,
+                &bundled,
+                true,
+                &["account_cost_loss_ledger.v1".into()]
+            ),
+            CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
+    fn newer_upstream_core_is_never_downgraded_to_gain_a_missing_extension() {
+        let current = core_record("0.1.174", "upstream174", "official-sha");
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(
+                &current,
+                &bundled,
+                true,
+                &["account_cost_loss_ledger.v1".into()]
+            ),
+            CoreCompatibilityAction::WaitForCompatibleUpdate
+        );
+    }
+
+    #[test]
+    fn bundled_core_identity_is_anchored_to_the_upstream_commit() {
+        assert!(same_core_commit(
+            BUNDLED_CORE_COMMIT,
+            UPSTREAM_SUB2API_COMMIT
+        ));
     }
 
     #[test]
@@ -1609,6 +1989,21 @@ mod tests {
     }
 
     #[test]
+    fn compatible_updater_accepts_only_cost_console_release_assets() {
+        let archive = "sub2api-core_0.1.173_1.0.0_windows_x86_64.zip";
+        assert!(validate_compatible_core_asset_url(
+            &format!("https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.17/{archive}"),
+            archive,
+        )
+        .is_ok());
+        assert!(validate_compatible_core_asset_url(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.173/sub2api_0.1.173_windows_amd64.zip",
+            archive,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn builds_windows_manifest_from_upstream_release_and_checksum() {
         let archive_name = "sub2api_0.1.171_windows_amd64.zip";
         let archive_url = format!(
@@ -1636,6 +2031,97 @@ mod tests {
     }
 
     #[test]
+    fn compatible_update_manifest_must_declare_every_required_capability() {
+        let manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.173".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "29009f0b2ea1".into(),
+            published_at: "2026-08-09T16:09:17Z".into(),
+            notes: "compatible core".into(),
+            release_url: "https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.17"
+                .into(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(validate_compatible_core_manifest(
+            &manifest,
+            &["account_cost_loss_ledger.v1".into()]
+        )
+        .is_ok());
+        assert!(validate_compatible_core_manifest(
+            &CoreUpdateManifest {
+                capabilities: Vec::new(),
+                ..manifest
+            },
+            &["account_cost_loss_ledger.v1".into()]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn compatible_update_compares_upstream_and_extension_versions_independently() {
+        let current = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "29009f0b2ea1", "active")
+        };
+        let mut manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.173".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "29009f0b2ea1".into(),
+            published_at: String::new(),
+            notes: String::new(),
+            release_url: String::new(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(compatible_update_available(&current, &manifest).unwrap());
+        manifest.version = "0.1.172".into();
+        manifest.extension_version = "9.0.0".into();
+        assert!(!compatible_update_available(&current, &manifest).unwrap());
+    }
+
+    #[test]
+    fn staged_compatible_core_matches_its_manifest_without_using_payload_hash() {
+        let staged = CoreVersionRecord {
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.174", "abcdef123456", "downloaded-sha")
+        };
+        let manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.174".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "abcdef1234567890".into(),
+            published_at: String::new(),
+            notes: String::new(),
+            release_url: String::new(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(core_record_matches_manifest(&staged, &manifest));
+    }
+
+    #[test]
+    fn official_core_cannot_claim_the_desktop_algorithm_without_capabilities() {
+        let mut official = core_record("0.1.173", "29009f0b2ea1", "official");
+        official.algorithm_version = "1.5.0".into();
+
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official.capabilities = vec!["account_cost_loss_ledger.v1".into()];
+        assert_eq!(effective_algorithm_version(&official), "1.5.0");
+    }
+
+    #[test]
     fn parses_version_and_real_commit_from_downloaded_core() {
         let commit = parse_verified_core_build(
             "Sub2API 0.1.171 (commit: f0e7a9c7a23a7d02fb159b62fa809621eb0475a6, built: 2026-08-04T13:31:28Z)",
@@ -1644,6 +2130,26 @@ mod tests {
         .expect("version output should be accepted");
         assert_eq!(commit, "f0e7a9c7a23a7d02fb159b62fa809621eb0475a6");
         assert!(parse_verified_core_build("Sub2API 0.1.170 (commit: abcdef0)", "0.1.171").is_err());
+    }
+
+    #[test]
+    fn compatible_core_verification_requires_declared_extension_capabilities() {
+        let verified = parse_verified_compatible_core_build(
+            "Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00, extension: 1.0.0, capabilities: account_cost_loss_ledger.v1)",
+            "0.1.173",
+            &["account_cost_loss_ledger.v1".into()],
+        )
+        .expect("compatible core metadata should be accepted");
+
+        assert_eq!(verified.upstream_commit, "29009f0b2ea1");
+        assert_eq!(verified.extension_version, "1.0.0");
+        assert_eq!(verified.capabilities, vec!["account_cost_loss_ledger.v1"]);
+        assert!(parse_verified_compatible_core_build(
+            "Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00)",
+            "0.1.173",
+            &["account_cost_loss_ledger.v1".into()],
+        )
+        .is_err());
     }
 
     #[test]

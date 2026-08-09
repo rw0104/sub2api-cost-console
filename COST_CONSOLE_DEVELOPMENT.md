@@ -1,7 +1,7 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
 > 文档版本：1.0  
-> 桌面应用版本：0.2.16
+> 桌面应用版本：0.2.17
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
@@ -1187,16 +1187,16 @@ frontend/src-tauri/target/release/bundle/nsis/
 gh workflow run desktop-release.yml --repo rw0104/sub2api-cost-console
 
 # 或推送同版本标签
-git tag v0.2.16
-git push origin v0.2.16
+git tag v0.2.17
+git push origin v0.2.17
 
 ```
 
 发布后验证：
 
 ```powershell
-gh release view v0.2.16 --repo rw0104/sub2api-cost-console
-gh release download v0.2.16 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
+gh release view v0.2.17 --repo rw0104/sub2api-cost-console
+gh release download v0.2.17 --repo rw0104/sub2api-cost-console --pattern INSTALLER_SHA256SUMS.txt
 ```
 
 ---

@@ -1,0 +1,174 @@
+name: Compatible Core Sync
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatible-core-sync
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Check the latest upstream release
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      version: ${{ steps.upstream.outputs.version }}
+      needs_sync: ${{ steps.upstream.outputs.needs_sync }}
+    steps:
+      - name: Checkout cost console metadata
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: frontend/CORE_VERSION
+          sparse-checkout-cone-mode: false
+
+      - name: Discover latest upstream release
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/Wei-Shaw/sub2api/releases/latest --jq .tag_name)"
+          [[ "$tag" == v* ]] || { echo "Unsupported upstream tag: $tag" >&2; exit 1; }
+          version="${tag#v}"
+          current="$(sed -e 's/[[:space:]]//g' frontend/CORE_VERSION)"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            if [[ "$current" == "$version" ]]; then
+              echo "needs_sync=false"
+            elif [[ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+              echo "Refusing to sync older upstream version $version over current $current" >&2
+              echo "needs_sync=false"
+            else
+              echo "needs_sync=true"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+  sync-and-publish:
+    name: Merge, verify and publish the compatible core
+    needs: discover
+    if: needs.discover.outputs.needs_sync == 'true'
+    permissions:
+      contents: write
+      issues: write
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout cost console
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch and merge upstream release
+        id: merge
+        shell: pwsh
+        run: |
+          git remote add upstream-sync https://github.com/Wei-Shaw/sub2api.git
+          git fetch upstream-sync "refs/tags/${{ needs.discover.outputs.tag }}:refs/tags/automation-${{ needs.discover.outputs.tag }}"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
+          if ($LASTEXITCODE -ne 0) {
+            $files = (git diff --name-only --diff-filter=U) -join ', '
+            git merge --abort
+            "conflict=true" >> $env:GITHUB_OUTPUT
+            "conflict_files=$files" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
+          Set-Content -Encoding utf8 frontend/CORE_VERSION '${{ needs.discover.outputs.version }}'
+          Set-Content -Encoding utf8 backend/cmd/server/VERSION '${{ needs.discover.outputs.version }}'
+          Set-Content -Encoding utf8 frontend/UPSTREAM_SUB2API_COMMIT $commit
+          git add backend/cmd/server/VERSION frontend/CORE_VERSION frontend/UPSTREAM_SUB2API_COMMIT
+          git commit --amend --no-edit
+          "conflict=false" >> $env:GITHUB_OUTPUT
+
+      - name: Report merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $title = "Compatible core sync blocked: ${{ needs.discover.outputs.tag }}"
+          $count = gh issue list --repo '${{ github.repository }}' --state open --search "`"$title`" in:title" --json number --jq length
+          if ($count -eq '0') {
+            gh issue create --repo '${{ github.repository }}' --title $title --body "Automatic merge conflicted in: ${{ steps.merge.outputs.conflict_files }}. No core artifact was published; the current compatible core remains active."
+          }
+          throw $title
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: corepack pnpm@9 install --frozen-lockfile
+
+      - name: Verify merged backend
+        working-directory: backend
+        run: go test ./...
+
+      - name: Verify desktop compatibility contract
+        working-directory: frontend/src-tauri
+        run: cargo test --features custom-protocol
+
+      - name: Verify automatic desktop core updates
+        working-directory: frontend
+        run: corepack pnpm@9 exec vitest run src/features/desktop/__tests__/DesktopUpdateCenter.spec.ts
+
+      - name: Build embedded UI and compatible core
+        working-directory: frontend
+        run: |
+          corepack pnpm@9 build
+          node scripts/prepare-desktop-sidecar.mjs
+          node scripts/prepare-core-release.mjs
+
+      - name: Push verified upstream merge
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git fetch origin main
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'main changed during core sync; retry on the next run' }
+          git push origin HEAD:main
+
+      - name: Publish compatible core channel
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view core-stable 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create core-stable --title "Sub2API compatible core channel" --notes "Automatically published extension-compatible Sub2API core builds." --prerelease
+          }
+          gh release upload core-stable `
+            (Resolve-Path release-assets/core-latest.json) `
+            (Resolve-Path release-assets/CORE_SHA256SUMS.txt) `
+            (Resolve-Path "release-assets/sub2api-core_*.zip") --clobber

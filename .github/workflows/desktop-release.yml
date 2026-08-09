@@ -71,7 +71,9 @@ jobs:
           $version = [string]$config.version
           $coreVersion = (Get-Content -Raw CORE_VERSION).Trim()
           $algorithmVersion = (Get-Content -Raw ALGORITHM_VERSION).Trim()
+          $extensionVersion = (Get-Content -Raw CORE_EXTENSION_VERSION).Trim()
           $upstreamCommit = (Get-Content -Raw UPSTREAM_SUB2API_COMMIT).Trim()
+          $releaseNotes = (Get-Content -Raw DESKTOP_RELEASE_NOTES.md).Trim()
           $tag = "v$version"
           if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_name }}" -ne $tag) {
             throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $tag"
@@ -80,7 +82,15 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "core_version=$coreVersion" >> $env:GITHUB_OUTPUT
           "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
+          "extension_version=$extensionVersion" >> $env:GITHUB_OUTPUT
           "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
+          "release_notes<<RELEASE_NOTES_EOF" >> $env:GITHUB_OUTPUT
+          $releaseNotes >> $env:GITHUB_OUTPUT
+          "RELEASE_NOTES_EOF" >> $env:GITHUB_OUTPUT
+
+      - name: Validate detailed technical release notes
+        working-directory: frontend
+        run: node scripts/prepare-desktop-release.mjs --validate-notes-only
 
       - name: Build and publish Tauri installer
         uses: tauri-apps/tauri-action@v1
@@ -95,8 +105,11 @@ jobs:
 
             - 桌面版本：v${{ steps.release-meta.outputs.version }}
             - 上游内核基线：v${{ steps.release-meta.outputs.core_version }}（${{ steps.release-meta.outputs.upstream_commit }}）
+            - 成本扩展：v${{ steps.release-meta.outputs.extension_version }}
             - 成本算法：v${{ steps.release-meta.outputs.algorithm_version }}
             - 包含 Tauri 签名更新清单、安装包签名与 SHA-256 校验文件。
+
+            ${{ steps.release-meta.outputs.release_notes }}
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
@@ -109,7 +122,11 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-release.mjs
 
-      - name: Upload updater metadata and checksums
+      - name: Package extension-compatible core update
+        working-directory: frontend
+        run: node scripts/prepare-core-release.mjs
+
+      - name: Upload desktop updater metadata and checksums
         shell: pwsh
         working-directory: frontend
         env:
@@ -117,10 +134,26 @@ jobs:
         run: |
           gh release upload "${{ steps.release-meta.outputs.tag }}" `
             (Resolve-Path release-assets/latest.json) `
-            (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) --clobber
+            (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) `
+            (Resolve-Path DESKTOP_RELEASE_NOTES.md) --clobber
+
+      - name: Publish independent compatible core channel
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view core-stable 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create core-stable --title "Sub2API compatible core channel" --notes "Automatically published extension-compatible Sub2API core builds." --prerelease
+          }
+          gh release upload core-stable `
+            (Resolve-Path release-assets/core-latest.json) `
+            (Resolve-Path release-assets/CORE_SHA256SUMS.txt) `
+            (Resolve-Path "release-assets/sub2api-core_*.zip") --clobber
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sub2api-cost-console-${{ steps.release-meta.outputs.version }}-windows
           if-no-files-found: error

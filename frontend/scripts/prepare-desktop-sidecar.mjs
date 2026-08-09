@@ -10,6 +10,9 @@ const backendDirectory = resolve(repositoryDirectory, 'backend')
 const tauriDirectory = resolve(frontendDirectory, 'src-tauri')
 const embeddedIndex = resolve(backendDirectory, 'internal', 'web', 'dist', 'index.html')
 const coreVersionFile = resolve(frontendDirectory, 'CORE_VERSION')
+const upstreamCommitFile = resolve(frontendDirectory, 'UPSTREAM_SUB2API_COMMIT')
+const extensionVersionFile = resolve(frontendDirectory, 'CORE_EXTENSION_VERSION')
+const capabilitiesFile = resolve(frontendDirectory, 'CORE_CAPABILITIES')
 const output = resolve(
   tauriDirectory,
   'binaries',
@@ -36,14 +39,18 @@ function capture(command, args, fallback) {
   return result.status === 0 ? result.stdout.trim() || fallback : fallback
 }
 
-const commit = capture('git', ['rev-parse', '--short=12', 'HEAD'], 'unknown')
-const date = new Date().toISOString()
+const commit = readFileSync(upstreamCommitFile, 'utf8').trim()
+const extensionVersion = readFileSync(extensionVersionFile, 'utf8').trim()
+const capabilities = readFileSync(capabilitiesFile, 'utf8').trim().split(/\s+/).filter(Boolean).join('|')
+const date = capture('git', ['show', '-s', '--format=%cI', commit], 'unknown')
 const ldflags = [
   '-s',
   '-w',
   `-X main.Version=${version}`,
   `-X main.Commit=${commit}`,
   `-X main.Date=${date}`,
+  `-X main.CoreExtensionVersion=${extensionVersion}`,
+  `-X main.CoreCapabilities=${capabilities}`,
   '-X main.BuildType=release',
 ].join(' ')
 

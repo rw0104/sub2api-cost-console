@@ -17,6 +17,8 @@ const releaseDirectory = resolve(frontendDirectory, 'release-assets')
 const nsisDirectory = resolve(tauriDirectory, 'target', 'release', 'bundle', 'nsis')
 const config = JSON.parse(readFileSync(resolve(tauriDirectory, 'tauri.conf.json'), 'utf8'))
 const version = String(config.version)
+const releaseNotesPath = resolve(frontendDirectory, 'DESKTOP_RELEASE_NOTES.md')
+const releaseNotes = readFileSync(releaseNotesPath, 'utf8').trim()
 const repository = (process.env.GITHUB_REPOSITORY || 'rw0104/sub2api-cost-console').trim()
 
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
@@ -24,6 +26,16 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
 }
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
   throw new Error(`Invalid GITHUB_REPOSITORY ${JSON.stringify(repository)}`)
+}
+if (!releaseNotes.includes(`v${version}`)) {
+  throw new Error(`DESKTOP_RELEASE_NOTES.md must identify desktop v${version}`)
+}
+for (const heading of ['## 内核基线', '## 技术变更', '## 升级行为', '## 验证结果', '## 回滚说明']) {
+  if (!releaseNotes.includes(heading)) throw new Error(`Release notes are missing ${heading}`)
+}
+if (process.argv.includes('--validate-notes-only')) {
+  console.log(`Detailed release notes validated for desktop v${version}`)
+  process.exit(0)
 }
 if (!existsSync(nsisDirectory)) {
   throw new Error(`NSIS output directory does not exist: ${nsisDirectory}`)
@@ -47,7 +59,7 @@ const downloadUrl = `https://github.com/${repository}/releases/download/v${versi
 const platform = { signature, url: downloadUrl }
 const latest = {
   version,
-  notes: `Sub2API Cost Console ${version}: managed core, signed updates and cost algorithm traceability.`,
+  notes: releaseNotes,
   pub_date: new Date().toISOString(),
   platforms: {
     'windows-x86_64': platform,
@@ -67,6 +79,7 @@ const checksums = [
   [installerPath, releaseAssetName],
   [signaturePath, `${releaseAssetName}.sig`],
   [latestPath, 'latest.json'],
+  [releaseNotesPath, 'DESKTOP_RELEASE_NOTES.md'],
 ]
   .map(([path, name]) => `${sha256(path)}  ${name}`)
   .sort()
@@ -81,5 +94,6 @@ console.log(JSON.stringify({
   signaturePath,
   latestPath,
   checksumPath,
+  releaseNotesPath,
   installerSize: statSync(installerPath).size,
 }, null, 2))

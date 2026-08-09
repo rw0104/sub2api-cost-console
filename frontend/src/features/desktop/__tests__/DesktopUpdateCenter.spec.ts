@@ -59,6 +59,7 @@ describe('DesktopUpdateCenter', () => {
       }
       if (command === 'inspect_core_identity') {
         return {
+          action: 'none',
           bundled_differs: false,
           current: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', sha256: 'old' },
           bundled: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'desktop123', sha256: 'new' },
@@ -98,7 +99,7 @@ describe('DesktopUpdateCenter', () => {
     wrapper.unmount()
   })
 
-  it('prompts for a same-version bundled core with a different commit and restores it on demand', async () => {
+  it('offers the same-upstream compatible core when the active core lacks required capabilities', async () => {
     mocks.check.mockResolvedValue(null)
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === 'desktop_backend_status') {
@@ -109,9 +110,12 @@ describe('DesktopUpdateCenter', () => {
       }
       if (command === 'inspect_core_identity') {
         return {
+          action: 'install_bundled',
           bundled_differs: true,
-          current: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', sha256: 'old' },
-          bundled: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'desktop123', sha256: 'new' },
+          current: { version: '0.1.171', algorithm_version: 'unknown', extension_version: '', capabilities: [], upstream_commit: 'f0e7a9c7', sha256: 'old' },
+          bundled: { version: '0.1.171', algorithm_version: '1.3.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: 'f0e7a9c7', sha256: 'new' },
+          missing_capabilities: ['account_cost_loss_ledger.v1'],
+          integrity_valid: true,
         }
       }
       if (command === 'restore_bundled_core') {
@@ -124,9 +128,10 @@ describe('DesktopUpdateCenter', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(1_800)
     await flushPromises()
+    await wrapper.get('button.desktop-update__trigger').trigger('click')
 
-    expect(wrapper.text()).toContain('桌面内置修复内核')
-    const restoreButton = wrapper.findAll('button').find((button) => button.text().includes('恢复桌面内置内核'))
+    expect(wrapper.text()).toContain('扩展兼容内核')
+    const restoreButton = wrapper.findAll('button').find((button) => button.text().includes('安装扩展兼容内核'))
     expect(restoreButton).toBeDefined()
     await restoreButton!.trigger('click')
     await flushPromises()
@@ -135,6 +140,113 @@ describe('DesktopUpdateCenter', () => {
     expect(mocks.relaunch).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('内核已完成更新')
     expect(wrapper.text()).not.toContain('正在执行健康检查')
+    wrapper.unmount()
+  })
+
+  it('does not prompt when a compatible active core has a different payload hash', async () => {
+    mocks.check.mockResolvedValue(null)
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'desktop_backend_status') {
+        return { core_version: '0.1.173', algorithm_version: '1.5.0', upstream_commit: '29009f0b', core_sha256: 'active' }
+      }
+      if (command === 'check_core_update') {
+        return { available: false, current_version: '0.1.173', current_algorithm_version: '1.5.0', upstream_commit: '29009f0b', update: null, previous_version: null }
+      }
+      if (command === 'inspect_core_identity') {
+        return {
+          action: 'none',
+          bundled_differs: true,
+          current: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'active' },
+          bundled: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'bundled' },
+          missing_capabilities: [],
+          integrity_valid: true,
+        }
+      }
+      return undefined
+    })
+
+    const wrapper = mount(DesktopUpdateCenter)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_800)
+    await flushPromises()
+
+    expect(wrapper.find('section.desktop-update__release--bundled').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('reports a newer official core while waiting for its compatible build', async () => {
+    mocks.check.mockResolvedValue(null)
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'desktop_backend_status') {
+        return { core_version: '0.1.173', algorithm_version: '1.5.0', upstream_commit: '29009f0b' }
+      }
+      if (command === 'check_core_update') {
+        return {
+          available: false,
+          compatibility_pending: true,
+          upstream_latest_version: '0.1.174',
+          current_version: '0.1.173',
+          current_algorithm_version: '1.5.0',
+          upstream_commit: '29009f0b',
+          update: { version: '0.1.173', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], published_at: '', notes: '' },
+          previous_version: null,
+        }
+      }
+      if (command === 'inspect_core_identity') {
+        return {
+          action: 'none', bundled_differs: false, missing_capabilities: [], integrity_valid: true,
+          current: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'active' },
+          bundled: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'bundled' },
+        }
+      }
+      return undefined
+    })
+
+    const wrapper = mount(DesktopUpdateCenter)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_800)
+    await flushPromises()
+    await wrapper.get('button.desktop-update__trigger').trigger('click')
+
+    expect(wrapper.text()).toContain('官方内核 v0.1.174 已发布，兼容内核构建中')
+    expect(wrapper.text()).not.toContain('下载、校验并安全重启')
+    wrapper.unmount()
+  })
+
+  it('automatically stages a compatible core update without forcing a relaunch', async () => {
+    mocks.check.mockResolvedValue(null)
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'desktop_backend_status') {
+        return { core_version: '0.1.173', algorithm_version: '1.5.0', upstream_commit: '29009f0b' }
+      }
+      if (command === 'check_core_update') {
+        return {
+          available: true, compatibility_pending: false, upstream_latest_version: '0.1.174',
+          current_version: '0.1.173', current_algorithm_version: '1.5.0', upstream_commit: '29009f0b',
+          update: { version: '0.1.174', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], published_at: '', notes: '' },
+          previous_version: null,
+        }
+      }
+      if (command === 'inspect_core_identity') {
+        return {
+          action: 'none', bundled_differs: false, missing_capabilities: [], integrity_valid: true,
+          current: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'active' },
+          bundled: { version: '0.1.173', algorithm_version: '1.5.0', extension_version: '1.0.0', capabilities: ['account_cost_loss_ledger.v1'], upstream_commit: '29009f0b', sha256: 'bundled' },
+        }
+      }
+      if (command === 'install_core_update') {
+        return { version: '0.1.174', algorithm_version: '1.5.0', extension_version: '1.0.0', restart_required: true }
+      }
+      return undefined
+    })
+
+    const wrapper = mount(DesktopUpdateCenter)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1_800)
+    await flushPromises()
+
+    expect(mocks.invoke).toHaveBeenCalledWith('install_core_update')
+    expect(mocks.relaunch).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -149,11 +261,14 @@ describe('DesktopUpdateCenter', () => {
       }
       if (command === 'inspect_core_identity') {
         return {
+          action: 'wait_for_compatible_update',
           bundled_differs: true,
           current: { version: '0.1.171', algorithm_version: '1.3.0', upstream_commit: 'f0e7a9c7', sha256: 'old' },
           bundled: { version: '0.1.172', algorithm_version: '1.4.0', upstream_commit: 'desktop123', sha256: 'new' },
           pending: { version: '0.1.172', algorithm_version: '1.4.0', upstream_commit: '155c4949', sha256: 'pending' },
           last_error: '内核更新暂未切换：无法替换活动内核。桌面已继续启动，请稍后重试',
+          missing_capabilities: ['account_cost_loss_ledger.v1'],
+          integrity_valid: true,
         }
       }
       return undefined

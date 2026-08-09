@@ -10,6 +10,7 @@
     "build:desktop": "vue-tsc -b && vite build --mode desktop",
     "preview": "vite preview",
     "desktop:prepare-sidecar": "node scripts/prepare-desktop-sidecar.mjs",
+    "desktop:prepare-core-release": "node scripts/prepare-core-release.mjs",
     "desktop:dev": "node scripts/desktop-command.mjs dev",
     "desktop:build": "node scripts/desktop-command.mjs build",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
