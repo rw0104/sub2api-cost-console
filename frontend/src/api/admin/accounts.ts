@@ -96,6 +96,21 @@ export interface AccountEconomicsSnapshot {
     invalid_cost_profile_count: number
     exchange_rate_source: string
   }
+  series: Array<{
+    sampled_at: string
+    normal_count: number
+    rate_limited_count: number
+    error_count: number
+    billed_usd_per_hour: number | null
+    account_cost_usd_per_hour: number | null
+    stable: boolean
+  }>
+  events: Array<{
+    occurred_at: string
+    kind: 'core_started' | 'pool_membership_changed' | 'counter_regression' | 'sampling_gap' | 'impairment_confirmed' | string
+    label: string
+    severity: 'info' | 'warning' | string
+  }>
 }
 
 export async function getEconomicsSnapshot(input: {

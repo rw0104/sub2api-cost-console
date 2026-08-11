@@ -3,12 +3,24 @@ package service
 import "time"
 
 type OpsThroughputTrendPoint struct {
-	BucketStart   time.Time `json:"bucket_start"`
-	RequestCount  int64     `json:"request_count"`
-	TokenConsumed int64     `json:"token_consumed"`
-	SwitchCount   int64     `json:"switch_count"`
-	QPS           float64   `json:"qps"`
-	TPS           float64   `json:"tps"`
+	BucketStart         time.Time `json:"bucket_start"`
+	RequestCount        int64     `json:"request_count"`
+	SuccessCount        int64     `json:"success_count"`
+	ErrorCount          int64     `json:"error_count"`
+	TokenConsumed       int64     `json:"token_consumed"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	CacheReadTokens     int64     `json:"cache_read_tokens"`
+	SwitchCount         int64     `json:"switch_count"`
+	UserBilledUSD       float64   `json:"user_billed_usd"`
+	AccountCostUSD      float64   `json:"account_cost_usd"`
+	ContributionUSD     float64   `json:"contribution_usd"`
+	DurationP95Ms       *int      `json:"duration_p95_ms"`
+	TTFTP50Ms           *int      `json:"ttft_p50_ms"`
+	TTFTP95Ms           *int      `json:"ttft_p95_ms"`
+	QPS                 float64   `json:"qps"`
+	TPS                 float64   `json:"tps"`
 }
 
 type OpsThroughputPlatformBreakdownItem struct {
@@ -44,6 +56,7 @@ type OpsErrorTrendPoint struct {
 	ErrorCountSLA        int64 `json:"error_count_sla"`
 
 	UpstreamErrorCountExcl429529 int64 `json:"upstream_error_count_excl_429_529"`
+	Upstream402Count             int64 `json:"upstream_402_count"`
 	Upstream429Count             int64 `json:"upstream_429_count"`
 	Upstream529Count             int64 `json:"upstream_529_count"`
 }

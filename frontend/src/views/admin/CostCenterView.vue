@@ -47,6 +47,17 @@
             <span>{{ item.label }}</span>
             <kbd>{{ item.shortcut }}</kbd>
           </button>
+          <button
+            type="button"
+            class="cost-workspaces__settings"
+            data-aui-component="button"
+            title="进入 Sub2API 系统设置"
+            @click="openSub2APISettings"
+          >
+            <Settings2 :size="15" />
+            <span>Sub2API 设置</span>
+            <ExternalLink :size="11" />
+          </button>
         </nav>
 
         <div class="cost-toolbar__actions">
@@ -155,8 +166,8 @@
                   { label: rollingTrendLabel, data: rollingTrendActualCost, color: '#b9e55a', dashed: true },
                 ]"
                 value-prefix="$"
-                :state="sourceStates.dashboard.status"
-                :state-reason="sourceStates.dashboard.reason"
+                :state="trendSourceState.status"
+                :state-reason="trendSourceState.reason"
               />
             </ChartPanel>
             <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购配置推算`">
@@ -168,11 +179,24 @@
                   { label: '综合成本', data: trendCombinedCost, color: '#b9e55a' },
                 ]"
                 value-prefix="¥"
-                :state="combineSourceAvailability(sourceStates.dashboard, sourceStates.accounts, sourceStates.costLoss)"
-                :state-reason="sourceStates.dashboard.reason || sourceStates.costLoss.reason"
+                :state="combineSourceAvailability(trendSourceState, sourceStates.accounts, sourceStates.costLoss)"
+                :state-reason="trendSourceState.reason || sourceStates.costLoss.reason"
               />
             </ChartPanel>
           </div>
+
+          <AdaptiveOperationsCharts
+            :ops-trend="opsTrend"
+            :error-trend="opsErrorTrend"
+            :economics="accountEconomics"
+            :cny-per-usd="exchangeRate.rate"
+            :ops-bucket-hours="opsBucketHours"
+            :procurement-hourly-cny="procurementHourlyCny"
+            :ops-state="sourceStates.ops.status"
+            :ops-reason="sourceStates.ops.reason"
+            :health-state="sourceStates.economics.status"
+            :health-reason="sourceStates.economics.reason"
+          />
 
           <section class="cost-model-panel" aria-labelledby="model-cost-title">
             <div class="cost-model-panel__header">
@@ -264,6 +288,11 @@
             <p v-if="modelStatsCompatibilityTruncated" class="cost-model-note cost-model-note--warning">
               当前内核未返回可信的精确时间边界，且所选窗口超过 25,000 条 usage_logs。为避免把最近样本冒充完整成本，模型汇总已停止；请缩小统计窗口或选择具体成本账号。
             </p>
+
+            <div class="cost-model-contribution">
+              <div class="cost-panel-heading"><strong>主要模型贡献 Top 8</strong><span>用户收入 / 上游成本 / 毛利 · 单图固定 3 个指标</span></div>
+              <ModelContributionChart :rows="modelCostRows" :state="sourceStates.models.status" :state-reason="sourceStates.models.reason" />
+            </div>
 
             <div class="cost-model-table-wrap" tabindex="0" aria-label="模型成本表，可横向滚动">
               <table class="cost-model-table">
@@ -603,6 +632,8 @@ import { useAppStore } from '@/stores'
 import type { Account, AccountUsageInfo, WindowStats } from '@/types'
 import type { ChannelModelPricing, ModelDefaultPricing } from '@/api/admin/channels'
 import CostLineChart from '@/features/cost-center/components/CostLineChart.vue'
+import AdaptiveOperationsCharts from '@/features/cost-center/components/AdaptiveOperationsCharts.vue'
+import ModelContributionChart from '@/features/cost-center/components/ModelContributionChart.vue'
 import CostApiAccessPanel from '@/features/cost-center/components/CostApiAccessPanel.vue'
 import CostProfileInspector from '@/features/cost-center/components/CostProfileInspector.vue'
 import MetricCell from '@/features/cost-center/components/TruthfulMetric.vue'
@@ -677,7 +708,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, costLossStates, accountEconomics, accountUsage, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, sourceStates, loading, saving, error, lastUpdated, exchangeRate,
+  accounts, costLossStates, accountEconomics, accountUsage, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, opsErrorTrend, systemSettings, probes, sourceStates, loading, saving, error, lastUpdated, exchangeRate,
 } = data
 
 const workspaceItems = [
@@ -846,20 +877,32 @@ const trendBucketHours = computed(() => resolveCostTrendBucketHours(range.value)
 const trendSmoothingPoints = computed(() => ({ today: 4, '1m': 2, '5m': 3, '30m': 5, '1h': 10, '6h': 3, '24h': 4, '7d': 3, '30d': 7 })[range.value])
 const rollingTrendLabel = computed(() => ({ today: '4 小时移动平均', '1m': '2 点移动平均', '5m': '3 分钟移动平均', '30m': '5 分钟移动平均', '1h': '10 分钟移动平均', '6h': '3 小时移动平均', '24h': '4 小时移动平均', '7d': '3 天移动平均', '30d': '7 天移动平均' })[range.value])
 const requestSmoothingPoints = computed(() => ({ today: 12, '1m': 2, '5m': 3, '30m': 5, '1h': 10, '6h': 6, '24h': 12, '7d': 6, '30d': 6 })[range.value])
-const windowActualOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? trend.value.reduce((sum, point) => sum + Number(point.actual_cost || 0), 0) : null)
-const windowAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? trend.value.reduce((sum, point) => sum + Number(point.account_cost ?? point.cost ?? 0), 0) : null)
-const apiCostBasisLabel = computed(() => trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
+const windowActualOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.actual_cost)) : null)
+const windowAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.account_cost ?? point.cost)) : null)
+const apiCostBasisLabel = computed(() => opsTrend.value.length || trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
 const apiOutputHourlyUsd = computed<number | null>(() => windowActualOutputUsd.value == null ? null : windowActualOutputUsd.value / selectedRangeHours.value)
 const combinedHourlyCny = computed<number | null>(() => procurementHourlyCny.value == null || windowAccountCostUsd.value == null ? null : procurementHourlyCny.value + windowAccountCostUsd.value * exchangeRate.value.rate / selectedRangeHours.value)
 const todayRequests = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? accountLedgers.value.reduce((sum, row) => sum + Number(row.today?.requests || 0), 0) : null)
 
-const trendLabels = computed(() => trend.value.map((point) => formatTrendLabel(point.date)))
-const trendActualCost = computed(() => trend.value.map((point) => Number(point.actual_cost || 0) / trendBucketHours.value))
+const trendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trend.value.map((point) => formatTrendLabel(point.date)))
+const trendSourceState = computed(() => opsTrend.value.length ? sourceStates.value.ops : sourceStates.value.dashboard)
+const opsBucketHours = computed(() => {
+  if (opsTrend.value.length < 2) return trendBucketHours.value
+  const left = new Date(opsTrend.value[0].bucket_start).getTime()
+  const right = new Date(opsTrend.value[1].bucket_start).getTime()
+  const hours = Math.abs(right - left) / 3_600_000
+  return Number.isFinite(hours) && hours > 0 ? hours : trendBucketHours.value
+})
+const trendActualCost = computed(() => opsTrend.value.length
+  ? opsTrend.value.map((point) => divideFiniteChartValue(point.user_billed_usd, opsBucketHours.value))
+  : trend.value.map((point) => divideFiniteChartValue(point.actual_cost, trendBucketHours.value)))
 const rollingTrendActualCost = computed(() => movingAverage(trendActualCost.value, trendSmoothingPoints.value))
 const rollingOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? rollingTrendActualCost.value.at(-1) ?? apiOutputHourlyUsd.value : null)
-const trendStandardCost = computed(() => trend.value.map((point) => Number(point.account_cost ?? point.cost ?? 0) * exchangeRate.value.rate / trendBucketHours.value))
-const procurementBaseline = computed(() => trend.value.map(() => procurementHourlyCny.value ?? 0))
-const trendCombinedCost = computed(() => procurementHourlyCny.value == null || windowAccountCostUsd.value == null ? [] : trendStandardCost.value.map((value, index) => value + (procurementBaseline.value[index] ?? 0)))
+const trendStandardCost = computed(() => opsTrend.value.length
+  ? opsTrend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.account_cost_usd, opsBucketHours.value), exchangeRate.value.rate))
+  : trend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.account_cost ?? point.cost, trendBucketHours.value), exchangeRate.value.rate)))
+const procurementBaseline = computed(() => trendLabels.value.map(() => procurementHourlyCny.value))
+const trendCombinedCost = computed(() => trendStandardCost.value.map((value, index) => procurementHourlyCny.value == null || windowAccountCostUsd.value == null || value == null ? null : value + (procurementBaseline.value[index] ?? 0)))
 const qualityTrendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trendLabels.value)
 const requestVolumeTrend = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => Number(point.request_count || 0)) : trend.value.map((point) => Number(point.requests || 0)))
 
@@ -1087,7 +1130,11 @@ function combineSourceAvailability(...states: DataSourceState[]): DataAvailabili
   return 'measured'
 }
 function scoreGrade(score: number): string { return score >= 82 ? 'A' : score >= 70 ? 'B' : score >= 58 ? 'C' : 'D' }
-function movingAverage(values: number[], windowSize: number): number[] { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1); return slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length) }) }
+function finiteChartValue(value: unknown): number | null { const number = Number(value); return value == null || !Number.isFinite(number) ? null : number }
+function divideFiniteChartValue(value: unknown, divisor: number): number | null { const number = finiteChartValue(value); return number == null || !Number.isFinite(divisor) || divisor <= 0 ? null : number / divisor }
+function multiplyFiniteChartValue(value: unknown, multiplier: number): number | null { const number = finiteChartValue(value); return number == null || !Number.isFinite(multiplier) ? null : number * multiplier }
+function sumFiniteTrendValues(values: unknown[]): number | null { const numbers = values.map(finiteChartValue); return numbers.some((value) => value == null) ? null : numbers.reduce<number>((sum, value) => sum + Number(value), 0) }
+function movingAverage(values: Array<number | null>, windowSize: number): Array<number | null> { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1).filter((value): value is number => value != null && Number.isFinite(value)); return slice.length ? slice.reduce((sum, value) => sum + value, 0) / slice.length : null }) }
 function formatInteger(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Math.round(Number(value)).toLocaleString() }
 function formatPercent(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : `${(Number(value) * 100).toFixed(1)}%` }
 function formatCny(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : formatMoney(Number(value), 'CNY', digits) }
@@ -1154,6 +1201,7 @@ async function refreshPricingCatalog() {
 }
 function toggleAutoRefresh() { autoRefresh.value = !autoRefresh.value; countdown.value = refreshIntervalSeconds.value }
 function goToAccounts() { router.push('/admin/accounts') }
+function openSub2APISettings() { router.push('/admin/settings') }
 async function runProbe(account: Account) {
   if (probes.value[String(account.id)]?.loading) return
   appStore.showInfo(`正在检测 ${account.name}，将发送一次真实最小请求`, 2500)
@@ -1439,6 +1487,13 @@ button:active { transform: translateY(1px); }
 
 .cost-workspaces button:last-child { border-right: 0; }
 .cost-workspaces button.active { box-shadow: 0 4px 14px rgb(185 229 90 / 14%); }
+.cost-workspaces .cost-workspaces__settings {
+  min-width: 138px;
+  margin-left: 3px;
+  border-left: 1px solid var(--cost-line);
+  color: #b8c5bb;
+}
+.cost-workspaces .cost-workspaces__settings:hover { color: #10140f; background: #c8ed79; }
 
 .cost-workspaces kbd {
   border-radius: 5px;
@@ -2078,6 +2133,7 @@ button:active { transform: translateY(1px); }
 .cost-pricing-status.is-unavailable { border-left: 2px solid #b8785e; }
 .cost-model-note { margin: 0; padding: 10px 16px; color: #89958b; background: rgb(38 47 39 / 42%); border-bottom: 1px solid var(--cost-line); font-size: 10px; line-height: 1.55; }
 .cost-model-note--warning { color: #d7bb73; border-left: 2px solid #d7bb73; background: rgb(93 72 31 / 22%); }
+.cost-model-contribution { padding: 14px 16px 8px; border-bottom: 1px solid var(--cost-line); background: #111611; }
 .cost-route-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; background: #151c16; border-top: 1px solid #3a443b; border-bottom: 1px solid var(--cost-line); }
 .cost-route-heading strong, .cost-route-heading span { display: block; }
 .cost-route-heading strong { color: #dce5da; font-size: 12px; }

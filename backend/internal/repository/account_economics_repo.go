@@ -44,7 +44,7 @@ func (r *accountEconomicsRepository) UpsertSample(ctx context.Context, sample se
 	if r == nil || r.db == nil {
 		return errors.New("account economics repository is unavailable")
 	}
-	bucket := sample.SampledAt.UTC().Truncate(time.Minute)
+	bucket := accountEconomicsSampleBucket(sample.SampledAt)
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO account_economics_samples (
 			sample_bucket, sampled_at, scope_key, membership_hash,
@@ -67,6 +67,13 @@ func (r *accountEconomicsRepository) UpsertSample(ctx context.Context, sample se
 		return fmt.Errorf("upsert account economics sample: %w", err)
 	}
 	return nil
+}
+
+func accountEconomicsSampleBucket(sampledAt time.Time) time.Time {
+	// Preserve the shortest supported event window without turning the always-on
+	// sampler into a high-volume writer. The background job still runs once per
+	// minute; foreground refreshes and state events can retain 5-second evidence.
+	return sampledAt.UTC().Truncate(5 * time.Second)
 }
 
 func (r *accountEconomicsRepository) ListSamples(ctx context.Context, scopeKey string, since time.Time) ([]service.AccountEconomicsSample, error) {

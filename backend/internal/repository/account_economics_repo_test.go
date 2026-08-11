@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
@@ -24,4 +25,14 @@ func TestAccountEconomicsRepositoryReadsFactualUserAndAccountCostColumns(t *test
 	require.InDelta(t, 12.5, totals.BilledUSD, 1e-9)
 	require.InDelta(t, 4.25, totals.AccountCostUSD, 1e-9)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountEconomicsSampleBucketPreservesFiveSecondEvidence(t *testing.T) {
+	sampledAt := time.Date(2026, 8, 11, 12, 34, 58, 700_000_000, time.FixedZone("offset", 8*60*60))
+
+	require.Equal(
+		t,
+		time.Date(2026, 8, 11, 4, 34, 55, 0, time.UTC),
+		accountEconomicsSampleBucket(sampledAt),
+	)
 }

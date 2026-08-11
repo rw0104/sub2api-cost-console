@@ -1,9 +1,20 @@
 <template>
-  <div class="cost-chart" :class="`data-${state}`" :style="{ height: `${height}px` }" :data-data-state="state">
+  <div class="cost-chart" :class="`data-${effectiveState}`" :style="{ height: `${height}px` }" :data-data-state="effectiveState">
     <Line v-if="showChart" :data="chartData" :options="chartOptions" />
-    <div v-else class="cost-chart__state" role="status">
+    <div v-if="showChart && effectiveState === 'partial'" class="cost-chart__partial" :title="stateReason">部分数据</div>
+    <div v-if="showChart && events.length" class="cost-chart__events" aria-label="图表事件">
+      <span
+        v-for="event in events"
+        :key="`${event.index}-${event.label}`"
+        class="cost-chart__event"
+        :class="`is-${event.severity || 'info'}`"
+        :style="{ left: `${eventPosition(event.index)}%` }"
+        :title="event.label"
+      ><i></i></span>
+    </div>
+    <div v-if="!showChart" class="cost-chart__state" role="status">
       <span>{{ stateLabel }}</span>
-      <small>{{ stateReason }}</small>
+      <small>{{ effectiveReason }}</small>
     </div>
   </div>
 </template>
@@ -29,10 +40,16 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
 
 export interface CostChartSeries {
   label: string
-  data: number[]
+  data: Array<number | null>
   color: string
   dashed?: boolean
   fill?: boolean
+}
+
+export interface CostChartEvent {
+  index: number
+  label: string
+  severity?: 'info' | 'warning'
 }
 
 const props = withDefaults(defineProps<{
@@ -43,20 +60,25 @@ const props = withDefaults(defineProps<{
   valueSuffix?: string
   state?: DataAvailability
   stateReason?: string
+  events?: CostChartEvent[]
 }>(), {
   height: 190,
   valuePrefix: '',
   valueSuffix: '',
   state: 'measured',
   stateReason: '',
+  events: () => [],
 })
 
-const showChart = computed(() => !['loading', 'unavailable', 'empty'].includes(props.state))
-const stateLabel = computed(() => dataAvailabilityLabel(props.state))
+const hasPlottableValue = computed(() => props.labels.length > 0 && props.series.some((item) => item.data.some((value) => value != null && Number.isFinite(value))))
+const effectiveState = computed<DataAvailability>(() => !['loading', 'unavailable', 'empty'].includes(props.state) && !hasPlottableValue.value ? 'empty' : props.state)
+const showChart = computed(() => !['loading', 'unavailable', 'empty'].includes(effectiveState.value))
+const stateLabel = computed(() => dataAvailabilityLabel(effectiveState.value))
+const effectiveReason = computed(() => effectiveState.value === 'empty' && !hasPlottableValue.value ? props.stateReason || '所选窗口没有可绘制的有效数据' : props.stateReason)
 
 const chartData = computed<ChartData<'line'>>(() => ({
   labels: props.labels,
-  datasets: props.series.map((item) => ({
+  datasets: props.series.slice(0, 3).map((item) => ({
     label: item.label,
     data: item.data,
     borderColor: item.color,
@@ -69,6 +91,7 @@ const chartData = computed<ChartData<'line'>>(() => ({
     pointHoverBorderWidth: 1,
     pointHoverBackgroundColor: '#101410',
     tension: 0.18,
+    spanGaps: false,
   })),
 }))
 
@@ -129,6 +152,11 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
     },
   },
 }))
+
+function eventPosition(index: number): number {
+  if (props.labels.length <= 1) return 50
+  return Math.max(2, Math.min(98, (index / (props.labels.length - 1)) * 100))
+}
 </script>
 
 <style scoped>
@@ -152,6 +180,19 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
 .cost-chart__state span { font-size: 14px; font-weight: 650; }
 .cost-chart__state small { max-width: 420px; color: #758078; font-size: 11px; }
 .cost-chart.data-unavailable .cost-chart__state { border-color: rgb(213 132 115 / 35%); }
+.cost-chart.data-partial::after {
+  position: absolute;
+  inset: 28px 0 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(135deg, transparent 0 10px, rgb(224 189 78 / 2.5%) 10px 20px);
+  content: '';
+}
+.cost-chart__partial { position: absolute; top: 2px; left: 2px; z-index: 2; padding: 2px 6px; border: 1px solid rgb(224 189 78 / 28%); border-radius: 999px; background: #191a12; color: #d8b94d; font-size: 9px; }
+.cost-chart__events { position: absolute; inset: 32px 18px 22px 42px; z-index: 3; pointer-events: none; }
+.cost-chart__event { position: absolute; top: 0; bottom: 0; width: 1px; border-left: 1px dashed rgb(126 182 216 / 65%); }
+.cost-chart__event i { position: absolute; top: -1px; left: -4px; width: 7px; height: 7px; border: 1px solid #111611; border-radius: 50%; background: #7eb6d8; }
+.cost-chart__event.is-warning { border-left-color: rgb(224 189 78 / 78%); }
+.cost-chart__event.is-warning i { background: #e0bd4e; }
 
 @media (prefers-reduced-motion: reduce) {
   .cost-chart {

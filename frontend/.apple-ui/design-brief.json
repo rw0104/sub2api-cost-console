@@ -36,11 +36,11 @@
       "Preserve all committed filters and the active workspace while the layout changes size class."
     ]
   },
-  "primary_user_outcome": "Make every economics datum truthful, distinguish zero from unavailable, and expose safe historical-data controls",
+  "primary_user_outcome": "Make economics and account-health history truthful at every time scale, expose bounded health inspection, and keep the desktop shell coherent",
   "essential_content_hierarchy": [
     "Global freshness and source-health summary: users first see whether each source is measured, estimated, stale, unavailable, or genuinely zero.",
     "Time semantics: natural day, rolling window, lifetime cumulative, and retained history are labeled before numeric comparison.",
-    "Current operational metrics and charts: only valid finite values render as money or counts; unavailable values render a reason and retry path.",
+    "Adaptive operational metrics and charts: 5-second to 6-hour buckets target 30-120 points; only valid finite values render as money, counts, or latency and unavailable values render a reason and retry path.",
     "Account, model, and route evidence tables: each row exposes measured, fallback, estimated, or missing provenance.",
     "Data governance workspace: source inventory, retention policy, history coverage, immutable-ledger boundary, and safe maintenance actions."
   ],
@@ -114,12 +114,13 @@
     }
   ],
   "information_architecture": {
-    "navigation_model": "One persistent desktop toolbar exposes five peer workspaces: asset overview, upstream ranking, channel pool, API access, and data governance. Route query state preserves the active destination.",
+    "navigation_model": "One persistent desktop toolbar exposes five peer workspaces: asset overview, upstream ranking, channel pool, data governance, and API access. A separately styled Sub2API Settings action leaves the monitoring workspace without pretending to be a sixth selected peer. Route query state preserves the active destination.",
     "component_anatomy": [
-      "Functional toolbar: brand/version, workspace destination group, time-window value selector, refresh-period value selector, refresh and fullscreen actions.",
+      "Windows desktop titlebar: app identity, drag region, minimize, maximize/restore, and close using native Windows semantics above the product toolbar.",
+      "Functional toolbar: brand/version, workspace destination group, explicit Sub2API Settings destination, time-window value selector, refresh-period value selector, refresh and fullscreen actions.",
       "Truth status strip: source name, measured/estimated/stale/unavailable state, last success time, and failure reason.",
       "Truthful metric: label, optional finite value, unit, provenance badge, time scope, empty/error explanation, and optional recovery action.",
-      "Opaque data sections: metric grids, charts with explicit no-data overlays, account/model/route tables with row-level provenance.",
+      "Opaque data sections: metric grids, adaptive charts with at most three visible series, explicit partial/no-data overlays and event markers, plus account/model/route tables with row-level provenance.",
       "Data governance workspace: source inventory, time semantics, history coverage, retention policy, immutable-ledger notice, and confirmed maintenance actions.",
       "Confirmation dialog: exact derived-data target, consequence, cancel, and primary confirm; billing ledgers cannot be deleted from this surface."
     ],
@@ -183,6 +184,26 @@
           {"probe": "commit", "state_id": "account-filter-commit", "action": "Choose a specific account", "expected_visible": "The heading and model rows show the selected account scope", "expected_semantic": "The select value and data query scope match", "expected_focus": "Focus remains on the select"},
           {"probe": "keyboard-navigation", "state_id": "account-filter-keyboard", "action": "Use native typeahead or arrows", "expected_visible": "A named account can be selected", "expected_semantic": "One option is committed", "expected_focus": "Native focus is preserved"},
           {"probe": "platform-fallback", "state_id": "account-filter-platform", "action": "Open the account list in the Windows WebView", "expected_visible": "Long account labels remain inspectable and the selected value is visible", "expected_semantic": "The control remains a native labeled select", "expected_focus": "The platform restores focus after closing"}
+        ]
+      },
+      {
+        "id": "history-date-time-fields",
+        "user_intent": "enter bounded history, expiry, and audit date-time values with the platform picker",
+        "chosen_pattern": "native-date-picker",
+        "options_shape": "calendar dates and local date-time values constrained by each form's minimum and maximum",
+        "why_this_pattern": "These controls collect literal temporal values rather than choosing actions or navigating destinations; the Windows WebView picker supplies familiar calendar, keyboard, locale, and touch behavior.",
+        "why_native_picker": "The value is a literal date or local date-time and does not require rich results, search, actions, or custom preview; using the WebView's native picker preserves locale, validation, keyboard, and touch conventions.",
+        "compact_adaptation": "full-width labeled native date or datetime-local input",
+        "expanded_adaptation": "labeled native date or datetime-local field aligned with the related form values",
+        "keyboard_and_focus": "Platform-native typing, picker invocation, validation, commit, and focus behavior.",
+        "dismissal_and_persistence": "Closing without commit preserves the prior form value; submitting the parent form persists the validated temporal value.",
+        "accessibility_state": "Every temporal input keeps a visible associated label, native value semantics, validation text, and disabled or required state.",
+        "control_state_id": "history-date-time-fields-control",
+        "source_refs": ["references/selection-controls.md#native-date-and-time-inputs"],
+        "verification_probes": [
+          {"probe": "commit", "state_id": "date-time-commit", "action": "Choose a valid date or local date-time", "expected_visible": "The committed localized value remains visible", "expected_semantic": "The native input value matches the form state", "expected_focus": "Focus returns to or remains on the input"},
+          {"probe": "keyboard-navigation", "state_id": "date-time-keyboard", "action": "Enter and adjust the value with the keyboard", "expected_visible": "The date parts update without hiding validation", "expected_semantic": "The native input exposes the updated value", "expected_focus": "Platform-native focus is preserved"},
+          {"probe": "validation", "state_id": "date-time-validation", "action": "Enter a value outside the permitted boundary", "expected_visible": "The form exposes a specific validation message", "expected_semantic": "The invalid state is announced and submission is blocked", "expected_focus": "Focus can return to the invalid field"}
         ]
       }
     ],

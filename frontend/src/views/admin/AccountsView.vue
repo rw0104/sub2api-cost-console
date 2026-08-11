@@ -48,6 +48,17 @@
                       <span>{{ t('admin.accounts.enableAutoRefresh') }}</span>
                       <Icon v-if="autoRefreshEnabled" name="check" size="sm" class="text-primary-500" />
                     </button>
+                    <button
+                      @click="setAutoHealthProbeEnabled(!autoHealthProbeEnabled)"
+                      class="mt-1 flex w-full items-start justify-between gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                    >
+                      <span>
+                        <strong class="block font-medium">逐账号健康巡检</strong>
+                        <small class="mt-0.5 block text-xs text-amber-600 dark:text-amber-300">每分钟最多探测 1 个当前页账号，会产生少量调用</small>
+                      </span>
+                      <Icon v-if="autoHealthProbeEnabled" name="check" size="sm" class="mt-0.5 shrink-0 text-primary-500" />
+                    </button>
+                    <p v-if="healthProbeLastResult" class="px-3 pb-1 pt-2 text-xs text-gray-500 dark:text-gray-400">{{ healthProbeLastResult }}</p>
                     <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
                     <button
                       v-for="sec in autoRefreshIntervals"
@@ -687,6 +698,12 @@ const autoRefreshIntervalSeconds = ref<(typeof autoRefreshIntervals)[number]>(30
 const autoRefreshCountdown = ref(0)
 const autoRefreshETag = ref<string | null>(null)
 const autoRefreshFetching = ref(false)
+const autoHealthProbeEnabled = ref(false)
+const healthProbeRunning = ref(false)
+const healthProbeLastResult = ref('')
+const HEALTH_PROBE_MIN_INTERVAL_MS = 60_000
+let healthProbeLastAt = 0
+let healthProbeCursor = 0
 const AUTO_REFRESH_SILENT_WINDOW_MS = 15000
 const autoRefreshSilentUntil = ref(0)
 const hasPendingListSync = ref(false)
@@ -978,8 +995,9 @@ const loadSavedAutoRefresh = () => {
   try {
     const saved = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY)
     if (!saved) return
-    const parsed = JSON.parse(saved) as { enabled?: boolean; interval_seconds?: number }
+    const parsed = JSON.parse(saved) as { enabled?: boolean; interval_seconds?: number; health_probe_enabled?: boolean }
     autoRefreshEnabled.value = parsed.enabled === true
+    autoHealthProbeEnabled.value = parsed.health_probe_enabled === true
     const interval = Number(parsed.interval_seconds)
     if (autoRefreshIntervals.includes(interval as any)) {
       autoRefreshIntervalSeconds.value = interval as any
@@ -995,7 +1013,8 @@ const saveAutoRefreshToStorage = () => {
       AUTO_REFRESH_STORAGE_KEY,
       JSON.stringify({
         enabled: autoRefreshEnabled.value,
-        interval_seconds: autoRefreshIntervalSeconds.value
+        interval_seconds: autoRefreshIntervalSeconds.value,
+        health_probe_enabled: autoHealthProbeEnabled.value
       })
     )
   } catch (e) {
@@ -1017,6 +1036,35 @@ const setAutoRefreshEnabled = (enabled: boolean) => {
   } else {
     pauseAutoRefresh()
     autoRefreshCountdown.value = 0
+  }
+}
+
+const setAutoHealthProbeEnabled = (enabled: boolean) => {
+  autoHealthProbeEnabled.value = enabled
+  healthProbeLastResult.value = enabled ? '巡检将在列表自动刷新时轮询当前页账号' : ''
+  saveAutoRefreshToStorage()
+}
+
+const maybeProbeNextVisibleAccount = async () => {
+  if (!autoHealthProbeEnabled.value || healthProbeRunning.value) return
+  if (Date.now() - healthProbeLastAt < HEALTH_PROBE_MIN_INTERVAL_MS) return
+  const eligible = accounts.value.filter(account => account.status === 'active' && account.schedulable !== false)
+  if (eligible.length === 0) {
+    healthProbeLastResult.value = '当前页没有可巡检账号'
+    return
+  }
+  const account = eligible[healthProbeCursor % eligible.length]
+  healthProbeCursor = (healthProbeCursor + 1) % eligible.length
+  healthProbeRunning.value = true
+  healthProbeLastAt = Date.now()
+  healthProbeLastResult.value = `正在巡检 ${account.name}…`
+  try {
+    const result = await adminAPI.accounts.testAccount(account.id)
+    healthProbeLastResult.value = `${account.name}：${result.success ? '正常' : result.message || '探测失败'}`
+  } catch (error) {
+    healthProbeLastResult.value = `${account.name}：${extractApiErrorMessage(error, '探测失败')}`
+  } finally {
+    healthProbeRunning.value = false
   }
 }
 
@@ -1472,6 +1520,7 @@ const { pause: pauseAutoRefresh, resume: resumeAutoRefresh } = useIntervalFn(
     if (autoRefreshCountdown.value <= 0) {
       autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
       await refreshAccountsIncrementally()
+      await maybeProbeNextVisibleAccount()
       return
     }
 

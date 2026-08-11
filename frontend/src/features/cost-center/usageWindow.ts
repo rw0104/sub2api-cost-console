@@ -18,15 +18,15 @@ const RANGE_MILLISECONDS: Record<CostCenterRange, number> = {
 }
 
 const TREND_BUCKET_MILLISECONDS: Record<CostCenterRange, number> = {
-  today: 60 * 60 * 1000,
-  '1m': 60 * 1000,
-  '5m': 60 * 1000,
+  today: 15 * 60 * 1000,
+  '1m': 5 * 1000,
+  '5m': 15 * 1000,
   '30m': 60 * 1000,
   '1h': 60 * 1000,
-  '6h': 60 * 60 * 1000,
-  '24h': 60 * 60 * 1000,
-  '7d': 24 * 60 * 60 * 1000,
-  '30d': 24 * 60 * 60 * 1000,
+  '6h': 5 * 60 * 1000,
+  '24h': 15 * 60 * 1000,
+  '7d': 2 * 60 * 60 * 1000,
+  '30d': 6 * 60 * 60 * 1000,
 }
 
 export function costTrendBucketHours(range: CostCenterRange): number {
@@ -55,16 +55,8 @@ export function localDateParameter(value: Date): string {
 }
 
 function bucketStart(value: Date, range: CostCenterRange): Date {
-  const bucket = new Date(value)
-  bucket.setMilliseconds(0)
-  if (range === '1m' || range === '5m' || range === '30m' || range === '1h') {
-    bucket.setSeconds(0)
-  } else if (range === '7d' || range === '30d') {
-    bucket.setHours(0, 0, 0, 0)
-  } else {
-    bucket.setMinutes(0, 0, 0)
-  }
-  return bucket
+  const size = TREND_BUCKET_MILLISECONDS[range]
+  return new Date(Math.floor(value.getTime() / size) * size)
 }
 
 function parseTrendDate(value: string): Date {

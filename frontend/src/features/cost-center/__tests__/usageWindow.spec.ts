@@ -71,9 +71,9 @@ describe('official core usage-log compatibility aggregation', () => {
       usage({ id: 2, created_at: '2026-08-05T11:59:59.000Z' }),
     ], '5m', start, end)
 
-    expect(result).toHaveLength(5)
-    expect(result.map((point) => point.requests)).toEqual([0, 0, 0, 1, 0])
-    expect(result[3]).toMatchObject({ requests: 1, total_tokens: 20, cost: 0.32, actual_cost: 0.4 })
+    expect(result).toHaveLength(20)
+    expect(result.filter((point) => point.requests > 0)).toHaveLength(1)
+    expect(result[13]).toMatchObject({ requests: 1, total_tokens: 20, cost: 0.32, actual_cost: 0.4 })
   })
 
   it('calculates real account cost from the stored pricing snapshot and multiplier', () => {
@@ -106,8 +106,9 @@ describe('official core usage-log compatibility aggregation', () => {
         actual_cost: 0.3,
       }], '5m', new Date('2026-08-05T11:58:00.000Z'), new Date('2026-08-05T12:03:00.000Z'))
 
-      expect(result.map((point) => point.requests)).toEqual([0, 0, 1, 0, 0])
-      expect(result[2].actual_cost).toBe(0.3)
+      expect(result).toHaveLength(20)
+      expect(result[8].requests).toBe(1)
+      expect(result[8].actual_cost).toBe(0.3)
     } finally {
       if (previousTimezone == null) delete process.env.TZ
       else process.env.TZ = previousTimezone

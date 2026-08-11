@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	EconomicsProjectionVersion     = "1.0.0"
-	minimumEconomicsInterval       = 15 * time.Second
+	EconomicsProjectionVersion     = "1.1.0"
+	minimumEconomicsInterval       = 5 * time.Second
 	minimumEconomicsValidIntervals = 2
 )
 
@@ -112,16 +112,39 @@ type AccountEconomicsDataQuality struct {
 	ExchangeRateSource      string `json:"exchange_rate_source"`
 }
 
+// AccountEconomicsSeriesPoint is a factual health observation plus rates
+// derived from one or more stable adjacent cumulative samples. Null rates mean
+// the interval was reset or did not contain enough evidence; they are rendered
+// as chart gaps rather than zero production.
+type AccountEconomicsSeriesPoint struct {
+	SampledAt             time.Time `json:"sampled_at"`
+	NormalCount           int       `json:"normal_count"`
+	RateLimitedCount      int       `json:"rate_limited_count"`
+	ErrorCount            int       `json:"error_count"`
+	BilledUSDPerHour      *float64  `json:"billed_usd_per_hour"`
+	AccountCostUSDPerHour *float64  `json:"account_cost_usd_per_hour"`
+	Stable                bool      `json:"stable"`
+}
+
+type AccountEconomicsEvent struct {
+	OccurredAt time.Time `json:"occurred_at"`
+	Kind       string    `json:"kind"`
+	Label      string    `json:"label"`
+	Severity   string    `json:"severity"`
+}
+
 type AccountEconomicsSnapshot struct {
-	AlgorithmVersion  string                      `json:"algorithm_version"`
-	ProjectionVersion string                      `json:"projection_version"`
-	SampledAt         time.Time                   `json:"sampled_at"`
-	Scope             AccountEconomicsScope       `json:"scope"`
-	CNYPerUSD         float64                     `json:"cny_per_usd"`
-	Health            AccountEconomicsHealth      `json:"health"`
-	Actual            AccountPoolUnitEconomics    `json:"actual"`
-	Projection        AccountEconomicsProjection  `json:"projection"`
-	DataQuality       AccountEconomicsDataQuality `json:"data_quality"`
+	AlgorithmVersion  string                        `json:"algorithm_version"`
+	ProjectionVersion string                        `json:"projection_version"`
+	SampledAt         time.Time                     `json:"sampled_at"`
+	Scope             AccountEconomicsScope         `json:"scope"`
+	CNYPerUSD         float64                       `json:"cny_per_usd"`
+	Health            AccountEconomicsHealth        `json:"health"`
+	Actual            AccountPoolUnitEconomics      `json:"actual"`
+	Projection        AccountEconomicsProjection    `json:"projection"`
+	DataQuality       AccountEconomicsDataQuality   `json:"data_quality"`
+	Series            []AccountEconomicsSeriesPoint `json:"series"`
+	Events            []AccountEconomicsEvent       `json:"events"`
 }
 
 type AccountEconomicsQuery struct {
@@ -139,10 +162,11 @@ type AccountEconomicsService struct {
 	repo      AccountEconomicsRepository
 	losses    *AccountCostLossService
 	startOnce sync.Once
+	startedAt time.Time
 }
 
 func NewAccountEconomicsService(accounts AccountEconomicsAccountReader, repo AccountEconomicsRepository, losses *AccountCostLossService) *AccountEconomicsService {
-	return &AccountEconomicsService{accounts: accounts, repo: repo, losses: losses}
+	return &AccountEconomicsService{accounts: accounts, repo: repo, losses: losses, startedAt: time.Now().UTC()}
 }
 
 func (s *AccountEconomicsService) Start() {
@@ -236,6 +260,22 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 		BilledUSDPerHour:      projection.CapacityAdjustedBilledUSDPerHour,
 		AccountCostUSDPerHour: projection.CapacityAdjustedAccountCostUSDPerHour,
 	})
+	series, events := BuildAccountEconomicsSeries(samples, window)
+	windowStart := now.Add(-window)
+	if !s.startedAt.Before(windowStart) && !s.startedAt.After(now) {
+		events = append(events, AccountEconomicsEvent{
+			OccurredAt: s.startedAt, Kind: "core_started", Label: "核心进程启动", Severity: "info",
+		})
+	}
+	for _, state := range states {
+		if !state.Active || state.OccurredAt.Before(windowStart) || state.OccurredAt.After(now) {
+			continue
+		}
+		events = append(events, AccountEconomicsEvent{
+			OccurredAt: state.OccurredAt, Kind: "impairment_confirmed", Label: "封禁损失已核销", Severity: "warning",
+		})
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].OccurredAt.Before(events[j].OccurredAt) })
 	healthyRatio := 0.0
 	if current.AccountCount > 0 {
 		healthyRatio = float64(current.NormalCount) / float64(current.AccountCount)
@@ -251,8 +291,95 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 			RateLimitedCount: current.RateLimitedCount, ErrorCount: current.ErrorCount,
 			HealthyRatio: healthyRatio, MembershipHash: current.MembershipHash,
 		},
-		Actual: actual, Projection: projection, DataQuality: quality,
+		Actual: actual, Projection: projection, DataQuality: quality, Series: series, Events: events,
 	}, nil
+}
+
+// BuildAccountEconomicsSeries downsamples persistent factual samples into an
+// adaptive, bounded series. Reset intervals keep their null values so clients
+// can show a break and an explanatory event marker.
+func BuildAccountEconomicsSeries(samples []AccountEconomicsSample, window time.Duration) ([]AccountEconomicsSeriesPoint, []AccountEconomicsEvent) {
+	if len(samples) == 0 {
+		return []AccountEconomicsSeriesPoint{}, []AccountEconomicsEvent{}
+	}
+	ordered := append([]AccountEconomicsSample(nil), samples...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].SampledAt.Before(ordered[j].SampledAt) })
+	bucket := economicsSeriesBucket(window)
+	type aggregate struct {
+		point                      AccountEconomicsSeriesPoint
+		billed, accountCost, hours float64
+	}
+	buckets := make(map[int64]*aggregate)
+	order := make([]int64, 0, len(ordered))
+	events := make([]AccountEconomicsEvent, 0)
+	for index := 1; index < len(ordered); index++ {
+		previous, current := ordered[index-1], ordered[index]
+		duration := current.SampledAt.Sub(previous.SampledAt)
+		key := current.SampledAt.Unix() / int64(bucket/time.Second)
+		item, exists := buckets[key]
+		if !exists {
+			item = &aggregate{point: AccountEconomicsSeriesPoint{SampledAt: current.SampledAt, NormalCount: current.NormalCount, RateLimitedCount: current.RateLimitedCount, ErrorCount: current.ErrorCount}}
+			buckets[key] = item
+			order = append(order, key)
+		} else {
+			item.point.SampledAt = current.SampledAt
+			item.point.NormalCount = current.NormalCount
+			item.point.RateLimitedCount = current.RateLimitedCount
+			item.point.ErrorCount = current.ErrorCount
+		}
+		stableMembership := strings.TrimSpace(previous.MembershipHash) != "" && previous.MembershipHash == current.MembershipHash && previous.AccountCount == current.AccountCount
+		billed := current.BilledUSDTotal - previous.BilledUSDTotal
+		accountCost := current.AccountCostUSDTotal - previous.AccountCostUSDTotal
+		if !stableMembership {
+			events = append(events, AccountEconomicsEvent{OccurredAt: current.SampledAt, Kind: "pool_membership_changed", Label: "账号池成员变化", Severity: "warning"})
+			continue
+		}
+		if billed < -1e-9 || accountCost < -1e-9 {
+			events = append(events, AccountEconomicsEvent{OccurredAt: current.SampledAt, Kind: "counter_regression", Label: "累计值倒退，预测基线已重置", Severity: "warning"})
+			continue
+		}
+		if duration < minimumEconomicsInterval || duration > 3*bucket {
+			if duration > 3*bucket {
+				events = append(events, AccountEconomicsEvent{OccurredAt: current.SampledAt, Kind: "sampling_gap", Label: "采样中断", Severity: "warning"})
+			}
+			continue
+		}
+		item.billed += billed
+		item.accountCost += accountCost
+		item.hours += duration.Hours()
+	}
+	result := make([]AccountEconomicsSeriesPoint, 0, len(order))
+	for _, key := range order {
+		item := buckets[key]
+		if item.hours > 0 {
+			billedRate := item.billed / item.hours
+			accountRate := item.accountCost / item.hours
+			item.point.BilledUSDPerHour = &billedRate
+			item.point.AccountCostUSDPerHour = &accountRate
+			item.point.Stable = true
+		}
+		result = append(result, item.point)
+	}
+	return result, events
+}
+
+func economicsSeriesBucket(window time.Duration) time.Duration {
+	switch {
+	case window <= time.Minute:
+		return 5 * time.Second
+	case window <= 5*time.Minute:
+		return 15 * time.Second
+	case window <= time.Hour:
+		return time.Minute
+	case window <= 6*time.Hour:
+		return 5 * time.Minute
+	case window <= 24*time.Hour:
+		return 15 * time.Minute
+	case window <= 7*24*time.Hour:
+		return 2 * time.Hour
+	default:
+		return 6 * time.Hour
+	}
 }
 
 func includeArchivedEconomics(scope string, accountIDs []int64) bool {

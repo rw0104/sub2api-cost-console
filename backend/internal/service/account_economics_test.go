@@ -249,3 +249,28 @@ func TestAccountEconomicsServiceBuildsVersionedSnapshotFromExistingLedgers(t *te
 	require.InDelta(t, 10, *snapshot.Projection.CapacityAdjustedBilledUSDPerHour, 1e-9)
 	require.Equal(t, "complete", snapshot.DataQuality.Status)
 }
+
+func TestBuildAccountEconomicsSeriesKeepsStableRatesAndResetEvents(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	samples := []AccountEconomicsSample{
+		{SampledAt: now.Add(-3 * time.Minute), MembershipHash: "a", AccountCount: 2, NormalCount: 2, BilledUSDTotal: 1, AccountCostUSDTotal: 0.4},
+		{SampledAt: now.Add(-2 * time.Minute), MembershipHash: "a", AccountCount: 2, NormalCount: 1, RateLimitedCount: 1, BilledUSDTotal: 2, AccountCostUSDTotal: 0.6},
+		{SampledAt: now.Add(-time.Minute), MembershipHash: "b", AccountCount: 3, NormalCount: 2, ErrorCount: 1, BilledUSDTotal: 2.5, AccountCostUSDTotal: 0.8},
+	}
+
+	series, events := BuildAccountEconomicsSeries(samples, time.Hour)
+
+	require.Len(t, series, 2)
+	require.True(t, series[0].Stable)
+	require.InDelta(t, 60, *series[0].BilledUSDPerHour, 1e-9)
+	require.False(t, series[1].Stable)
+	require.Nil(t, series[1].BilledUSDPerHour)
+	require.Len(t, events, 1)
+	require.Equal(t, "pool_membership_changed", events[0].Kind)
+}
+
+func TestEconomicsSeriesBucketUsesEventScaleDensityForOneMinute(t *testing.T) {
+	require.Equal(t, 5*time.Second, economicsSeriesBucket(time.Minute))
+	require.Equal(t, 15*time.Second, economicsSeriesBucket(5*time.Minute))
+	require.Equal(t, time.Minute, economicsSeriesBucket(30*time.Minute))
+}

@@ -329,14 +329,23 @@ func parseOpsOpenAITokenStatsDuration(v string) (time.Duration, bool) {
 }
 
 func pickThroughputBucketSeconds(window time.Duration) int {
-	// Keep buckets predictable and avoid huge responses.
+	// Adaptive density keeps roughly 30-120 useful points per chart while still
+	// retaining event-scale detail in short observation windows.
 	switch {
-	case window <= 2*time.Hour:
+	case window <= time.Minute:
+		return 5
+	case window <= 5*time.Minute:
+		return 15
+	case window <= time.Hour:
 		return 60
-	case window <= 24*time.Hour:
+	case window <= 6*time.Hour:
 		return 300
+	case window <= 24*time.Hour:
+		return 900
+	case window <= 7*24*time.Hour:
+		return 7200
 	default:
-		return 3600
+		return 21600
 	}
 }
 

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { adminAPI } from '@/api/admin'
-import type { OpsDashboardOverview, OpsThroughputTrendPoint } from '@/api/admin/ops'
+import type { OpsDashboardOverview, OpsErrorTrendPoint, OpsThroughputTrendPoint } from '@/api/admin/ops'
 import type { SystemSettings } from '@/api/admin/settings'
 import type { Channel, ModelDefaultPricing, PricingCatalogStatus } from '@/api/admin/channels'
 import type { AccountCostLossState, AccountEconomicsSnapshot } from '@/api/admin/accounts'
@@ -134,8 +134,8 @@ export function selectExactWindowModelStats(
 }
 
 function buildOpsSnapshotRange(range: CostCenterRange): Exclude<CostCenterRange, 'today'> {
-  // Ops snapshots only accept rolling windows. The dashboard snapshot above still
-  // uses exact local-day bounds for the authoritative cost and usage trend.
+  // Rolling ranges map directly. The natural-day range is sent with explicit
+  // local-day boundaries at the call site instead of being mislabeled as 24h.
   return range === 'today' ? '24h' : range
 }
 
@@ -167,6 +167,7 @@ export function useCostCenterData() {
   const pricingRefreshing = ref(false)
   const opsOverview = ref<OpsDashboardOverview | null>(null)
   const opsTrend = ref<OpsThroughputTrendPoint[]>([])
+  const opsErrorTrend = ref<OpsErrorTrendPoint[]>([])
   const systemSettings = ref<SystemSettings | null>(null)
   const probes = ref<Record<string, AccountProbeState>>({})
   const sourceStates = ref(createDataSourceStates())
@@ -309,7 +310,9 @@ export function useCostCenterData() {
       loadModelRouteLogs(modelCostRange.value, modelCostAccountId.value),
       adminAPI.channels.list(1, 1000, { sort_by: 'created_at', sort_order: 'asc' }),
       adminAPI.channels.getPricingStatus(),
-      adminAPI.ops.getDashboardSnapshotV2({ time_range: buildOpsSnapshotRange(range), mode: 'auto' }),
+      adminAPI.ops.getDashboardSnapshotV2(range === 'today'
+        ? { start_time: observationStart.toISOString(), end_time: observationEnd.toISOString(), mode: 'auto' }
+        : { time_range: buildOpsSnapshotRange(range), mode: 'auto' }),
       adminAPI.settings.getSettings(),
       loadUsdCnyExchangeRate(),
     ])
@@ -424,7 +427,12 @@ export function useCostCenterData() {
           : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
       }
     } else if (dashboardResult.status === 'fulfilled') {
-      trend.value = fillCostTrendBuckets(dashboardResult.value.trend ?? [], range, observationStart, observationEnd)
+      // The legacy dashboard endpoint only exposes minute/hour/day buckets.
+      // Keep its native points when that density is coarser than the adaptive
+      // chart contract; manufacturing sub-buckets would create false zeros.
+      trend.value = range === '30m' || range === '1h'
+        ? fillCostTrendBuckets(dashboardResult.value.trend ?? [], range, observationStart, observationEnd)
+        : (dashboardResult.value.trend ?? [])
       trendUsesAccountCost.value = false
     } else {
       trend.value = []
@@ -480,11 +488,17 @@ export function useCostCenterData() {
     if (opsResult.status === 'fulfilled') {
       opsOverview.value = opsResult.value.overview
       opsTrend.value = opsResult.value.throughput_trend?.points ?? []
-      setSourceState('ops', 'measured', '运行质量监控已读取')
+      opsErrorTrend.value = opsResult.value.error_trend?.points ?? []
+      setSourceState(
+        'ops',
+        opsTrend.value.length ? 'measured' : 'empty',
+        opsTrend.value.length ? '运行质量监控已读取' : '所选窗口没有可绘制的运行样本',
+      )
     } else {
       // Ops monitoring is feature-gated. The cost console remains useful without it.
       opsOverview.value = null
       opsTrend.value = []
+      opsErrorTrend.value = []
       setSourceState('ops', 'unavailable', rejectedReason(opsResult, '运行质量监控未启用或读取失败'))
     }
 
@@ -646,6 +660,7 @@ export function useCostCenterData() {
     pricingRefreshing,
     opsOverview,
     opsTrend,
+    opsErrorTrend,
     systemSettings,
     probes,
     sourceStates,

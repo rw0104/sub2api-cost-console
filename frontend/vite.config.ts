@@ -159,6 +159,12 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: devPort,
+      watch: {
+        // Rust writes and replaces the executable while `tauri dev` is running.
+        // Watching target/ on Windows races that write and can terminate Vite
+        // with EBUSY before the native window is created.
+        ignored: ['**/src-tauri/target/**']
+      },
       proxy: {
         '/api': {
           target: backendUrl,

@@ -32,7 +32,14 @@
       "status": "not-tested"
     }
   },
-  "scenarios": [],
+  "scenarios": [
+    {
+      "id": "adaptive-monitoring-desktop-shell",
+      "scenario_type": "combined_state",
+      "required": true,
+      "status": "not-tested"
+    }
+  ],
   "accessibility_checks": [
     {
       "id": "keyboard-and-focus",
