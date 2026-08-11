@@ -1398,6 +1398,13 @@ func (s *AccountUsageService) GetTodayStats(ctx context.Context, accountID int64
 
 // GetTodayStatsBatch 批量获取账号今日统计，优先走批量 SQL，失败时回退单账号查询。
 func (s *AccountUsageService) GetTodayStatsBatch(ctx context.Context, accountIDs []int64) (map[int64]*WindowStats, error) {
+	return s.GetWindowStatsBatch(ctx, accountIDs, timezone.Today())
+}
+
+// GetWindowStatsBatch returns account billing snapshots beginning at an exact
+// instant. It is used by clients whose displayed calendar day differs from the
+// server's configured business timezone.
+func (s *AccountUsageService) GetWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*WindowStats, error) {
 	uniqueIDs := make([]int64, 0, len(accountIDs))
 	seen := make(map[int64]struct{}, len(accountIDs))
 	for _, accountID := range accountIDs {
@@ -1416,7 +1423,6 @@ func (s *AccountUsageService) GetTodayStatsBatch(ctx context.Context, accountIDs
 		return result, nil
 	}
 
-	startTime := timezone.Today()
 	if batchReader, ok := s.usageLogRepo.(accountWindowStatsBatchReader); ok {
 		statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, uniqueIDs, startTime)
 		if err == nil {

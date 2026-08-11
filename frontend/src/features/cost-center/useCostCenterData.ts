@@ -3,7 +3,7 @@ import { adminAPI } from '@/api/admin'
 import type { OpsDashboardOverview, OpsThroughputTrendPoint } from '@/api/admin/ops'
 import type { SystemSettings } from '@/api/admin/settings'
 import type { Channel, ModelDefaultPricing, PricingCatalogStatus } from '@/api/admin/channels'
-import type { AccountCostLossState } from '@/api/admin/accounts'
+import type { AccountCostLossState, AccountEconomicsSnapshot } from '@/api/admin/accounts'
 import type {
   Account,
   AccountUsageInfo,
@@ -34,6 +34,16 @@ export type CostCenterRange = 'today' | '1m' | '5m' | '30m' | '1h' | '6h' | '24h
 
 export const DEFAULT_COST_CENTER_RANGE: CostCenterRange = '1h'
 export const DEFAULT_MODEL_COST_RANGE: CostCenterRange = '1h'
+
+export function economicsWindowHours(range: CostCenterRange): number {
+  return ({ today: 24, '1m': 1 / 60, '5m': 5 / 60, '30m': 0.5, '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 })[range]
+}
+
+function economicsPlatformFilter(filter: string): string | undefined {
+  if (filter === 'all') return undefined
+  if (filter === 'codex' || filter === 'openai' || filter === 'azure-openai') return 'openai'
+  return filter
+}
 
 const USAGE_PAGE_SIZE = 1000
 const MAX_USAGE_PAGES = 25
@@ -128,6 +138,7 @@ function emptyTodayStats(): WindowStats {
 export function useCostCenterData() {
   const accounts = ref<Account[]>([])
   const costLossStates = ref<AccountCostLossState[]>([])
+  const accountEconomics = ref<AccountEconomicsSnapshot | null>(null)
   const accountUsage = ref<Record<string, AccountUsageInfo>>({})
   const todayStats = ref<Record<string, WindowStats>>({})
   const stats = ref<DashboardStats | null>(null)
@@ -161,6 +172,7 @@ export function useCostCenterData() {
     source: 'fallback',
   })
   let requestSequence = 0
+  let economicsRequestSequence = 0
   let lastAccountUsageSyncAt = 0
 
   const accountStats = computed(() => (account: Account): WindowStats => {
@@ -283,17 +295,18 @@ export function useCostCenterData() {
     if (sequence !== requestSequence) return
     costLossStates.value = costLossResult.status === 'fulfilled' ? costLossResult.value.states ?? [] : []
 
-    const compatibilityTrend = dashboardResult.status === 'fulfilled'
-      && (!dashboardResult.value.start_time || !dashboardResult.value.end_time)
-      ? loadUsageLogCompatibilityTrend(range)
-      : null
+    const dashboardWindowIsExact = dashboardResult.status === 'fulfilled'
+      && snapshotMatchesRequestedWindow(dashboardResult.value, observationStart, requestedObservationEnd)
+    const compatibilityTrend = dashboardWindowIsExact ? null : loadUsageLogCompatibilityTrend(range)
 
     if (accountResult.status === 'fulfilled') {
       accounts.value = accountResult.value.items ?? []
       const ids = accounts.value.map((account) => account.id)
       if (ids.length > 0) {
         try {
-          const batch = await adminAPI.accounts.getBatchTodayStats(ids)
+          const localDayStart = new Date()
+          localDayStart.setHours(0, 0, 0, 0)
+          const batch = await adminAPI.accounts.getBatchTodayStats(ids, localDayStart.toISOString())
           if (sequence === requestSequence) todayStats.value = batch.stats ?? {}
         } catch (batchError) {
           console.warn('[cost-center] account today stats unavailable', batchError)
@@ -307,7 +320,7 @@ export function useCostCenterData() {
       const usageCacheIsFresh = Date.now() - lastAccountUsageSyncAt < ACCOUNT_USAGE_CACHE_TTL_MS
       if (!usageCacheIsFresh || usageAccounts.some((account) => !accountUsage.value[String(account.id)])) {
         const usageResults = await Promise.allSettled(
-          usageAccounts.map((account) => adminAPI.accounts.getUsage(account.id, 'passive')),
+          usageAccounts.map((account) => adminAPI.accounts.getUsage(account.id, accountUsageSource(account))),
         )
         if (sequence !== requestSequence) return
         const nextUsage: Record<string, AccountUsageInfo> = {}
@@ -327,27 +340,24 @@ export function useCostCenterData() {
 
     if (sequence !== requestSequence) return
 
-    if (dashboardResult.status === 'fulfilled') {
-      stats.value = dashboardResult.value.stats ?? null
-      if (compatibilityTrend) {
-        try {
-          trend.value = fillCostTrendBuckets(await compatibilityTrend, range, observationStart, observationEnd)
-          if (sequence !== requestSequence) return
-          trendUsesAccountCost.value = true
-        } catch (compatibilityError) {
-          console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
-          trend.value = []
-          trendUsesAccountCost.value = false
-          error.value = compatibilityError instanceof Error
-            ? compatibilityError.message
-            : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
-        }
-      } else {
-        trend.value = fillCostTrendBuckets(dashboardResult.value.trend ?? [], range, observationStart, observationEnd)
+    stats.value = dashboardResult.status === 'fulfilled' ? dashboardResult.value.stats ?? null : null
+    if (compatibilityTrend) {
+      try {
+        trend.value = fillCostTrendBuckets(await compatibilityTrend, range, observationStart, observationEnd)
+        if (sequence !== requestSequence) return
+        trendUsesAccountCost.value = true
+      } catch (compatibilityError) {
+        console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
+        trend.value = []
         trendUsesAccountCost.value = false
+        error.value = compatibilityError instanceof Error
+          ? compatibilityError.message
+          : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
       }
+    } else if (dashboardResult.status === 'fulfilled') {
+      trend.value = fillCostTrendBuckets(dashboardResult.value.trend ?? [], range, observationStart, observationEnd)
+      trendUsesAccountCost.value = false
     } else {
-      stats.value = null
       trend.value = []
       trendUsesAccountCost.value = false
     }
@@ -400,6 +410,8 @@ export function useCostCenterData() {
     systemSettings.value = settingsResult.status === 'fulfilled' ? settingsResult.value : null
     if (exchangeRateResult.status === 'fulfilled') exchangeRate.value = exchangeRateResult.value
 
+    await loadAccountEconomics('all', range)
+
     if (
       accountResult.status === 'rejected' &&
       dashboardResult.status === 'rejected' &&
@@ -412,6 +424,27 @@ export function useCostCenterData() {
 
     lastUpdated.value = new Date()
     loading.value = false
+  }
+
+  async function loadAccountEconomics(platform: string, range: CostCenterRange = DEFAULT_COST_CENTER_RANGE, accountIds: number[] = []) {
+    const sequence = ++economicsRequestSequence
+    accountEconomics.value = null
+    try {
+      const snapshot = await adminAPI.accounts.getEconomicsSnapshot({
+        scope: platform,
+        platform: economicsPlatformFilter(platform),
+        account_ids: accountIds.length ? accountIds.join(',') : undefined,
+        cny_per_usd: exchangeRate.value.rate,
+        exchange_rate_source: exchangeRate.value.source,
+        window_hours: economicsWindowHours(range),
+      })
+      if (sequence === economicsRequestSequence) accountEconomics.value = snapshot
+      return snapshot
+    } catch (economicsError) {
+      console.warn('[cost-center] persistent economics snapshot unavailable', economicsError)
+      if (sequence === economicsRequestSequence) accountEconomics.value = null
+      return null
+    }
   }
 
   async function refreshPricingCatalog() {
@@ -493,6 +526,7 @@ export function useCostCenterData() {
   return {
     accounts,
     costLossStates,
+    accountEconomics,
     accountUsage,
     todayStats,
     stats,
@@ -522,6 +556,7 @@ export function useCostCenterData() {
     exchangeRate,
     accountStats,
     reload,
+    loadAccountEconomics,
     refreshPricingCatalog,
     saveCostProfile,
     bulkSaveCostProfile,
@@ -533,4 +568,10 @@ function shouldLoadUsageWindow(account: Account): boolean {
   if (account.platform === 'gemini') return true
   if (account.platform === 'anthropic') return account.type === 'oauth' || account.type === 'setup-token'
   return account.type === 'oauth' && ['openai', 'antigravity', 'grok'].includes(account.platform)
+}
+
+export function accountUsageSource(account: Pick<Account, 'platform' | 'type'>): 'passive' | 'active' {
+  return account.platform === 'anthropic' && (account.type === 'oauth' || account.type === 'setup-token')
+    ? 'passive'
+    : 'active'
 }

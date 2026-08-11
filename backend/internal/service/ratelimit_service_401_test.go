@@ -212,13 +212,21 @@ func TestRateLimitService_OnlyConfirmedTerminalFailuresReachCostLossLedger(t *te
 		account := &Account{
 			ID: 45, Name: "workspace", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 			CreatedAt: startedAt, UpdatedAt: startedAt, Extra: map[string]any{"plan_type": "team"},
+			Credentials: map[string]any{
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": []any{map[string]any{
+					"error_code": 402, "keywords": []any{"deactivated_workspace"},
+					"duration_minutes": 30,
+				}},
+			},
 		}
 
-		disabled := svc.HandleUpstreamError(context.Background(), account, 402, http.Header{}, []byte(`{"detail":{"code":"deactivated_workspace"}}`))
+		disabled := svc.HandleUpstreamError(context.Background(), account, 402, http.Header{}, []byte(`{"error":{"code":"deactivated_workspace","message":"Workspace has been deactivated"}}`))
 
 		require.True(t, disabled)
 		require.Equal(t, TerminalFailureWorkspaceDeactivated, ledger.recorded.Failure.Reason)
 		require.Equal(t, 0, repo.setErrorCalls)
+		require.Equal(t, 0, repo.tempCalls, "a confirmed terminal workspace failure must bypass temporary rules")
 	})
 }
 

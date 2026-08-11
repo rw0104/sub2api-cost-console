@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const AccountCostLossAlgorithmVersion = "1.5.0"
+const AccountCostLossAlgorithmVersion = CostAlgorithmVersion
 
 const (
 	AccountCostLossEventTerminal = "terminal_loss"

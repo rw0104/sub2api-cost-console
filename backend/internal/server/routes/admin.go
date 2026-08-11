@@ -355,6 +355,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/ollama-cloud-usage/settings", h.Admin.Account.GetOllamaCloudUsageSettings)
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/cost-loss-states", h.Admin.Account.ListCostLossStates)
+		accounts.GET("/economics/snapshot", h.Admin.Account.GetEconomicsSnapshot)
 		accounts.POST("/cost-loss-events/:event_id/refund", h.Admin.Account.RecordCostLossRefund)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		accounts.POST("", h.Admin.Account.Create)

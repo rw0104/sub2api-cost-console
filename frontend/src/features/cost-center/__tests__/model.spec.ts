@@ -128,6 +128,22 @@ describe('cost center model', () => {
     })
   })
 
+  it('keeps a 2.5 CNY procurement profile in CNY instead of relabeling it as API USD', () => {
+    const resolved = resolveCostProfile(account({
+      extra: {
+        cost_profile: {
+          amount: 2.5,
+          currency: 'CNY',
+          billing_cycle: 'one_time',
+          started_at: JOINED_AT,
+        },
+      },
+    }))
+
+    expect(resolved).toMatchObject({ amount: 2.5, currency: 'CNY', source: 'custom' })
+    expect(formatMoney(resolved.amount, resolved.currency)).toBe('¥2.50')
+  })
+
   it('persists an explicit algorithm version for auditable cost rules', () => {
     const resolved = resolveCostProfile(account({
       extra: {

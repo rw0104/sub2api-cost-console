@@ -17,8 +17,11 @@
 | 账号封禁净损失 | `account_cost_loss_events` | 后端确认事件 + 确定性计算 | 仅接受终局原因；当前预付周期未摊销余额减退款与恢复冲销 |
 | 经济总成本 | 累计采购成本 + 账号封禁净损失 | 确定性计算 | 终局时停止该账号继续累计；已删除账号仍按快照保留 |
 | 预计月采购 | 当前筛选号池的小时采购费率 × 730 | 确定性预测 | 是当前现存账号合计，不是单账号值 |
+| 经济运行样本 | `account_economics_samples` | 累计观察 | 每分钟保存累计 USD 产出、账号成本、成员版本和健康数量；不是第二套账本 |
+| API 产出速率 | 相邻稳定样本累计差值 ÷ 区间小时数 | 预测输入 | 成员变化、累计倒退或样本不足时返回不可用，不以当天已过小时代替采样窗口 |
+| 单位经济性 | `usage_logs` + 成本档案 + 损失账本 + 明确汇率 | 派生 | 输出每 1 USD 产出的采购成本、贡献结果、回本比例和预测置信度 |
 | 滚动平均 | 真实时间桶的移动平均 | 派生 | 只用于平滑趋势，界面明确标记为滚动平均 |
-| 剩余预期、月产出预期 | 当前实测速率线性外推 | 预测 | 不是已经发生的账单，不应视为结算值 |
+| 剩余预期 | 持久化稳定区间速率线性外推 | 预测 | 至少两个稳定区间；不足时显示“待采样”，不是已经发生的账单 |
 | 默认套餐成本 | 美国官方公开订阅价的版本化快照 | 默认估算 | 没有自定义采购价时使用；用户实际采购账单可逐账号覆盖 |
 | CNY/USD 换算 | Frankfurter USD/CNY 汇率、12 小时本地缓存 | 联网参考 | 网络源和有效缓存都不可用时才回退到 `1 USD = 7.2 CNY` |
 
@@ -46,7 +49,7 @@
 
 ## 4. 默认成本与算法版本
 
-当前成本算法版本为 `1.5.0`。固定订阅采购、终局封禁损失与 API 按量成本分开计算：
+当前成本算法版本为 `1.6.0`，经济预测版本为 `1.0.0`。固定订阅采购、终局封禁损失与 API 按量成本继续分开计算；1.6 未调整 Sub2API Token 输入、输出、缓存公式或模型价格：
 
 ```text
 fixed_hourly_rate = amount / billing_cycle_hours
@@ -62,7 +65,12 @@ combined_cost = fixed_accrued_cost + metered_account_cost
 terminal_unamortized = current_prepaid_cycle_price - accrued_in_current_cycle
 terminal_net_loss = max(0, terminal_unamortized - refund - reversal)
 economic_total = fixed_accrued_cost_at_terminal + terminal_net_loss + metered_account_cost
+
+stable_output_rate = Σ(stable_sample_output_delta) / Σ(stable_interval_hours)
+stable_account_cost_rate = Σ(stable_sample_account_cost_delta) / Σ(stable_interval_hours)
 ```
+
+`1.6.0` 新增持续经济采样和账号池单位经济性 Module。累计样本只来自现有 `usage_logs`，成员哈希或账号数变化、累计值倒退、间隔过短都会重置相邻区间；至少两个稳定区间才返回速率。样本不足时 API 返回 `null`，界面显示“待采样”。采购档案保持原币种，只有明确的 CNY/USD 汇率边界执行换算。详细设计与部署方式见[成本经济算法 1.6 开发与部署说明](2026-08-11_cost-economics-1.6-development.md)。
 
 `1.5.0` 新增独立的深层“账号成本损失” Module。它的 Interface 只接受后端已经确认的终局事件：OpenAI `token_revoked` / `token_invalidated`、明确永久 Unauthorized、OAuth 缺少 refresh token、`deactivated_workspace`，以及管理员确认。普通 OAuth 401 仍进入临时不可调度，泛化 402 仍只停用账号，二者都不会仅凭 HTTP 状态推导封禁损失。账号恢复、供应商退款只追加冲销事件，不修改原终局事件；幂等键负责去重。适用范围仅为本地采购的 OAuth / Setup Token，CRS 导入、中转池、影子账号、自定义中转、API Key、Upstream、Bedrock 与 Service Account 均排除。
 

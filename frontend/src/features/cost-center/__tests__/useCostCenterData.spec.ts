@@ -13,8 +13,10 @@ vi.mock('@/api/admin', () => ({
 import {
   buildCostCenterSnapshotQuery,
   buildCostCenterDataQueries,
+  economicsWindowHours,
   DEFAULT_COST_CENTER_RANGE,
   DEFAULT_MODEL_COST_RANGE,
+  accountUsageSource,
   filterModelAuditLogs,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
@@ -89,6 +91,20 @@ describe('cost center live ranges', () => {
       time_range: '30d',
       granularity: 'day',
     })
+  })
+
+  it('passes the selected observation window to persistent economics sampling', () => {
+    expect(economicsWindowHours('1m')).toBeCloseTo(1 / 60)
+    expect(economicsWindowHours('1h')).toBe(1)
+    expect(economicsWindowHours('7d')).toBe(168)
+    expect(economicsWindowHours('30d')).toBe(720)
+  })
+
+  it('uses passive quota snapshots only for Anthropic OAuth-style accounts', () => {
+    expect(accountUsageSource({ platform: 'anthropic', type: 'oauth' } as any)).toBe('passive')
+    expect(accountUsageSource({ platform: 'anthropic', type: 'setup-token' } as any)).toBe('passive')
+    expect(accountUsageSource({ platform: 'openai', type: 'oauth' } as any)).toBe('active')
+    expect(accountUsageSource({ platform: 'gemini', type: 'oauth' } as any)).toBe('active')
   })
 
   it('rejects a legacy snapshot that omitted the requested exact time boundary', () => {

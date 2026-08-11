@@ -68,16 +68,20 @@ function bucketStart(value: Date, range: CostCenterRange): Date {
 }
 
 function parseTrendDate(value: string): Date {
-  const localParts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):?(\d{2})?:?(\d{2})?)?$/)
-  if (localParts) {
-    return new Date(
-      Number(localParts[1]),
-      Number(localParts[2]) - 1,
-      Number(localParts[3]),
-      Number(localParts[4] ?? 0),
-      Number(localParts[5] ?? 0),
-      Number(localParts[6] ?? 0),
-    )
+  const utcParts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):?(\d{2})?:?(\d{2})?)?$/)
+  if (utcParts) {
+    // Sub2API's dashboard SQL formats timestamptz buckets without an offset.
+    // PostgreSQL stores and aggregates those values in UTC, so interpreting the
+    // string as browser-local time shifts every point and can filter the entire
+    // series out of a rolling window.
+    return new Date(Date.UTC(
+      Number(utcParts[1]),
+      Number(utcParts[2]) - 1,
+      Number(utcParts[3]),
+      Number(utcParts[4] ?? 0),
+      Number(utcParts[5] ?? 0),
+      Number(utcParts[6] ?? 0),
+    ))
   }
   return new Date(value)
 }

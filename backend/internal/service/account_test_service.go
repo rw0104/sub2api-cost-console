@@ -145,6 +145,7 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	settingService            *SettingService
+	rateLimitService          *RateLimitService
 	tlsFPProfileService       *TLSFingerprintProfileService
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
@@ -156,6 +157,12 @@ type AccountTestService struct {
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
 	if s != nil {
 		s.settingService = settingService
+	}
+}
+
+func (s *AccountTestService) SetRateLimitService(rateLimitService *RateLimitService) {
+	if s != nil {
+		s.rateLimitService = rateLimitService
 	}
 }
 
@@ -780,14 +787,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
 		}
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
-		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -1967,13 +1967,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -2106,17 +2100,10 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
 		}
-		// 探测如返回 429,主动同步限流状态,避免后续短时间内继续选中。
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -2140,7 +2127,8 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		resetAt = &t
 	}
 	if resetAt == nil {
-		return
+		fallback := time.Now().Add(defaultRateLimit429CooldownSeconds * time.Second)
+		resetAt = &fallback
 	}
 
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
@@ -2158,6 +2146,36 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		account.Status = StatusActive
 		account.ErrorMessage = ""
 	}
+}
+
+func (s *AccountTestService) reconcileOpenAIProbeFailure(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte) {
+	if s == nil || account == nil {
+		return
+	}
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusPaymentRequired && statusCode != http.StatusTooManyRequests {
+		return
+	}
+	if s.rateLimitService != nil {
+		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+		return
+	}
+	if statusCode == http.StatusTooManyRequests {
+		s.reconcileOpenAI429State(ctx, account, headers, body)
+		return
+	}
+	if s.accountRepo == nil {
+		return
+	}
+	message := fmt.Sprintf("Authentication failed (%d): %s", statusCode, string(body))
+	if statusCode == http.StatusPaymentRequired {
+		message = fmt.Sprintf("Payment required (402): %s", string(body))
+		if isOpenAIWorkspaceDeactivated(body) {
+			message = "Workspace deactivated (402): workspace has been deactivated"
+		}
+	}
+	_ = s.accountRepo.SetError(ctx, account.ID, message)
+	account.Status = StatusError
+	account.ErrorMessage = message
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection

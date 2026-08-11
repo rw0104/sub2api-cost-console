@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AdminUsageLog } from '@/types'
-import { aggregateUsageWindow, localDateParameter, usageWindowBounds } from '../usageWindow'
+import { aggregateUsageWindow, fillCostTrendBuckets, localDateParameter, usageWindowBounds } from '../usageWindow'
 
 function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
   return {
@@ -88,5 +88,29 @@ describe('official core usage-log compatibility aggregation', () => {
   it('formats local calendar dates for the upstream date-only API', () => {
     const value = new Date(2026, 7, 5, 23, 59, 0)
     expect(localDateParameter(value)).toBe('2026-08-05')
+  })
+
+  it('treats timezone-less dashboard buckets as UTC instead of shifting them by the browser timezone', () => {
+    const previousTimezone = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+    try {
+      const result = fillCostTrendBuckets([{
+        date: '2026-08-05 12:00',
+        requests: 1,
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+        total_tokens: 15,
+        cost: 0.25,
+        actual_cost: 0.3,
+      }], '5m', new Date('2026-08-05T11:58:00.000Z'), new Date('2026-08-05T12:03:00.000Z'))
+
+      expect(result.map((point) => point.requests)).toEqual([0, 0, 1, 0, 0])
+      expect(result[2].actual_cost).toBe(0.3)
+    } finally {
+      if (previousTimezone == null) delete process.env.TZ
+      else process.env.TZ = previousTimezone
+    }
   })
 })

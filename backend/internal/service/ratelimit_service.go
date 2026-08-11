@@ -274,6 +274,20 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	// A deactivated OpenAI workspace is a confirmed terminal failure. Evaluate
+	// it before pool/custom/temporary policies so no local rule can keep a dead
+	// K12/Team workspace active or hide its impairment loss.
+	if statusCode == http.StatusPaymentRequired && account.Platform == PlatformOpenAI && isOpenAIWorkspaceDeactivated(responseBody) {
+		msg := "Workspace deactivated (402): workspace has been deactivated"
+		if upstreamMsg := strings.TrimSpace(sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(responseBody))); upstreamMsg != "" {
+			msg = "Workspace deactivated (402): " + upstreamMsg
+		}
+		s.handleTerminalAccountFailure(ctx, account, TerminalFailure{
+			Reason: TerminalFailureWorkspaceDeactivated, StatusCode: http.StatusPaymentRequired,
+			UpstreamCode: "deactivated_workspace", Message: msg,
+		}, msg)
+		return true
+	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
@@ -451,16 +465,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
-		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
-		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
-			msg := "Workspace deactivated (402): workspace has been deactivated"
-			s.handleTerminalAccountFailure(ctx, account, TerminalFailure{
-				Reason: TerminalFailureWorkspaceDeactivated, StatusCode: http.StatusPaymentRequired,
-				UpstreamCode: "deactivated_workspace", Message: msg,
-			}, msg)
-			shouldDisable = true
-			break
-		}
 		// 支付要求：余额不足或计费问题，停止调度
 		msg := "Payment required (402): insufficient balance or billing issue"
 		if upstreamMsg != "" {
@@ -504,6 +508,17 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
+}
+
+func isOpenAIWorkspaceDeactivated(responseBody []byte) bool {
+	for _, path := range []string{"detail.code", "error.code", "code", "error.type", "type"} {
+		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responseBody, path).String()), "deactivated_workspace") {
+			return true
+		}
+	}
+	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
+	return strings.Contains(message, "workspace") &&
+		(strings.Contains(message, "deactivated") || strings.Contains(message, "has been disabled"))
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.

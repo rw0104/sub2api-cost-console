@@ -107,14 +107,14 @@
             </div>
 
             <div class="cost-metric-grid">
-              <MetricCell label="当前 API 产出速率" :value="formatUsd(apiOutputHourlyUsd, 2)" note="API 美元 / 小时" accent="gold" />
-              <MetricCell label="平滑产出速率" :value="formatUsd(rollingOutputUsd, 2)" :note="`${rollingTrendLabel} · API 美元 / 小时`" accent="gold" />
-              <MetricCell label="当前采购成本（配置推算）" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="用户成本档案 / 美国套餐默认价折算" accent="blue" />
+              <MetricCell label="当前 API 产出速率（USD）" :value="formatUsd(apiOutputHourlyUsd, 2)" note="usage_logs actual_cost · 美元/小时" accent="gold" />
+              <MetricCell label="平滑产出速率（USD）" :value="formatUsd(rollingOutputUsd, 2)" :note="`${rollingTrendLabel} · actual_cost / 小时`" accent="gold" />
+              <MetricCell label="固定采购成本（CNY，配置推算）" :value="`${formatCny(procurementHourlyCny, 4)}/h`" note="独立成本档案；绝不作为 Token/API 美元成本" accent="blue" />
               <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" accent="blue" />
               <MetricCell label="已确认封禁损失" :value="formatCny(totalImpairmentCny, 2)" note="终局事件未摊销余额 − 退款 − 冲销" accent="gold" />
               <MetricCell label="经济总成本" :value="formatCny(totalEconomicCostCny, 2)" :note="`采购累计 + 封禁净损失 · 含 ${archivedLossAccountCount} 个已删除账号`" accent="gold" />
-              <MetricCell label="今日 API 账号成本" :value="formatUsd(todayAccountCostUsd, 3)" note="上游账号实际成本" />
-              <MetricCell label="最近窗口 API 产出" :value="formatUsd(windowActualOutputUsd, 3)" note="用户实际计费" />
+              <MetricCell label="今日上游账号成本（USD）" :value="formatUsd(todayAccountCostUsd, 3)" note="usage_logs 价格快照 × 账号倍率；与采购档案币种无关" />
+              <MetricCell label="最近窗口用户计费（USD）" :value="formatUsd(windowActualOutputUsd, 3)" note="usage_logs actual_cost" />
               <MetricCell label="预计月度采购" :value="formatCny(monthlyProcurementForecastCny, 2)" note="当前号码结构 × 730h" />
               <MetricCell label="可用账号" :value="`${activeAccounts.length} / ${accounts.length}`" :note="usageSyncedCount ? `窗口平均余量 ${formatPercent(quotaRemainingAverage)}` : '用量窗口等待同步'" />
             </div>
@@ -395,13 +395,13 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in upstreamRows" :key="row.account.id" :class="[`status-${row.account.status}`, { selected: selectedAccount?.id === row.account.id, 'row-selected': selectedAccountIds.has(row.account.id) }]">
+                <tr v-for="row in upstreamRows" :key="row.account.id" :class="[`status-${row.currentState.state}`, { selected: selectedAccount?.id === row.account.id, 'row-selected': selectedAccountIds.has(row.account.id) }]">
                   <td class="cost-select-column"><input type="checkbox" :checked="selectedAccountIds.has(row.account.id)" :aria-label="`选择 ${row.account.name}`" @change="toggleAccountSelection(row.account.id)" /></td>
                   <td class="cost-account-cell">
                     <div class="cost-account-primary"><span class="cost-rank-badge" :data-rank="row.rank">#{{ row.rank }}</span><strong>{{ row.account.name }}</strong></div>
                     <small>#{{ row.account.id }} · {{ describeCostAccountOrigin(row.account) }} / {{ row.plan }}</small>
                   </td>
-                  <td><StatusLabel :status="row.account.status" :schedulable="row.account.schedulable" /></td>
+                  <td><StatusLabel :state="row.currentState.state" :label="row.currentState.label" /></td>
                   <td>
                     <div v-if="row.usage" class="cost-usage-windows">
                       <span v-if="row.usage.five_hour"><b>5h</b><i><em :style="{ width: `${clampUtilization(row.usage.five_hour.utilization)}%` }"></em></i><strong>{{ formatUtilization(row.usage.five_hour.utilization) }}</strong><small>{{ formatUsageReset(row.usage.five_hour.resets_at) }}</small></span>
@@ -445,12 +445,12 @@
               <div><span>ACCOUNT POOL / LIVE ECONOMICS</span><h2 id="oauth-title">渠道号池实时成本</h2><p>{{ lastUpdatedLabel }}</p></div>
             </div>
             <div class="cost-oauth-kpis">
-              <MetricCell label="当前池 API 产出速率" :value="formatUsd(oauthOutputHourlyUsd, 2)" note="今日当前池实测 / 已过小时" accent="gold" />
-              <MetricCell label="当前池综合成本" :value="`${formatCny(oauthCombinedHourlyCny, 2)}/小时`" note="真实 API + 配置推算采购" accent="gold" />
+              <MetricCell label="当前池 API 产出速率" :value="formatOptionalUsd(oauthOutputHourlyUsd, 2)" :note="economicsSampleNote" accent="gold" />
+              <MetricCell label="当前池综合成本" :value="formatOptionalCnyRate(oauthCombinedHourlyCny, 2)" note="稳定区间 API 成本 + 配置采购费率" accent="gold" />
               <MetricCell label="今日当前池产出" :value="formatUsd(oauthTodayOutputUsd, 3)" note="现存账号今日真实用户计费" />
-              <MetricCell label="今日剩余预期" :value="formatUsd(oauthRemainingForecastUsd, 2)" note="按当前池今日速率线性外推" />
-              <MetricCell label="预计月采购" :value="formatCny(oauthMonthlyProcurementForecastCny, 1)" :note="`${selectedPlatformLabel} 当前 ${oauthAccounts.length} 个账号合计`" />
-              <MetricCell label="用量窗口平均余量" :value="oauthUsageSyncedCount ? formatPercent(oauthQuotaRemainingAverage) : '等待同步'" :note="`${oauthUsageSyncedCount} / ${oauthAccounts.length} 个账号已同步 5h / 7d`" accent="lime" />
+              <MetricCell label="今日剩余预期" :value="formatOptionalUsd(oauthRemainingForecastUsd, 2)" note="仅按持久化稳定区间速率外推；成员变化会重置" />
+              <MetricCell label="每 1 USD 产出采购成本" :value="accountEconomics?.actual.cny_per_billed_usd == null ? '暂无有效产出' : formatCny(accountEconomics.actual.cny_per_billed_usd, 2)" note="经济成本 CNY / 历史实际产出 USD" />
+              <MetricCell label="经济数据完整度" :value="accountEconomics?.data_quality.status === 'complete' ? '完整' : accountEconomics ? '部分可用' : '等待采样'" :note="accountEconomics ? `算法 ${accountEconomics.algorithm_version} · 预测 ${accountEconomics.projection_version}` : '后端采样接口尚未返回'" accent="lime" />
             </div>
           </div>
 
@@ -470,11 +470,11 @@
 
           <div class="cost-pool-summary">
             <MetricCell label="渠道账号" :value="formatInteger(oauthAccounts.length)" :note="`${oauthActiveCount} 个已产生请求`" />
-            <MetricCell label="号池经济成本" :value="formatCny(oauthAccruedCny, 2)" :note="`采购累计 + 封禁损失 · 当前费率 ${formatCny(oauthHourlyCny, 4)}/h`" />
-            <MetricCell label="封禁净损失" :value="formatCny(oauthImpairmentCny, 2)" note="当前池已确认终局事件" accent="gold" />
+            <MetricCell label="号池经济成本" :value="formatCny(accountEconomics?.actual.economic_cost_cny ?? oauthAccruedCny, 2)" :note="`采购累计 + 封禁损失 · 当前费率 ${formatCny(oauthHourlyCny, 4)}/h`" />
+            <MetricCell label="封禁净损失" :value="formatCny(accountEconomics?.actual.impairment_loss_cny ?? oauthImpairmentCny, 2)" note="含已删除账号的有效终局损失账本" accent="gold" />
             <MetricCell label="今日 API 账号成本" :value="formatUsd(oauthTodayCostUsd, 4)" note="真实账号成本" accent="lime" />
             <MetricCell label="今日 API 产出" :value="formatUsd(oauthTodayOutputUsd, 4)" :note="`预估利润 ${formatUsd(oauthTodayOutputUsd - oauthTodayCostUsd, 3)}`" accent="blue" />
-            <MetricCell label="号池状态" :value="`${oauthNormalCount} 正常`" :note="`限流 ${oauthLimitedCount} · 错误 ${oauthErrorCount}`" />
+            <MetricCell label="号池状态" :value="`${accountEconomics?.health.normal_count ?? oauthNormalCount} 正常`" :note="`限流 ${accountEconomics?.health.rate_limited_count ?? oauthLimitedCount} · 错误 ${accountEconomics?.health.error_count ?? oauthErrorCount}`" />
             <div class="cost-pool-output">
               <span>API 美元产出</span><strong>{{ formatUsd(oauthTodayOutputUsd, 2) }}</strong>
               <div><i :style="{ width: `${Math.min(100, poolOutputProgress)}%` }"></i></div>
@@ -500,7 +500,7 @@
                   <td><div class="cost-status-ring" :style="{ background: group.statusRing }"><span></span></div><small>正常 {{ group.normal }} · 限流 {{ group.limited }} · 错误 {{ group.errors }} · 窗口余量 {{ formatPercent(group.quotaRemaining) }}</small></td>
                   <td><strong>{{ formatCny(group.accruedCny, 2) }}</strong><small>小时 {{ formatCny(group.hourlyCny, 4) }}</small></td>
                   <td><strong>{{ formatCny(group.averageCostCny, 2) }}</strong><small>采购累计 + 封禁损失 / 号</small></td>
-                  <td><strong class="cost-lime">{{ formatUsd(group.outputUsd, 2) }} / {{ formatUsd(group.outputForecastUsd, 2) }} / {{ formatUsd(group.monthForecastUsd, 2) }}</strong><div class="cost-pool-progress"><i :style="{ width: `${group.progress}%` }"></i></div><small>当前产出 / 实时预期 / 月预期</small></td>
+                  <td><strong class="cost-lime">{{ formatUsd(group.outputUsd, 2) }} / — / —</strong><div class="cost-pool-progress"><i :style="{ width: `${group.progress}%` }"></i></div><small>分组预测等待独立稳定采样，不跨成员版本外推</small></td>
                   <td><strong class="cost-lime">{{ formatCny(group.hourlyCny, 5) }} / {{ formatUsd(group.apiCostUsd, 5) }}</strong><small>采购小时成本 / API 账号成本</small></td>
                   <td>{{ formatInteger(group.requests) }}</td><td>{{ formatTokens(group.tokens) }}</td>
                 </tr>
@@ -616,11 +616,11 @@ const ChartPanel = defineComponent({
 })
 
 const StatusLabel = defineComponent({
-  props: { status: String, schedulable: Boolean },
+  props: { state: String, label: String },
   setup(props) {
-    return () => h('div', { class: ['cost-status-label', `status-${props.status}`] }, [
-      h('i'), h('strong', props.status === 'active' ? (props.schedulable ? '可调度' : '已停调度') : props.status),
-      h('small', props.schedulable ? 'active' : 'unscheduled'),
+    return () => h('div', { class: ['cost-status-label', `status-${props.state}`] }, [
+      h('i'), h('strong', props.label || props.state),
+      h('small', props.state),
     ])
   },
 })
@@ -630,7 +630,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const data = useCostCenterData()
 const {
-  accounts, costLossStates, accountUsage, stats, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
+  accounts, costLossStates, accountEconomics, accountUsage, trend, trendUsesAccountCost, models, modelCostSource, modelCostAccountId, modelCostRange, modelAuditMismatchOnly, modelAuditSummary, modelRoutes, modelRoutesTruncated, modelStatsExactWindowFallback, modelStatsCompatibilityTruncated, modelPricing, pricingStatus, pricingRefreshing, opsOverview, opsTrend, systemSettings, probes, loading, saving, error, lastUpdated, exchangeRate,
 } = data
 
 const workspaceItems = [
@@ -718,11 +718,15 @@ const modelCostAccountLabel = computed(() => {
   return account ? `${account.name} · ${describeCostAccountOrigin(account)}` : `账号 #${modelCostAccountId.value}`
 })
 
-const activeAccounts = computed(() => accounts.value.filter((account) => account.status === 'active' && account.schedulable))
+function currentAccountState(account: Account) {
+  return describeCurrentAccountState(account, probes.value[String(account.id)], now.value)
+}
+
+const activeAccounts = computed(() => accounts.value.filter((account) => currentAccountState(account).state === 'normal'))
 const upstreamProviderTabs = computed(() => buildUpstreamProviderTabs(accounts.value))
 const totalObservedRequests = computed(() => opsOverview.value?.request_count_total ?? trend.value.reduce((sum, point) => sum + Number(point.requests || 0), 0))
 const successCount = computed(() => opsOverview.value?.success_count ?? Math.max(0, totalObservedRequests.value - errorCount.value))
-const errorCount = computed(() => opsOverview.value?.error_count_total ?? accounts.value.filter((account) => account.status === 'error').length)
+const errorCount = computed(() => opsOverview.value?.error_count_total ?? accounts.value.filter((account) => currentAccountState(account).error === 1).length)
 const errorRate = computed(() => opsOverview.value?.error_rate ?? (totalObservedRequests.value > 0 ? errorCount.value / totalObservedRequests.value : 0))
 const switchCount = computed(() => opsTrend.value.reduce((sum, point) => sum + Number(point.switch_count || 0), 0))
 const ttftP95 = computed(() => Number(opsOverview.value?.ttft?.p95_ms || 0))
@@ -785,7 +789,7 @@ const totalEconomicCostCny = computed(() => totalAccruedCny.value + archivedEcon
 const procurementHourlyCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.hourlyCny, 0))
 const monthlyProcurementForecastCny = computed(() => procurementHourlyCny.value * 730)
 const defaultCostProfileCount = computed(() => accountLedgers.value.filter((row) => isDefaultSubscriptionCostProfile(row.account)).length)
-const todayAccountCostUsd = computed(() => Number(stats.value?.today_account_cost ?? accountLedgers.value.reduce((sum, row) => sum + Number(row.today.cost || 0), 0)))
+const todayAccountCostUsd = computed(() => accountLedgers.value.reduce((sum, row) => sum + Number(row.today.cost || 0), 0))
 const dayElapsedHours = computed(() => Math.max(1 / 60, now.value.getHours() + now.value.getMinutes() / 60))
 const selectedRangeHours = computed(() => ({ today: dayElapsedHours.value, '1m': 1 / 60, '5m': 5 / 60, '30m': .5, '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 })[range.value])
 const trendBucketHours = computed(() => resolveCostTrendBucketHours(range.value))
@@ -797,7 +801,7 @@ const windowAccountCostUsd = computed(() => trend.value.reduce((sum, point) => s
 const apiCostBasisLabel = computed(() => trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
 const apiOutputHourlyUsd = computed(() => windowActualOutputUsd.value / selectedRangeHours.value)
 const combinedHourlyCny = computed(() => procurementHourlyCny.value + windowAccountCostUsd.value * exchangeRate.value.rate / selectedRangeHours.value)
-const todayRequests = computed(() => Number(stats.value?.today_requests ?? accountLedgers.value.reduce((sum, row) => sum + row.today.requests, 0)))
+const todayRequests = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.today.requests, 0))
 
 const trendLabels = computed(() => trend.value.map((point) => formatTrendLabel(point.date)))
 const trendActualCost = computed(() => trend.value.map((point) => Number(point.actual_cost || 0) / trendBucketHours.value))
@@ -839,8 +843,9 @@ function rankingValue(row: { score: number; hourlyCost: number; today: WindowSta
   if (metric === 'requests') return Number(row.today.requests || 0)
   if (metric === 'cost') return Number(row.today.cost || 0)
   if (metric === 'reliability') {
-    const statusScore = row.account.status === 'active' ? 1 : 0
-    const schedulableScore = row.account.schedulable ? 1 : 0
+    const state = currentAccountState(row.account)
+    const statusScore = state.state === 'normal' ? 1 : 0
+    const schedulableScore = state.state === 'normal' || state.state === 'limited' ? 1 : 0
     return statusScore * 2 + schedulableScore + row.score / 100 + quotaRemainingRatio(row.usage)
   }
   if (metric === 'latency') return probes.value[String(row.account.id)]?.latency_ms ?? Number.POSITIVE_INFINITY
@@ -862,7 +867,7 @@ const upstreamRows = computed(() => {
         scoreMax: schedulerBaseScoreMax.value,
         hourlyCost: row.hourlyCny,
         accrued: row.accruedCny,
-        currentState: describeCurrentAccountState(row.account),
+        currentState: currentAccountState(row.account),
         groups: row.account.groups?.map((group) => group.name) ?? [],
       }
     })
@@ -927,12 +932,14 @@ const oauthTodayCostUsd = computed(() => oauthAccounts.value.reduce((sum, row) =
 const oauthTodayOutputUsd = computed(() => oauthAccounts.value.reduce((sum, row) => sum + actualUserCost(row.today), 0))
 const oauthRequests = computed(() => oauthAccounts.value.reduce((sum, row) => sum + row.today.requests, 0))
 const oauthTokens = computed(() => oauthAccounts.value.reduce((sum, row) => sum + row.today.tokens, 0))
-const oauthUsageSyncedCount = computed(() => oauthAccounts.value.filter((row) => hasPrimaryUsageWindow(row.usage)).length)
-const oauthQuotaRemainingAverage = computed(() => averageQuotaRemaining(oauthAccounts.value.map((row) => row.usage)))
-const oauthOutputHourlyUsd = computed(() => oauthTodayOutputUsd.value / dayElapsedHours.value)
-const oauthCombinedHourlyCny = computed(() => oauthHourlyCny.value + oauthTodayCostUsd.value * exchangeRate.value.rate / dayElapsedHours.value)
-const oauthRemainingForecastUsd = computed(() => Math.max(0, oauthOutputHourlyUsd.value * Math.max(0, 24 - dayElapsedHours.value)))
-const oauthMonthlyProcurementForecastCny = computed(() => oauthHourlyCny.value * 730)
+const oauthOutputHourlyUsd = computed(() => accountEconomics.value?.projection.capacity_adjusted_billed_usd_per_hour ?? null)
+const oauthCombinedHourlyCny = computed(() => {
+  const accountCostRate = accountEconomics.value?.projection.capacity_adjusted_account_cost_usd_per_hour
+  return accountCostRate == null ? null : oauthHourlyCny.value + accountCostRate * exchangeRate.value.rate
+})
+const oauthRemainingForecastUsd = computed(() => oauthOutputHourlyUsd.value == null
+  ? null
+  : Math.max(0, oauthOutputHourlyUsd.value * Math.max(0, 24 - dayElapsedHours.value)))
 const oauthProcurementBaseline = computed(() => trend.value.map(() => oauthHourlyCny.value))
 const currentPoolStartedAtLabel = computed(() => {
   const timestamps = oauthAccounts.value
@@ -944,10 +951,16 @@ const currentPoolStartedAtLabel = computed(() => {
   })
 })
 const oauthActiveCount = computed(() => oauthAccounts.value.filter((row) => row.today.requests > 0).length)
-const oauthNormalCount = computed(() => oauthAccounts.value.filter((row) => row.account.status === 'active' && !row.account.rate_limited_at).length)
-const oauthLimitedCount = computed(() => oauthAccounts.value.filter((row) => Boolean(row.account.rate_limited_at)).length)
-const oauthErrorCount = computed(() => oauthAccounts.value.filter((row) => row.account.status === 'error').length)
-const poolOutputProgress = computed(() => oauthTodayOutputUsd.value > 0 ? oauthTodayOutputUsd.value / Math.max(oauthTodayOutputUsd.value, oauthTodayCostUsd.value + oauthHourlyCny.value / exchangeRate.value.rate * dayElapsedHours.value) * 100 : 0)
+const oauthNormalCount = computed(() => oauthAccounts.value.filter((row) => currentAccountState(row.account).state === 'normal').length)
+const oauthLimitedCount = computed(() => oauthAccounts.value.filter((row) => currentAccountState(row.account).limited === 1).length)
+const oauthErrorCount = computed(() => oauthAccounts.value.filter((row) => currentAccountState(row.account).error === 1).length)
+const poolOutputProgress = computed(() => Math.max(0, (accountEconomics.value?.actual.payback_ratio ?? 0) * 100))
+const economicsConfidenceLabel = computed(() => ({
+  unavailable: '样本不足', low: '低置信度', medium: '中置信度', high: '高置信度',
+})[accountEconomics.value?.projection.confidence ?? 'unavailable'])
+const economicsSampleNote = computed(() => accountEconomics.value
+  ? `${economicsConfidenceLabel.value} · ${accountEconomics.value.projection.valid_intervals} 个稳定区间 · 覆盖 ${accountEconomics.value.projection.coverage_hours.toFixed(2)}h`
+  : '等待后端经济采样')
 const poolGroups = computed(() => {
   const planOrder = ['metered', 'free', 'k12', 'plus', 'pro', 'team', 'business', 'unknown']
   return planOrder.map((plan) => {
@@ -961,18 +974,16 @@ const poolGroups = computed(() => {
     const apiCostUsd = rows.reduce((sum, row) => sum + Number(row.today.cost || 0), 0)
     const requests = rows.reduce((sum, row) => sum + row.today.requests, 0)
     const tokens = rows.reduce((sum, row) => sum + row.today.tokens, 0)
-    const normal = rows.filter((row) => row.account.status === 'active' && !row.account.rate_limited_at).length
-    const limited = rows.filter((row) => Boolean(row.account.rate_limited_at)).length
-    const errors = rows.filter((row) => row.account.status === 'error').length
+    const normal = rows.filter((row) => currentAccountState(row.account).state === 'normal').length
+    const limited = rows.filter((row) => currentAccountState(row.account).limited === 1).length
+    const errors = rows.filter((row) => currentAccountState(row.account).error === 1).length
     const quotaRemaining = averageQuotaRemaining(rows.map((row) => row.usage))
-    const outputForecastUsd = outputUsd / dayElapsedHours.value * 24
-    const monthForecastUsd = outputUsd / dayElapsedHours.value * 730
     return {
       plan, planLabel: plan === 'metered' ? 'API 按量' : plan === 'unknown' ? 'Other' : plan === 'k12' ? 'K12' : plan[0].toUpperCase() + plan.slice(1),
       count: rows.length, productive: rows.filter((row) => row.today.requests > 0).length,
       normal, limited, errors, quotaRemaining, accruedCny, hourlyCny, averageCostCny: accruedCny / rows.length,
-      outputUsd, outputForecastUsd, monthForecastUsd, apiCostUsd, requests, tokens,
-      progress: Math.min(100, outputForecastUsd > 0 ? outputUsd / outputForecastUsd * 100 : 0),
+      outputUsd, apiCostUsd, requests, tokens,
+      progress: 0,
       statusRing: statusRingGradient(normal, limited, errors),
     }
   }).filter(Boolean) as Array<any>
@@ -988,6 +999,7 @@ watch(upstreamProviderTabs, (tabs) => {
 watch(accountPoolProviderTabs, (tabs) => {
   if (!tabs.some((tab) => tab.key === poolPlatform.value)) poolPlatform.value = 'all'
 })
+watch(poolPlatform, () => data.loadAccountEconomics(poolPlatform.value, range.value, oauthAccounts.value.map((row) => row.account.id)))
 
 function normalizePanel(value: unknown): WorkspaceKey {
   return value === 'upstreams' || value === 'oauth' || value === 'api' ? value : 'overview'
@@ -999,6 +1011,8 @@ function formatInteger(value: number): string { return Math.round(Number(value) 
 function formatPercent(value: number): string { return `${((Number(value) || 0) * 100).toFixed(1)}%` }
 function formatCny(value: number, digits = 2): string { return formatMoney(Number(value) || 0, 'CNY', digits) }
 function formatUsd(value: number, digits = 2): string { return formatMoney(Number(value) || 0, 'USD', digits) }
+function formatOptionalUsd(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '待采样' : formatUsd(Number(value), digits) }
+function formatOptionalCnyRate(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '待采样' : `${formatCny(Number(value), digits)}/小时` }
 function formatUsdPerMillion(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '—' : `${formatUsd(Number(value) * 1_000_000, 4)}/M` }
 function formatDuration(value: number): string { return value > 0 ? value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms` : '—' }
 function formatTokens(value: number): string { const number = Number(value) || 0; return number >= 1e9 ? `${(number / 1e9).toFixed(2)}B` : number >= 1e6 ? `${(number / 1e6).toFixed(2)}M` : number >= 1e3 ? `${(number / 1e3).toFixed(1)}K` : formatInteger(number) }
@@ -1035,9 +1049,17 @@ function formatUsageReset(value: string | null): string {
 function formatTrendLabel(value: string): string { const date = new Date(value.includes(' ') ? value.replace(' ', 'T') : value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], range.value === '7d' || range.value === '30d' ? { month: '2-digit', day: '2-digit' } : { hour: '2-digit', minute: '2-digit' }) : value }
 function donutGradient(items: Array<{ value: number; color: string }>): string { const total = items.reduce((sum, item) => sum + Math.max(0, item.value), 0); if (!total) return 'conic-gradient(#303830 0 100%)'; let cursor = 0; const stops = items.map((item) => { const start = cursor; cursor += Math.max(0, item.value) / total * 100; return `${item.color} ${start}% ${cursor}%` }); return `conic-gradient(${stops.join(', ')})` }
 function statusRingGradient(normal: number, limited: number, errors: number): string { const total = Math.max(1, normal + limited + errors); const normalEnd = normal / total * 100; const limitedEnd = normalEnd + limited / total * 100; return `conic-gradient(#b9e55a 0 ${normalEnd}%, #9c8a54 ${normalEnd}% ${limitedEnd}%, #995c50 ${limitedEnd}% 100%)` }
+let reloadQueued = false
 async function reload() {
-  if (loading.value) return
-  await data.reload(range.value)
+  if (loading.value) {
+    reloadQueued = true
+    return
+  }
+  do {
+    reloadQueued = false
+    await data.reload(range.value)
+    if (poolPlatform.value !== 'all') await data.loadAccountEconomics(poolPlatform.value, range.value, oauthAccounts.value.map((row) => row.account.id))
+  } while (reloadQueued)
   countdown.value = refreshIntervalSeconds.value
 }
 async function refreshPricingCatalog() {
@@ -1236,11 +1258,11 @@ button:active { transform: translateY(1px); }
 .cost-platform-tabs { display: flex; align-items: stretch; border: 1px solid var(--cost-line-strong); }.cost-platform-tabs button { min-width: 110px; height: 38px; padding: 0 18px; color: #89948b; background: #151a15; border: 0; border-right: 1px solid var(--cost-line); }.cost-platform-tabs button:last-child { border-right: 0; }.cost-platform-tabs button.active { color: #10140f; background: var(--cost-lime); font-weight: 700; }
 .cost-refresh-stamp { color: #808b82; font: 11px 'Cascadia Mono', monospace; }.cost-search { display: flex; width: 280px; height: 36px; align-items: center; gap: 8px; margin-left: auto; padding: 0 10px; color: var(--cost-muted); background: #151a15; border: 1px solid var(--cost-line-strong); }.cost-search input { width: 100%; color: var(--cost-text); background: transparent; border: 0; outline: 0; font-size: 11px; }
 .cost-data-table-wrap { max-height: calc(100vh - 260px); overflow: auto; border: 1px solid var(--cost-line); background: rgb(13 17 14 / 72%); }
-.cost-data-table { width: 100%; min-width: 1740px; border-collapse: collapse; table-layout: fixed; font-size: 11px; }.cost-data-table th { position: sticky; z-index: 3; top: 0; height: 45px; padding: 0 10px; color: #77847a; background: #202720; border-right: 1px solid #2d352e; text-align: left; font-weight: 500; }.cost-data-table td { height: 72px; padding: 8px 10px; vertical-align: middle; border-right: 1px solid #222a23; border-bottom: 1px solid #293129; }.cost-data-table tbody tr { background: rgb(13 17 14 / 76%); }.cost-data-table tbody tr:nth-child(3n) { background: rgb(19 25 18 / 82%); }.cost-data-table tbody tr.status-error { background: rgb(74 39 30 / 54%); box-shadow: inset 3px 0 #d36f4c; }.cost-data-table tbody tr.selected { box-shadow: inset 3px 0 var(--cost-lime); }
+.cost-data-table { width: 100%; min-width: 1740px; border-collapse: collapse; table-layout: fixed; font-size: 11px; }.cost-data-table th { position: sticky; z-index: 3; top: 0; height: 45px; padding: 0 10px; color: #77847a; background: #202720; border-right: 1px solid #2d352e; text-align: left; font-weight: 500; }.cost-data-table td { height: 72px; padding: 8px 10px; vertical-align: middle; border-right: 1px solid #222a23; border-bottom: 1px solid #293129; }.cost-data-table tbody tr { background: rgb(13 17 14 / 76%); }.cost-data-table tbody tr:nth-child(3n) { background: rgb(19 25 18 / 82%); }.cost-data-table tbody tr.status-error { background: rgb(74 39 30 / 54%); box-shadow: inset 3px 0 #d36f4c; }.cost-data-table tbody tr.status-limited { background: rgb(74 62 30 / 42%); box-shadow: inset 3px 0 #d6aa47; }.cost-data-table tbody tr.selected { box-shadow: inset 3px 0 var(--cost-lime); }
 .cost-data-table th:nth-child(1) { width: 60px; }.cost-data-table th:nth-child(2) { width: 250px; }.cost-data-table th:nth-child(3) { width: 135px; }.cost-data-table th:nth-child(4) { width: 172px; }.cost-data-table th:nth-child(5) { width: 115px; }.cost-data-table th:nth-child(6) { width: 76px; }.cost-data-table th:nth-child(7) { width: 132px; }.cost-data-table th:nth-child(8), .cost-data-table th:nth-child(9), .cost-data-table th:nth-child(10), .cost-data-table th:nth-child(11) { width: 130px; }.cost-data-table th:nth-child(12) { width: 130px; }.cost-data-table th:nth-child(13) { width: 112px; }.cost-data-table th:nth-child(14) { width: 150px; }.cost-data-table th:nth-child(15) { width: 190px; }.cost-data-table th:nth-child(16) { width: 86px; }
 .cost-data-table td strong, .cost-data-table td small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.cost-data-table td strong { color: #e4e9e1; font: 600 11px 'Cascadia Mono', Consolas, monospace; }.cost-data-table td small { margin-top: 5px; color: #69756b; font: 9px 'Cascadia Mono', monospace; }.cost-account-cell strong { font-size: 12px !important; }.cost-lime { color: var(--cost-lime) !important; }
 .cost-score { display: inline-block; padding: 6px 8px; color: var(--cost-lime); background: rgb(185 229 90 / 10%); font: 700 12px 'Cascadia Mono', monospace; }.cost-score[data-grade='C'], .cost-score[data-grade='D'] { color: #dc8664; background: rgb(184 87 55 / 12%); }
-.cost-status-label { display: grid; grid-template-columns: 7px 1fr; align-items: center; gap: 7px; }.cost-status-label i { width: 7px; height: 7px; border-radius: 50%; background: var(--cost-lime); }.cost-status-label strong { color: var(--cost-lime) !important; }.cost-status-label small { grid-column: 2; margin-top: 0 !important; }.cost-status-label.status-error i { background: #e07758; }.cost-status-label.status-error strong { color: #e07758 !important; }
+.cost-status-label { display: grid; grid-template-columns: 7px 1fr; align-items: center; gap: 7px; }.cost-status-label i { width: 7px; height: 7px; border-radius: 50%; background: var(--cost-lime); }.cost-status-label strong { color: var(--cost-lime) !important; }.cost-status-label small { grid-column: 2; margin-top: 0 !important; }.cost-status-label.status-error i { background: #e07758; }.cost-status-label.status-error strong { color: #e07758 !important; }.cost-status-label.status-limited i { background: #d6aa47; }.cost-status-label.status-limited strong { color: #d6aa47 !important; }.cost-status-label.status-inactive i { background: #77847a; }.cost-status-label.status-inactive strong { color: #9aa59b !important; }
 .cost-group-cell { white-space: normal; }.cost-tag { display: inline-block; margin: 2px 3px 2px 0; padding: 3px 6px; color: #a3ada5; border: 1px solid #39423a; font: 9px 'Cascadia Mono', monospace; }.cost-actions-cell { white-space: nowrap; }.cost-actions-cell button { display: inline-grid; width: 29px; height: 29px; margin-right: 4px; place-items: center; color: var(--cost-lime); background: #151a15; border: 1px solid #3e483f; }.cost-empty-row { height: 180px !important; color: var(--cost-muted); text-align: center; }
 
 .cost-oauth-header { display: grid; grid-template-columns: 360px 1fr; gap: 20px; align-items: stretch; }.cost-oauth-kpis { display: grid; grid-template-columns: repeat(6, minmax(135px, 1fr)); border: 1px solid var(--cost-line); }
