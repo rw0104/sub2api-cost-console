@@ -1,0 +1,92 @@
+{
+  "schema_version": "1.0",
+  "delivery_mode": "functional-implementation",
+  "artifact": {
+    "id": "replace-with-built-artifact",
+    "ref": "urn:delivery-artifact:unassigned",
+    "revision_or_sha256": "not-captured",
+    "run_command": "not-captured"
+  },
+  "evidence": [],
+  "capability_claims": [
+    {
+      "id": "example-unwired-action",
+      "claim": "Perform the example external action",
+      "enabled": false,
+      "primary": true,
+      "required": false,
+      "implementation": "unavailable",
+      "status": "not-applicable",
+      "user_disclosure": "This control is disabled because the external action is not connected.",
+      "reason": "No external service or persistent side effect is wired in this template."
+    }
+  ],
+  "layout_coverage": {
+    "compact": {
+      "status": "not-tested"
+    },
+    "regular": {
+      "status": "not-tested"
+    },
+    "expanded": {
+      "status": "not-tested"
+    }
+  },
+  "scenarios": [],
+  "accessibility_checks": [
+    {
+      "id": "keyboard-and-focus",
+      "required": true,
+      "status": "not-tested"
+    },
+    {
+      "id": "accessible-names-and-tree",
+      "required": true,
+      "status": "not-tested"
+    },
+    {
+      "id": "contrast-zoom-and-motion",
+      "required": true,
+      "status": "not-tested"
+    }
+  ],
+  "control_state_matrix": [],
+  "gate_checks": [
+    {
+      "id": "primary-capability-truth",
+      "required": true,
+      "severity": "P0",
+      "status": "not-tested"
+    },
+    {
+      "id": "primary-keyboard-path",
+      "required": true,
+      "severity": "P0",
+      "status": "not-tested"
+    },
+    {
+      "id": "hidden-focus-exposure",
+      "required": true,
+      "severity": "P0",
+      "status": "not-tested"
+    },
+    {
+      "id": "essential-content-fallback",
+      "required": true,
+      "severity": "P0",
+      "status": "not-tested"
+    },
+    {
+      "id": "destructive-recovery",
+      "required": true,
+      "severity": "P0",
+      "status": "not-tested"
+    }
+  ],
+  "production_checks": [],
+  "blockers": [],
+  "summary": {
+    "status": "needs-work",
+    "notes": "Safe-start only. Replace the artifact placeholders and not-tested rows with reproduced evidence before requesting a delivery pass."
+  }
+}

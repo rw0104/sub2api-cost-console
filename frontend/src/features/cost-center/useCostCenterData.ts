@@ -23,6 +23,14 @@ import { buildModelRouteRows, type ModelRouteRow } from './modelRouteAnalysis'
 import { loadUsdCnyExchangeRate, type UsdCnyExchangeRate } from './exchangeRate'
 import type { AccountProbeState } from './upstreamTable'
 import {
+  COST_CENTER_SOURCE_KEYS,
+  createDataSourceStates,
+  hasMeasuredData,
+  sourceState,
+  type CostCenterSourceKey,
+  type DataAvailability,
+} from './dataState'
+import {
   aggregateUsageWindow,
   fillCostTrendBuckets,
   localDateParameter,
@@ -161,6 +169,7 @@ export function useCostCenterData() {
   const opsTrend = ref<OpsThroughputTrendPoint[]>([])
   const systemSettings = ref<SystemSettings | null>(null)
   const probes = ref<Record<string, AccountProbeState>>({})
+  const sourceStates = ref(createDataSourceStates())
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
@@ -175,9 +184,19 @@ export function useCostCenterData() {
   let economicsRequestSequence = 0
   let lastAccountUsageSyncAt = 0
 
-  const accountStats = computed(() => (account: Account): WindowStats => {
+  const accountStats = computed(() => (account: Account): WindowStats | null => {
+    if (!hasMeasuredData(sourceStates.value.todayStats)) return null
     return todayStats.value[String(account.id)] ?? emptyTodayStats()
   })
+
+  function setSourceState(key: CostCenterSourceKey, status: DataAvailability, reason = '') {
+    sourceStates.value[key] = sourceState(key, status, reason)
+  }
+
+  function rejectedReason(result: PromiseRejectedResult, fallback: string): string {
+    const reason = result.reason
+    return reason instanceof Error && reason.message ? reason.message : fallback
+  }
 
   async function loadUsageLogCompatibilityTrend(range: CostCenterRange): Promise<CostTrendDataPoint[]> {
     const { start, end } = usageWindowBounds(range)
@@ -253,6 +272,9 @@ export function useCostCenterData() {
     const sequence = ++requestSequence
     loading.value = true
     error.value = ''
+    for (const key of COST_CENTER_SOURCE_KEYS) {
+      if (key !== 'economics') sourceStates.value[key] = sourceState(key, 'loading', '正在刷新')
+    }
     const queries = buildCostCenterDataQueries(range, modelCostRange.value)
     const { start: observationStart, end: requestedObservationEnd } = usageWindowBounds(range)
     const observationEnd = range === 'today' ? new Date() : requestedObservationEnd
@@ -294,6 +316,33 @@ export function useCostCenterData() {
 
     if (sequence !== requestSequence) return
     costLossStates.value = costLossResult.status === 'fulfilled' ? costLossResult.value.states ?? [] : []
+    setSourceState(
+      'costLoss',
+      costLossResult.status === 'fulfilled'
+        ? (costLossStates.value.length ? 'measured' : 'empty')
+        : 'unavailable',
+      costLossResult.status === 'fulfilled'
+        ? (costLossStates.value.length ? '不可变损失账本已读取' : '账本中没有终局损失事件')
+        : rejectedReason(costLossResult, '封禁损失账本读取失败'),
+    )
+
+    setSourceState(
+      'accounts',
+      accountResult.status === 'fulfilled'
+        ? ((accountResult.value.items ?? []).length ? 'measured' : 'empty')
+        : 'unavailable',
+      accountResult.status === 'fulfilled'
+        ? ((accountResult.value.items ?? []).length ? '账号与调度字段已读取' : '当前没有账号')
+        : rejectedReason(accountResult, '账号清单读取失败'),
+    )
+
+    setSourceState(
+      'dashboard',
+      dashboardResult.status === 'fulfilled'
+        ? ((dashboardResult.value.trend ?? []).length || dashboardResult.value.stats ? 'measured' : 'empty')
+        : 'unavailable',
+      dashboardResult.status === 'fulfilled' ? 'usage_logs 聚合已读取' : rejectedReason(dashboardResult, '成本趋势读取失败'),
+    )
 
     const dashboardWindowIsExact = dashboardResult.status === 'fulfilled'
       && snapshotMatchesRequestedWindow(dashboardResult.value, observationStart, requestedObservationEnd)
@@ -307,13 +356,18 @@ export function useCostCenterData() {
           const localDayStart = new Date()
           localDayStart.setHours(0, 0, 0, 0)
           const batch = await adminAPI.accounts.getBatchTodayStats(ids, localDayStart.toISOString())
-          if (sequence === requestSequence) todayStats.value = batch.stats ?? {}
+          if (sequence === requestSequence) {
+            todayStats.value = batch.stats ?? {}
+            setSourceState('todayStats', Object.keys(todayStats.value).length ? 'measured' : 'empty', Object.keys(todayStats.value).length ? '本地自然日账号统计已读取' : '本地自然日内没有账号用量记录')
+          }
         } catch (batchError) {
           console.warn('[cost-center] account today stats unavailable', batchError)
           todayStats.value = {}
+          setSourceState('todayStats', 'unavailable', batchError instanceof Error ? batchError.message : '账号当日统计读取失败')
         }
       } else {
         todayStats.value = {}
+        setSourceState('todayStats', 'empty', '当前没有账号')
       }
 
       const usageAccounts = accounts.value.filter(shouldLoadUsageWindow)
@@ -331,11 +385,24 @@ export function useCostCenterData() {
         })
         accountUsage.value = nextUsage
         lastAccountUsageSyncAt = Date.now()
+        const succeeded = usageResults.filter((result) => result.status === 'fulfilled').length
+        const retained = usageAccounts.filter((account) => accountUsage.value[String(account.id)]).length
+        setSourceState(
+          'accountUsage',
+          succeeded === usageAccounts.length ? 'measured' : retained > 0 ? 'partial' : 'unavailable',
+          succeeded === usageAccounts.length ? '上游用量窗口已同步' : `${succeeded}/${usageAccounts.length} 个用量窗口本次同步成功`,
+        )
+      } else if (usageAccounts.length === 0) {
+        setSourceState('accountUsage', 'empty', '当前账号类型不提供上游用量窗口')
+      } else {
+        setSourceState('accountUsage', 'measured', '使用 5 分钟内最近一次成功同步的用量窗口')
       }
     } else {
       accounts.value = []
       todayStats.value = {}
       accountUsage.value = {}
+      setSourceState('todayStats', 'unavailable', '账号清单不可用，无法读取当日统计')
+      setSourceState('accountUsage', 'unavailable', '账号清单不可用，无法读取用量窗口')
     }
 
     if (sequence !== requestSequence) return
@@ -346,10 +413,12 @@ export function useCostCenterData() {
         trend.value = fillCostTrendBuckets(await compatibilityTrend, range, observationStart, observationEnd)
         if (sequence !== requestSequence) return
         trendUsesAccountCost.value = true
+        setSourceState('dashboard', trend.value.some((point) => Number(point.requests || 0) > 0) ? 'partial' : 'empty', '仪表盘窗口不精确，已按 usage_logs 重新聚合')
       } catch (compatibilityError) {
         console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
         trend.value = []
         trendUsesAccountCost.value = false
+        setSourceState('dashboard', 'unavailable', compatibilityError instanceof Error ? compatibilityError.message : 'usage_logs 兼容聚合失败')
         error.value = compatibilityError instanceof Error
           ? compatibilityError.message
           : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
@@ -378,6 +447,13 @@ export function useCostCenterData() {
     models.value = modelStatsSelection.models
     modelStatsExactWindowFallback.value = modelStatsSelection.usedCompatibilityAggregation
     modelStatsCompatibilityTruncated.value = modelStatsSelection.compatibilityTruncated
+    if (modelResult.status === 'fulfilled') {
+      setSourceState('models', models.value.length ? (modelStatsSelection.usedCompatibilityAggregation ? 'partial' : 'measured') : 'empty', modelStatsSelection.usedCompatibilityAggregation ? '已使用 usage_logs 兼容聚合' : models.value.length ? '模型成本窗口已读取' : '窗口内没有模型成本记录')
+    } else if (modelStatsSelection.usedCompatibilityAggregation) {
+      setSourceState('models', 'partial', '模型快照不可用，已使用完整 usage_logs 兼容聚合')
+    } else {
+      setSourceState('models', 'unavailable', rejectedReason(modelResult, '模型成本统计读取失败'))
+    }
     if (modelRoutesResult.status === 'fulfilled') {
       const channels: Channel[] = channelsResult.status === 'fulfilled' ? channelsResult.value.items ?? [] : []
       modelAuditSummary.value = summarizeModelAudit(modelRoutesResult.value.logs)
@@ -390,25 +466,36 @@ export function useCostCenterData() {
         const result = pricingResults[index]
         return result.status === 'fulfilled' ? [[model, result.value]] : []
       }))
+      setSourceState('modelRoutes', modelRoutes.value.length ? (modelRoutesResult.value.truncated ? 'partial' : 'measured') : 'empty', modelRoutesResult.value.truncated ? '路由记录超过安全读取上限，仅显示完整可读部分' : modelRoutes.value.length ? '模型路由审计已读取' : '窗口内没有路由记录')
     } else {
       modelAuditSummary.value = summarizeModelAudit([])
       modelRoutes.value = []
       modelRoutesTruncated.value = false
       modelPricing.value = {}
+      setSourceState('modelRoutes', 'unavailable', rejectedReason(modelRoutesResult, '模型路由审计读取失败'))
     }
     pricingStatus.value = pricingStatusResult.status === 'fulfilled' ? pricingStatusResult.value : null
+    setSourceState('pricing', pricingStatusResult.status === 'fulfilled' ? 'measured' : 'unavailable', pricingStatusResult.status === 'fulfilled' ? '价格目录状态已读取' : rejectedReason(pricingStatusResult, '价格目录状态读取失败'))
 
     if (opsResult.status === 'fulfilled') {
       opsOverview.value = opsResult.value.overview
       opsTrend.value = opsResult.value.throughput_trend?.points ?? []
+      setSourceState('ops', 'measured', '运行质量监控已读取')
     } else {
       // Ops monitoring is feature-gated. The cost console remains useful without it.
       opsOverview.value = null
       opsTrend.value = []
+      setSourceState('ops', 'unavailable', rejectedReason(opsResult, '运行质量监控未启用或读取失败'))
     }
 
     systemSettings.value = settingsResult.status === 'fulfilled' ? settingsResult.value : null
-    if (exchangeRateResult.status === 'fulfilled') exchangeRate.value = exchangeRateResult.value
+    setSourceState('settings', settingsResult.status === 'fulfilled' ? 'measured' : 'unavailable', settingsResult.status === 'fulfilled' ? '调度设置已读取' : rejectedReason(settingsResult, '调度设置读取失败'))
+    if (exchangeRateResult.status === 'fulfilled') {
+      exchangeRate.value = exchangeRateResult.value
+      setSourceState('exchangeRate', exchangeRate.value.source === 'network' ? 'measured' : 'estimated', exchangeRate.value.source === 'network' ? '网络参考汇率' : exchangeRate.value.source === 'cache' ? '使用 12 小时缓存汇率' : '使用离线回退汇率')
+    } else {
+      setSourceState('exchangeRate', 'estimated', rejectedReason(exchangeRateResult, '汇率读取失败，使用离线回退值'))
+    }
 
     await loadAccountEconomics('all', range)
 
@@ -429,6 +516,7 @@ export function useCostCenterData() {
   async function loadAccountEconomics(platform: string, range: CostCenterRange = DEFAULT_COST_CENTER_RANGE, accountIds: number[] = []) {
     const sequence = ++economicsRequestSequence
     accountEconomics.value = null
+    setSourceState('economics', 'loading', '正在采集并读取经济样本')
     try {
       const snapshot = await adminAPI.accounts.getEconomicsSnapshot({
         scope: platform,
@@ -438,11 +526,22 @@ export function useCostCenterData() {
         exchange_rate_source: exchangeRate.value.source,
         window_hours: economicsWindowHours(range),
       })
-      if (sequence === economicsRequestSequence) accountEconomics.value = snapshot
+      if (sequence === economicsRequestSequence) {
+        accountEconomics.value = snapshot
+        const status = snapshot.data_quality.status === 'partial'
+          ? 'partial'
+          : snapshot.projection.confidence === 'unavailable'
+            ? 'partial'
+            : 'measured'
+        setSourceState('economics', status, snapshot.projection.confidence === 'unavailable' ? '事实数据可用；稳定采样区间不足，预测不可用' : '事实账本与稳定区间预测已读取')
+      }
       return snapshot
     } catch (economicsError) {
       console.warn('[cost-center] persistent economics snapshot unavailable', economicsError)
-      if (sequence === economicsRequestSequence) accountEconomics.value = null
+      if (sequence === economicsRequestSequence) {
+        accountEconomics.value = null
+        setSourceState('economics', 'unavailable', economicsError instanceof Error ? economicsError.message : '经济采样接口读取失败')
+      }
       return null
     }
   }
@@ -549,6 +648,7 @@ export function useCostCenterData() {
     opsTrend,
     systemSettings,
     probes,
+    sourceStates,
     loading,
     saving,
     error,

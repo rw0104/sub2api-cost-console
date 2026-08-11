@@ -381,7 +381,10 @@ func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossS
 		}
 		currentIDs[account.ID] = struct{}{}
 		if state, ok := latestActive[account.ID]; ok {
-			procurementCNY += costAmountToCNY(state.RecognizedCost, state.Currency, cnyPerUSD)
+			// RecognizedCost already contains NetLoss. Keep the two economic
+			// components separate here so BuildAccountPoolUnitEconomics does not
+			// add the impairment a second time.
+			procurementCNY += costAmountToCNY(state.AccruedCost, state.Currency, cnyPerUSD)
 			impairmentCNY += costAmountToCNY(state.NetLoss, state.Currency, cnyPerUSD)
 			continue
 		}
@@ -401,7 +404,7 @@ func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossS
 		if _, exists := currentIDs[accountID]; exists {
 			continue
 		}
-		procurementCNY += costAmountToCNY(state.RecognizedCost, state.Currency, cnyPerUSD)
+		procurementCNY += costAmountToCNY(state.AccruedCost, state.Currency, cnyPerUSD)
 		impairmentCNY += costAmountToCNY(state.NetLoss, state.Currency, cnyPerUSD)
 	}
 	return procurementCNY, impairmentCNY, hourlyCNY, invalid

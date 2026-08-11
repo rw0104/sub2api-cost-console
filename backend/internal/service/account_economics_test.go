@@ -158,6 +158,33 @@ func TestSummarizeProcurementEconomicsPreservesConfiguredCurrency(t *testing.T) 
 	require.Zero(t, invalid)
 }
 
+func TestSummarizeProcurementEconomicsDoesNotCountImpairmentTwice(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	states := []AccountCostLossState{{
+		AccountIDSnapshot: 427,
+		Platform:          PlatformOpenAI,
+		Currency:          "CNY",
+		AccruedCost:       4.17,
+		NetLoss:           168.37,
+		RecognizedCost:    172.54,
+		Active:            true,
+		OccurredAt:        now.Add(-time.Hour),
+	}}
+
+	procurement, impairment, hourly, invalid := summarizeProcurementEconomics(nil, states, "openai", 7, now, true)
+	result := BuildAccountPoolUnitEconomics(AccountPoolUnitEconomicsInput{
+		ProcurementAccruedCNY: procurement,
+		ImpairmentLossCNY:     impairment,
+		CNYPerUSD:             7,
+	})
+
+	require.InDelta(t, 4.17, procurement, 1e-9)
+	require.InDelta(t, 168.37, impairment, 1e-9)
+	require.InDelta(t, 172.54, result.EconomicCostCNY, 1e-9)
+	require.Zero(t, hourly)
+	require.Zero(t, invalid)
+}
+
 func TestSummarizeAccountEconomicsHealthUsesCurrentRuntimeWindows(t *testing.T) {
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	resetAt := now.Add(time.Hour)

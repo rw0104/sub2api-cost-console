@@ -255,7 +255,7 @@ function applyPlanDefault() {
 
 function formatDateTime(value: string): string {
   const date = new Date(value)
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : '—'
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : '无数据'
 }
 
 function submit() {

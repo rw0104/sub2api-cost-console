@@ -1,6 +1,10 @@
 <template>
-  <div class="cost-chart" :style="{ height: `${height}px` }">
-    <Line :data="chartData" :options="chartOptions" />
+  <div class="cost-chart" :class="`data-${state}`" :style="{ height: `${height}px` }" :data-data-state="state">
+    <Line v-if="showChart" :data="chartData" :options="chartOptions" />
+    <div v-else class="cost-chart__state" role="status">
+      <span>{{ stateLabel }}</span>
+      <small>{{ stateReason }}</small>
+    </div>
   </div>
 </template>
 
@@ -19,6 +23,7 @@ import {
   type ChartOptions,
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
+import { dataAvailabilityLabel, type DataAvailability } from '../dataState'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend)
 
@@ -36,11 +41,18 @@ const props = withDefaults(defineProps<{
   height?: number
   valuePrefix?: string
   valueSuffix?: string
+  state?: DataAvailability
+  stateReason?: string
 }>(), {
   height: 190,
   valuePrefix: '',
   valueSuffix: '',
+  state: 'measured',
+  stateReason: '',
 })
+
+const showChart = computed(() => !['loading', 'unavailable', 'empty'].includes(props.state))
+const stateLabel = computed(() => dataAvailabilityLabel(props.state))
 
 const chartData = computed<ChartData<'line'>>(() => ({
   labels: props.labels,
@@ -125,6 +137,21 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
   width: 100%;
   min-width: 0;
 }
+
+.cost-chart__state {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  gap: 6px;
+  border: 1px dashed rgb(255 255 255 / 13%);
+  border-radius: 10px;
+  color: #a9b2aa;
+  text-align: center;
+}
+
+.cost-chart__state span { font-size: 14px; font-weight: 650; }
+.cost-chart__state small { max-width: 420px; color: #758078; font-size: 11px; }
+.cost-chart.data-unavailable .cost-chart__state { border-color: rgb(213 132 115 / 35%); }
 
 @media (prefers-reduced-motion: reduce) {
   .cost-chart {
