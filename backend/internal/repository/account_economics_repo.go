@@ -91,7 +91,7 @@ func (r *accountEconomicsRepository) ListSamples(ctx context.Context, scopeKey s
 	if err != nil {
 		return nil, fmt.Errorf("query account economics samples: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	samples := make([]service.AccountEconomicsSample, 0)
 	for rows.Next() {
