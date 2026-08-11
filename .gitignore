@@ -144,6 +144,8 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/COST_DATA_PROVENANCE.md
+!docs/2026-08-11_technical-cost-center-monitoring-repair-report.md
+!docs/2026-08-11_cost-economics-1.6-development.md
 !docs/legal/
 !docs/legal/*.md
 .serena/

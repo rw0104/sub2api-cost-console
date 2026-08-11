@@ -65,6 +65,7 @@ type AccountHandler struct {
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	accountCostLoss         *service.AccountCostLossService
+	accountEconomics        *service.AccountEconomicsService
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -78,6 +79,10 @@ func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUs
 
 func (h *AccountHandler) SetAccountCostLossService(costLoss *service.AccountCostLossService) {
 	h.accountCostLoss = costLoss
+}
+
+func (h *AccountHandler) SetAccountEconomicsService(economics *service.AccountEconomicsService) {
+	h.accountEconomics = economics
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -2461,6 +2466,9 @@ func (h *AccountHandler) GetTodayStats(c *gin.Context) {
 // BatchTodayStatsRequest 批量今日统计请求体。
 type BatchTodayStatsRequest struct {
 	AccountIDs []int64 `json:"account_ids" binding:"required"`
+	// StartTime lets desktop clients use the same local-day boundary shown in
+	// their UI instead of silently mixing it with the server's configured zone.
+	StartTime string `json:"start_time"`
 }
 
 type BatchUsageRequest struct {
@@ -2483,7 +2491,20 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		return
 	}
 
+	var requestedStart *time.Time
+	if raw := strings.TrimSpace(req.StartTime); raw != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, raw)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid start_time: use RFC3339")
+			return
+		}
+		requestedStart = &parsed
+	}
+
 	cacheKey := buildAccountTodayStatsBatchCacheKey(accountIDs)
+	if requestedStart != nil {
+		cacheKey += ":" + requestedStart.UTC().Format(time.RFC3339)
+	}
 	if cached, ok := accountTodayStatsBatchCache.Get(cacheKey); ok {
 		if cached.ETag != "" {
 			c.Header("ETag", cached.ETag)
@@ -2498,7 +2519,13 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.accountUsageService.GetTodayStatsBatch(c.Request.Context(), accountIDs)
+	var stats map[int64]*service.WindowStats
+	var err error
+	if requestedStart != nil {
+		stats, err = h.accountUsageService.GetWindowStatsBatch(c.Request.Context(), accountIDs, *requestedStart)
+	} else {
+		stats, err = h.accountUsageService.GetTodayStatsBatch(c.Request.Context(), accountIDs)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

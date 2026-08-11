@@ -57,7 +57,9 @@
             </option>
           </select>
         </label>
-        <p v-if="keys.length === 0 && !loadingKeys" class="cost-api-empty">还没有可用 API Key。请先创建密钥，再回来生成 Agent 配置。</p>
+        <p v-if="keyLoadState === 'unavailable'" class="cost-api-empty is-error" role="alert">API Key 无数据：{{ keyLoadError }}。这不是“没有密钥”，请重试读取。</p>
+        <p v-else-if="keyLoadState === 'empty'" class="cost-api-empty">API Key 清单读取成功，但当前确实没有密钥。请先创建密钥，再回来生成 Agent 配置。</p>
+        <p v-else-if="keyLoadState === 'loading'" class="cost-api-empty">正在读取 API Key，不使用空清单生成配置。</p>
         <p v-else-if="selectedKey" class="cost-api-hint">
           当前密钥：{{ selectedKey.name }} · {{ selectedKey.group?.platform || '未绑定平台' }} · {{ selectedKey.status }}
         </p>
@@ -144,6 +146,8 @@ const router = useRouter()
 const { copyToClipboard } = useClipboard()
 const keys = ref<ApiKey[]>([])
 const loadingKeys = ref(false)
+const keyLoadState = ref<'loading' | 'measured' | 'empty' | 'unavailable'>('loading')
+const keyLoadError = ref('')
 const selectedKeyId = ref('')
 const preset = ref<PresetId>('codex')
 const models = ref<string[]>([])
@@ -222,12 +226,14 @@ function maskKey(key: string): string {
 
 function formatLatency(value?: number | null): string {
   const ms = Number(value)
-  if (!Number.isFinite(ms) || ms <= 0) return '—'
+  if (!Number.isFinite(ms) || ms <= 0) return '无样本'
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`
 }
 
 async function loadKeys() {
   loadingKeys.value = true
+  keyLoadState.value = 'loading'
+  keyLoadError.value = ''
   try {
     const [keyResult, settingsResult] = await Promise.allSettled([
       keysAPI.list(1, 100, { sort_by: 'created_at', sort_order: 'desc' }),
@@ -235,9 +241,15 @@ async function loadKeys() {
     ])
     if (keyResult.status === 'fulfilled') {
       keys.value = keyResult.value.items || []
+      keyLoadState.value = keys.value.length ? 'measured' : 'empty'
       if (!selectedKeyId.value || !keys.value.some((key) => String(key.id) === selectedKeyId.value)) {
         selectedKeyId.value = String(activeKeys.value[0]?.id || '')
       }
+    } else {
+      keys.value = []
+      selectedKeyId.value = ''
+      keyLoadState.value = 'unavailable'
+      keyLoadError.value = keyResult.reason instanceof Error ? keyResult.reason.message : '密钥接口读取失败'
     }
     if (settingsResult.status === 'fulfilled') publicBaseUrl.value = settingsResult.value.api_base_url || ''
   } finally {
@@ -338,6 +350,7 @@ onMounted(loadKeys)
 .cost-api-presets button.active { border-color: var(--cost-lime, #b9e55a); color: #11160f; background: var(--cost-lime, #b9e55a); font-weight: 700; }
 .cost-api-hint, .cost-api-empty { margin: 8px 0 0; color: var(--cost-muted, #7f8b81); font-size: 11px; line-height: 1.55; }
 .cost-api-empty { color: #e0bd4e; }
+.cost-api-empty.is-error { border-left: 2px solid #d58473; padding-left: 9px; color: #e3a092; }
 .cost-api-actions { margin-top: 20px; }
 .cost-api-test-result { display: flex; align-items: flex-start; gap: 7px; margin-top: 14px; border-radius: 9px; padding: 10px 11px; font-size: 12px; line-height: 1.45; }
 .cost-api-test-result.is-ok { color: #a4e7b6; background: rgb(85 177 109 / 12%); }

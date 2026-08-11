@@ -1,0 +1,1074 @@
+/*
+ * Apple fidelity material and profile contract
+ *
+ * apple-fidelity-web/v1
+ *
+ * Framework-independent, positive Apple-platform visual grammar. Liquid
+ * material selectors are deliberately limited to data-aui-layer="functional".
+ * Content planes remain opaque. Product state stays in the host application.
+ */
+
+:root,
+[data-aui-fidelity="apple-fidelity-web/v1"] {
+  color-scheme: light dark;
+
+  /* Typography: system-like optical hierarchy without redistributing fonts. */
+  --aui-font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "SF Pro Display", "Segoe UI", sans-serif;
+  --aui-font-rounded: ui-rounded, "SF Pro Rounded", var(--aui-font-system);
+  --aui-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --aui-type-caption: 0.75rem;
+  --aui-type-footnote: 0.8125rem;
+  --aui-type-body: 1rem;
+  --aui-type-callout: 1.0625rem;
+  --aui-type-headline: 1.0625rem;
+  --aui-type-title-3: 1.375rem;
+  --aui-type-title-2: 1.75rem;
+  --aui-type-title-1: clamp(2rem, 4vw, 3.25rem);
+  --aui-leading-tight: 1.08;
+  --aui-leading-body: 1.47;
+  --aui-tracking-title: -0.032em;
+  --aui-weight-regular: 400;
+  --aui-weight-medium: 510;
+  --aui-weight-semibold: 620;
+  --aui-weight-bold: 700;
+
+  /* Spatial rhythm and concentric geometry. */
+  --aui-space-1: 0.25rem;
+  --aui-space-2: 0.5rem;
+  --aui-space-3: 0.75rem;
+  --aui-space-4: 1rem;
+  --aui-space-5: 1.25rem;
+  --aui-space-6: 1.5rem;
+  --aui-space-8: 2rem;
+  --aui-space-10: 2.5rem;
+  --aui-space-12: 3rem;
+  --aui-control-height: 2.75rem;
+  --aui-sidebar-width: 20rem;
+  --aui-content-max: 92rem;
+  --aui-shape-control: 0.75rem;
+  --aui-shape-capsule: 999px;
+  --aui-shape-surface: 1.375rem;
+  --aui-shape-floating: 1.625rem;
+  --aui-shape-inner: max(0.625rem, calc(var(--aui-shape-surface) - var(--aui-space-2)));
+
+  /* Semantic color roles. Accent is replaced by the compiled profile. */
+  --aui-accent: #007aff;
+  --aui-accent-hover: #0071e3;
+  --aui-accent-pressed: #0068d1;
+  --aui-accent-wash: rgb(0 122 255 / 0.12);
+  --aui-accent-foreground: #ffffff;
+  --aui-label-primary: #1d1d1f;
+  --aui-label-secondary: #5d5d63;
+  --aui-label-tertiary: #77777e;
+  --aui-label-quaternary: #9999a1;
+  --aui-canvas: #f5f5f7;
+  --aui-content-plane: #ffffff;
+  --aui-content-plane-secondary: #f0f0f3;
+  --aui-fill: rgb(118 118 128 / 0.12);
+  --aui-fill-strong: rgb(118 118 128 / 0.2);
+  --aui-separator: rgb(60 60 67 / 0.22);
+  --aui-separator-opaque: #d1d1d6;
+  --aui-focus-outer: rgb(0 122 255 / 0.42);
+  --aui-danger: #d70015;
+  --aui-success: #248a3d;
+
+  /* Material is for functional layers only. */
+  --aui-material-regular-fill: rgb(250 250 252 / 0.74);
+  --aui-material-regular-border: rgb(255 255 255 / 0.52);
+  --aui-material-clear-fill: rgb(246 246 250 / 0.48);
+  --aui-material-clear-border: rgb(255 255 255 / 0.38);
+  --aui-material-blur: 30px;
+  --aui-material-saturation: 180%;
+  --aui-material-luminosity: 1.04;
+  --aui-material-specular: rgb(255 255 255 / 0.72);
+  --aui-material-occlusion: rgb(22 22 28 / 0.12);
+  --aui-clear-media-dimming: rgb(0 0 0 / 0.18);
+
+  /* Shadows describe depth roles, not generic card decoration. */
+  --aui-shadow-hairline: 0 0 0 0.5px rgb(0 0 0 / 0.12);
+  --aui-shadow-functional:
+    0 0.5px 0 rgb(255 255 255 / 0.76) inset,
+    0 -0.5px 0 rgb(0 0 0 / 0.08) inset,
+    0 8px 24px rgb(0 0 0 / 0.1),
+    0 2px 8px rgb(0 0 0 / 0.06);
+  --aui-shadow-transient:
+    0 22px 60px rgb(0 0 0 / 0.19),
+    0 5px 16px rgb(0 0 0 / 0.11),
+    0 0 0 0.5px rgb(0 0 0 / 0.12);
+  --aui-shadow-press: 0 1px 2px rgb(0 0 0 / 0.08) inset;
+
+  /* Causal, interruptible motion. */
+  --aui-motion-fast: 130ms;
+  --aui-motion-standard: 230ms;
+  --aui-motion-slow: 420ms;
+  --aui-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --aui-ease-spring: cubic-bezier(0.2, 0.88, 0.25, 1.18);
+  --aui-press-scale: 0.975;
+  --aui-pointer-x: 50%;
+  --aui-pointer-y: 50%;
+  --aui-lens-shift-x: 0px;
+  --aui-lens-shift-y: 0px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  [data-aui-fidelity="apple-fidelity-web/v1"] {
+    --aui-accent: #0a84ff;
+    --aui-accent-hover: #2994ff;
+    --aui-accent-pressed: #409fff;
+    --aui-accent-wash: rgb(10 132 255 / 0.2);
+    --aui-label-primary: #f5f5f7;
+    --aui-label-secondary: #b5b5bb;
+    --aui-label-tertiary: #94949c;
+    --aui-label-quaternary: #717179;
+    --aui-canvas: #09090b;
+    --aui-content-plane: #1c1c1e;
+    --aui-content-plane-secondary: #2c2c2e;
+    --aui-fill: rgb(120 120 128 / 0.24);
+    --aui-fill-strong: rgb(120 120 128 / 0.36);
+    --aui-separator: rgb(84 84 88 / 0.58);
+    --aui-separator-opaque: #3a3a3c;
+    --aui-focus-outer: rgb(10 132 255 / 0.52);
+    --aui-danger: #ff453a;
+    --aui-success: #30d158;
+    --aui-material-regular-fill: rgb(38 38 42 / 0.72);
+    --aui-material-regular-border: rgb(255 255 255 / 0.16);
+    --aui-material-clear-fill: rgb(30 30 34 / 0.44);
+    --aui-material-clear-border: rgb(255 255 255 / 0.2);
+    --aui-material-specular: rgb(255 255 255 / 0.34);
+    --aui-material-occlusion: rgb(0 0 0 / 0.34);
+    --aui-clear-media-dimming: rgb(0 0 0 / 0.3);
+    --aui-shadow-functional:
+      0 0.5px 0 rgb(255 255 255 / 0.18) inset,
+      0 -0.5px 0 rgb(0 0 0 / 0.42) inset,
+      0 12px 30px rgb(0 0 0 / 0.32),
+      0 2px 8px rgb(0 0 0 / 0.22);
+    --aui-shadow-transient:
+      0 26px 70px rgb(0 0 0 / 0.58),
+      0 6px 18px rgb(0 0 0 / 0.38),
+      0 0 0 0.5px rgb(255 255 255 / 0.12);
+  }
+}
+
+[data-aui-fidelity="apple-fidelity-web/v1"],
+[data-aui-fidelity="apple-fidelity-web/v1"]::before,
+[data-aui-fidelity="apple-fidelity-web/v1"]::after,
+[data-aui-fidelity="apple-fidelity-web/v1"] *,
+[data-aui-fidelity="apple-fidelity-web/v1"] *::before,
+[data-aui-fidelity="apple-fidelity-web/v1"] *::after {
+  box-sizing: border-box;
+}
+
+[data-aui-fidelity="apple-fidelity-web/v1"] {
+  min-block-size: 100%;
+  container-type: inline-size;
+  color: var(--aui-label-primary);
+  background: var(--aui-canvas);
+  font-family: var(--aui-font-system);
+  font-size: var(--aui-type-body);
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-aui-fidelity="apple-fidelity-web/v1"] :where(button, input, select, textarea) {
+  color: inherit;
+  font: inherit;
+}
+
+[data-aui-fidelity="apple-fidelity-web/v1"] :where(button, a, input, select, textarea) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-aui-fidelity="apple-fidelity-web/v1"] :where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid var(--aui-focus-outer);
+  outline-offset: 2px;
+}
+
+/* Compiled platform profiles set positive density, type, shape, and material. */
+[data-aui-profile="ios-content"] {
+  --aui-control-height: 2.75rem;
+  --aui-sidebar-width: 19rem;
+  --aui-content-max: 68rem;
+  --aui-shape-control: 0.875rem;
+  --aui-shape-surface: 1.5rem;
+  --aui-shape-floating: 1.75rem;
+  --aui-type-title-1: clamp(2.125rem, 5vw, 3.5rem);
+  --aui-tracking-title: -0.035em;
+  --aui-type-body: 1.0625rem;
+  --aui-material-blur: 28px;
+  --aui-material-saturation: 180%;
+  --aui-motion-fast: 140ms;
+  --aui-motion-standard: 240ms;
+}
+
+[data-aui-profile="ipados-workspace"] {
+  --aui-control-height: 2.75rem;
+  --aui-sidebar-width: 20rem;
+  --aui-content-max: 92rem;
+  --aui-shape-control: 0.75rem;
+  --aui-shape-surface: 1.375rem;
+  --aui-shape-floating: 1.625rem;
+  --aui-type-title-1: clamp(2rem, 3.6vw, 3.25rem);
+  --aui-tracking-title: -0.032em;
+  --aui-type-body: 1rem;
+  --aui-material-blur: 30px;
+  --aui-material-saturation: 180%;
+  --aui-motion-fast: 130ms;
+  --aui-motion-standard: 230ms;
+}
+
+[data-aui-profile="macos-productivity"] {
+  --aui-control-height: 2rem;
+  --aui-sidebar-width: 16rem;
+  --aui-content-max: 100rem;
+  --aui-shape-control: 0.5rem;
+  --aui-shape-surface: 0.875rem;
+  --aui-shape-floating: 0.75rem;
+  --aui-type-title-1: clamp(1.625rem, 2.4vw, 2.5rem);
+  --aui-tracking-title: -0.025em;
+  --aui-type-body: 0.875rem;
+  --aui-material-blur: 24px;
+  --aui-material-saturation: 170%;
+  --aui-motion-fast: 110ms;
+  --aui-motion-standard: 200ms;
+}
+
+[data-aui-profile="visionos-spatial"] {
+  --aui-control-height: 3.25rem;
+  --aui-sidebar-width: 21rem;
+  --aui-content-max: 88rem;
+  --aui-shape-control: 1.625rem;
+  --aui-shape-surface: 2rem;
+  --aui-shape-floating: 2rem;
+  --aui-type-title-1: clamp(2.25rem, 4vw, 3.75rem);
+  --aui-tracking-title: -0.035em;
+  --aui-type-body: 1.0625rem;
+  --aui-material-blur: 40px;
+  --aui-material-saturation: 190%;
+  --aui-motion-fast: 170ms;
+  --aui-motion-standard: 320ms;
+}
+
+[data-aui-profile="web-editorial"] {
+  --aui-control-height: 2.75rem;
+  --aui-sidebar-width: 18rem;
+  --aui-content-max: 76rem;
+  --aui-shape-control: 0.75rem;
+  --aui-shape-surface: 1.25rem;
+  --aui-shape-floating: 1.5rem;
+  --aui-type-title-1: clamp(2.75rem, 7vw, 6.5rem);
+  --aui-tracking-title: -0.05em;
+  --aui-type-body: 1.125rem;
+  --aui-material-blur: 26px;
+  --aui-material-saturation: 175%;
+  --aui-motion-fast: 140ms;
+  --aui-motion-standard: 260ms;
+}
+
+/* Typography roles. */
+[data-aui-text="caption"] {
+  color: var(--aui-label-secondary);
+  font-size: var(--aui-type-caption);
+  font-weight: var(--aui-weight-medium);
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+
+[data-aui-text="body"] {
+  font-size: var(--aui-type-body);
+  line-height: var(--aui-leading-body);
+}
+
+[data-aui-text="headline"] {
+  font-size: var(--aui-type-headline);
+  font-weight: var(--aui-weight-semibold);
+  line-height: 1.25;
+}
+
+[data-aui-text="title"] {
+  margin: 0;
+  font-size: var(--aui-type-title-1);
+  font-weight: var(--aui-weight-bold);
+  letter-spacing: var(--aui-tracking-title);
+  line-height: var(--aui-leading-tight);
+  text-wrap: balance;
+}
+
+/* Content is always an opaque reading/data plane. */
+[data-aui-layer="content"],
+[data-aui-component="content-plane"] {
+  color: var(--aui-label-primary);
+  background: var(--aui-content-plane);
+}
+
+[data-aui-component="content-plane"] {
+  border: 0.5px solid var(--aui-separator);
+  border-radius: var(--aui-shape-surface);
+}
+
+/*
+ * Functional material plane. These are the only selectors in this kit that
+ * receive translucent fill or backdrop-filter.
+ */
+:where([data-aui-layer="functional"][data-aui-material]) {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  border: 0.5px solid var(--aui-material-regular-border);
+  background: var(--aui-material-regular-fill);
+  box-shadow: var(--aui-shadow-functional);
+  backdrop-filter:
+    blur(var(--aui-material-blur))
+    saturate(var(--aui-material-saturation))
+    brightness(var(--aui-material-luminosity));
+  -webkit-backdrop-filter:
+    blur(var(--aui-material-blur))
+    saturate(var(--aui-material-saturation))
+    brightness(var(--aui-material-luminosity));
+}
+
+:where([data-aui-layer="functional"][data-aui-material="regular"]) {
+  --aui-material-active-variant: regular;
+}
+
+:where([data-aui-layer="functional"][data-aui-material="clear"]) {
+  --aui-material-active-variant: clear;
+  border-color: var(--aui-material-clear-border);
+  background: var(--aui-material-clear-fill);
+}
+
+:where([data-aui-layer="functional"][data-aui-material])::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle at var(--aui-pointer-x) var(--aui-pointer-y),
+      var(--aui-material-specular) 0,
+      rgb(255 255 255 / 0.14) 18%,
+      transparent 47%
+    ),
+    linear-gradient(
+      135deg,
+      rgb(255 255 255 / 0.18),
+      transparent 34% 68%,
+      rgb(0 0 0 / 0.08)
+    );
+  content: "";
+  opacity: 0.38;
+  pointer-events: none;
+  transform: translate(var(--aui-lens-shift-x), var(--aui-lens-shift-y))
+    scale(1.035);
+  transition: opacity var(--aui-motion-fast) var(--aui-ease-out);
+}
+
+[data-aui-layer="functional"][data-aui-material="clear"][data-aui-backdrop="media-light"]::after {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  background: var(--aui-clear-media-dimming);
+  content: "";
+  pointer-events: none;
+}
+
+[data-aui-layer="functional"][data-aui-material="clear"]:not(
+  [data-aui-backdrop="media-light"],
+  [data-aui-backdrop="media-dark"]
+) {
+  /* Clear without a declared rich-media backdrop safely resolves to Regular. */
+  border-color: var(--aui-material-regular-border);
+  background: var(--aui-material-regular-fill);
+}
+
+/* Local specular and press light for actual interactive elements. */
+[data-aui-pressable] {
+  --aui-press-opacity: 0;
+  position: relative;
+  isolation: isolate;
+  transform: translateZ(0) scale(1);
+  transition:
+    color var(--aui-motion-fast) var(--aui-ease-out),
+    background-color var(--aui-motion-fast) var(--aui-ease-out),
+    border-color var(--aui-motion-fast) var(--aui-ease-out),
+    box-shadow var(--aui-motion-fast) var(--aui-ease-out),
+    transform var(--aui-motion-fast) var(--aui-ease-spring);
+}
+
+[data-aui-pressable]::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle at var(--aui-pointer-x) var(--aui-pointer-y),
+      rgb(255 255 255 / 0.58) 0,
+      var(--aui-accent-wash) 32%,
+      transparent 68%
+    );
+  content: "";
+  opacity: var(--aui-press-opacity);
+  pointer-events: none;
+  transform: translate(var(--aui-lens-shift-x), var(--aui-lens-shift-y))
+    scale(1.025);
+  transition: opacity var(--aui-motion-fast) var(--aui-ease-out);
+}
+
+[data-aui-pressable]:is(:hover, :focus-visible) {
+  --aui-press-opacity: 0.28;
+}
+
+[data-aui-pressable][data-aui-pressed] {
+  --aui-press-opacity: 0.72;
+  box-shadow: var(--aui-shadow-press);
+  transform: translateZ(0) scale(var(--aui-press-scale));
+}
+
+[data-aui-pressable]:is(:disabled, [aria-disabled="true"]) {
+  cursor: default;
+  opacity: 0.42;
+  transform: none;
+}
+
+/* Functional component anatomy. */
+[data-aui-component="window"] {
+  position: relative;
+  min-inline-size: 0;
+  overflow: clip;
+}
+
+[data-aui-component="toolbar"] {
+  display: flex;
+  min-block-size: calc(var(--aui-control-height) + var(--aui-space-3));
+  align-items: center;
+  gap: var(--aui-space-2);
+  padding: var(--aui-space-2);
+  border-radius: var(--aui-shape-floating);
+}
+
+[data-aui-component="sidebar"] {
+  inline-size: min(100%, var(--aui-sidebar-width));
+  min-inline-size: 0;
+  padding: var(--aui-space-3);
+  border-radius: var(--aui-shape-surface);
+}
+
+[data-aui-component="tabbar"] {
+  display: grid;
+  grid-auto-columns: minmax(3.25rem, 1fr);
+  grid-auto-flow: column;
+  min-block-size: calc(var(--aui-control-height) + var(--aui-space-2));
+  align-items: stretch;
+  gap: var(--aui-space-1);
+  padding: var(--aui-space-1);
+  border-radius: var(--aui-shape-floating);
+}
+
+[data-aui-component="button"],
+[data-aui-component="floating-control"] {
+  min-block-size: var(--aui-control-height);
+  min-inline-size: var(--aui-control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--aui-space-2);
+  padding-inline: var(--aui-space-4);
+  border: 0.5px solid transparent;
+  border-radius: var(--aui-shape-control);
+  background: var(--aui-fill);
+  color: var(--aui-label-primary);
+  font-weight: var(--aui-weight-medium);
+}
+
+[data-aui-component="button"][data-aui-prominence="primary"] {
+  border-radius: var(--aui-shape-capsule);
+  background: var(--aui-accent);
+  color: var(--aui-accent-foreground);
+}
+
+[data-aui-component="button"][data-aui-prominence="primary"]:hover {
+  background: var(--aui-accent-hover);
+}
+
+[data-aui-component="segmented"] {
+  display: inline-grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--aui-shape-control) + 3px);
+  background: var(--aui-fill);
+  box-shadow: 0 0 0 0.5px var(--aui-separator) inset;
+}
+
+[data-aui-component="segmented"] > :is(button, [role="radio"]) {
+  min-block-size: calc(var(--aui-control-height) - 6px);
+  padding-inline: var(--aui-space-3);
+  border: 0;
+  border-radius: var(--aui-shape-control);
+  background: transparent;
+  color: var(--aui-label-secondary);
+  font-size: var(--aui-type-footnote);
+  font-weight: var(--aui-weight-medium);
+}
+
+[data-aui-component="segmented"] > :is(
+  [aria-pressed="true"],
+  [aria-selected="true"],
+  [aria-checked="true"]
+) {
+  background: var(--aui-content-plane);
+  box-shadow:
+    0 1px 4px rgb(0 0 0 / 0.14),
+    0 0 0 0.5px rgb(0 0 0 / 0.06);
+  color: var(--aui-label-primary);
+  font-weight: var(--aui-weight-semibold);
+}
+
+[data-aui-component="search"] {
+  min-block-size: var(--aui-control-height);
+  display: flex;
+  align-items: center;
+  gap: var(--aui-space-2);
+  padding-inline: var(--aui-space-3);
+  border: 0.5px solid transparent;
+  border-radius: var(--aui-shape-control);
+  background: var(--aui-fill);
+  color: var(--aui-label-secondary);
+}
+
+[data-aui-component="search"]:focus-within {
+  border-color: color-mix(in srgb, var(--aui-accent), transparent 38%);
+  box-shadow: 0 0 0 3px var(--aui-focus-outer);
+}
+
+[data-aui-component="search"] :is(input, [type="search"]) {
+  min-inline-size: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+[data-aui-component="list"] {
+  min-inline-size: 0;
+  display: grid;
+  gap: 1px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+[data-aui-component="list"] > :is(a, button, [role="option"]) {
+  min-block-size: var(--aui-control-height);
+  display: grid;
+  align-content: center;
+  padding: var(--aui-space-2) var(--aui-space-3);
+  border: 0;
+  border-radius: var(--aui-shape-control);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+
+[data-aui-component="list"] > :is(
+  [aria-current="page"],
+  [aria-selected="true"],
+  [aria-pressed="true"]
+) {
+  background: var(--aui-accent-wash);
+  box-shadow: 3px 0 0 var(--aui-accent) inset;
+  color: var(--aui-label-primary);
+  font-weight: var(--aui-weight-semibold);
+}
+
+[data-aui-component="popover"],
+[data-aui-component="menu"] {
+  inline-size: min(22rem, calc(100vw - var(--aui-space-6)));
+  padding: var(--aui-space-2);
+  border-radius: var(--aui-shape-floating);
+  box-shadow: var(--aui-shadow-transient);
+}
+
+[data-aui-component="sheet"] {
+  inline-size: min(42rem, 100%);
+  max-block-size: min(88dvh, 54rem);
+  margin: auto auto 0;
+  padding: var(--aui-space-6);
+  border-radius: var(--aui-shape-floating) var(--aui-shape-floating) 0 0;
+  box-shadow: var(--aui-shadow-transient);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Real scroll state controls the edge strength. */
+[data-aui-scroll-edge="soft"]::after,
+[data-aui-scroll-edge="hard"]::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0 0 auto;
+  block-size: 1px;
+  background: var(--aui-separator);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--aui-motion-fast) var(--aui-ease-out),
+    box-shadow var(--aui-motion-standard) var(--aui-ease-out);
+}
+
+[data-aui-scroll-edge="soft"][data-aui-scroll-edge-state="soft"]::after,
+[data-aui-scroll-edge="soft"][data-aui-scroll-edge-state="hard"]::after {
+  opacity: 0.58;
+  box-shadow: 0 5px 14px rgb(0 0 0 / 0.09);
+}
+
+[data-aui-scroll-edge="hard"][data-aui-scroll-edge-state="soft"]::after,
+[data-aui-scroll-edge="hard"][data-aui-scroll-edge-state="hard"]::after {
+  opacity: 1;
+  box-shadow: 0 7px 18px rgb(0 0 0 / 0.15);
+}
+
+/*
+ * Profile anatomy. Size classes change navigation and region relationships,
+ * not just scale. Host applications own open/closed state through `hidden`;
+ * the kit owns the placement of each declared adaptive region.
+ */
+[data-aui-fidelity="apple-fidelity-web/v1"] [hidden] {
+  display: none !important;
+}
+
+[data-aui-adaptive="workspace"],
+[data-aui-adaptive-region] {
+  min-inline-size: 0;
+}
+
+/* iOS: one content path with persistent bottom navigation. */
+[data-aui-profile="ios-content"] [data-aui-adaptive-region="navigation"],
+[data-aui-profile="ios-content"] [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="compact"]
+  [data-aui-adaptive="workspace"] {
+  display: block;
+  padding-block-end: calc(var(--aui-control-height) + var(--aui-space-6));
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="compact"]
+  [data-aui-component="tabbar"] {
+  position: fixed;
+  z-index: 15;
+  inset: auto var(--aui-space-3)
+    max(var(--aui-space-3), env(safe-area-inset-bottom));
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="regular"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(0, 48rem);
+  justify-content: center;
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="regular"]
+  [data-aui-component="tabbar"] {
+  position: sticky;
+  z-index: 10;
+  inset-block-end: var(--aui-space-3);
+  margin: var(--aui-space-3);
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="expanded"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(var(--aui-space-8), 1fr) minmax(0, 68rem)
+    minmax(var(--aui-space-8), 1fr);
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="expanded"]
+  [data-aui-adaptive-region="content"] {
+  grid-column: 2;
+}
+
+[data-aui-profile="ios-content"][data-aui-size-class="expanded"]
+  [data-aui-component="tabbar"] {
+  position: sticky;
+  z-index: 10;
+  inset-block-end: var(--aui-space-4);
+  inline-size: min(32rem, calc(100% - var(--aui-space-8)));
+  margin: var(--aui-space-4) auto;
+}
+
+/* iPadOS: stack, split view, then navigation-content-inspector. */
+[data-aui-profile="ipados-workspace"][data-aui-size-class="compact"]
+  [data-aui-adaptive="workspace"] {
+  display: block;
+  padding-block-end: calc(var(--aui-control-height) + var(--aui-space-6));
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="navigation"] {
+  position: fixed;
+  z-index: 20;
+  inset: var(--aui-space-3);
+  inline-size: min(22rem, calc(100vw - var(--aui-space-6)));
+  max-block-size: calc(100dvh - var(--aui-space-6));
+  box-shadow: var(--aui-shadow-transient);
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="compact"]
+  [data-aui-component="tabbar"] {
+  position: fixed;
+  z-index: 15;
+  inset: auto var(--aui-space-3)
+    max(var(--aui-space-3), env(safe-area-inset-bottom));
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="regular"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(15rem, var(--aui-sidebar-width)) minmax(0, 1fr);
+  align-items: stretch;
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="regular"]
+  [data-aui-adaptive-region="inspector"],
+[data-aui-profile="ipados-workspace"][data-aui-size-class="regular"]
+  [data-aui-component="tabbar"] {
+  display: none;
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="expanded"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns:
+    minmax(16rem, var(--aui-sidebar-width))
+    minmax(0, var(--aui-content-max))
+    minmax(14rem, 20rem);
+  align-items: stretch;
+  justify-content: center;
+}
+
+[data-aui-profile="ipados-workspace"][data-aui-size-class="expanded"]
+  [data-aui-component="tabbar"] {
+  display: none;
+}
+
+/* macOS: a bounded desktop window with titlebar-like toolbar and sidebar. */
+[data-aui-profile="macos-productivity"] [data-aui-component="window"] {
+  max-inline-size: min(100%, 100rem);
+  margin-inline: auto;
+  border: 0.5px solid var(--aui-separator);
+  border-radius: var(--aui-shape-surface);
+  background: var(--aui-content-plane-secondary);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.18);
+}
+
+[data-aui-profile="macos-productivity"] [data-aui-component="toolbar"] {
+  border-radius: var(--aui-shape-control);
+}
+
+[data-aui-profile="macos-productivity"] [data-aui-component="tabbar"] {
+  display: none;
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="compact"]
+  [data-aui-adaptive="workspace"] {
+  display: block;
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="navigation"] {
+  position: fixed;
+  z-index: 20;
+  inset: var(--aui-space-3) auto var(--aui-space-3) var(--aui-space-3);
+  box-shadow: var(--aui-shadow-transient);
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="regular"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(12rem, var(--aui-sidebar-width)) minmax(0, 1fr);
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="regular"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="macos-productivity"][data-aui-size-class="expanded"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: var(--aui-sidebar-width) minmax(0, 1fr)
+    minmax(14rem, 20rem);
+}
+
+/* visionOS: a spatial window with floating functional controls and depth. */
+[data-aui-profile="visionos-spatial"] {
+  background:
+    radial-gradient(circle at 50% 18%, rgb(255 255 255 / 0.2), transparent 42%),
+    var(--aui-canvas);
+  perspective: 1200px;
+}
+
+[data-aui-profile="visionos-spatial"] [data-aui-component="window"] {
+  max-inline-size: min(96vw, 88rem);
+  margin: clamp(1rem, 4vw, 4rem) auto;
+  border: 1px solid rgb(255 255 255 / 0.38);
+  border-radius: 2.75rem;
+  background: color-mix(in srgb, var(--aui-content-plane) 90%, transparent);
+  box-shadow:
+    0 48px 120px rgb(0 0 0 / 0.28),
+    0 2px 0 rgb(255 255 255 / 0.42) inset;
+  transform: translateZ(0);
+  transform-style: preserve-3d;
+}
+
+[data-aui-profile="visionos-spatial"]
+  :where([data-aui-component="toolbar"], [data-aui-component="floating-control"]) {
+  box-shadow:
+    var(--aui-shadow-functional),
+    0 22px 42px rgb(0 0 0 / 0.16);
+  transform: translateZ(28px);
+}
+
+[data-aui-profile="visionos-spatial"] [data-aui-component="tabbar"] {
+  display: none;
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="compact"]
+  [data-aui-adaptive="workspace"] {
+  display: block;
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="navigation"],
+[data-aui-profile="visionos-spatial"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="compact"]
+  [data-aui-component="toolbar"] {
+  position: sticky;
+  inset-block-end: var(--aui-space-4);
+  margin: var(--aui-space-4);
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="regular"]
+  [data-aui-adaptive="workspace"] {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
+  gap: var(--aui-space-6);
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="regular"]
+  [data-aui-adaptive-region="navigation"] {
+  position: absolute;
+  z-index: 12;
+  inset: var(--aui-space-6) auto auto var(--aui-space-6);
+  inline-size: min(18rem, 42%);
+}
+
+[data-aui-profile="visionos-spatial"][data-aui-size-class="expanded"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr)
+    minmax(15rem, 20rem);
+  gap: var(--aui-space-8);
+  padding: var(--aui-space-6);
+}
+
+/* Editorial Web: content-led column, then optional contextual rail. */
+[data-aui-profile="web-editorial"] [data-aui-adaptive-region="navigation"],
+[data-aui-profile="web-editorial"] [data-aui-component="tabbar"] {
+  display: none;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="compact"]
+  [data-aui-adaptive="workspace"] {
+  display: block;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="compact"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="regular"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(0, 60rem);
+  justify-content: center;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="regular"]
+  [data-aui-adaptive-region="inspector"] {
+  display: none;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="expanded"]
+  [data-aui-adaptive="workspace"] {
+  display: grid;
+  grid-template-columns: minmax(var(--aui-space-8), 1fr) minmax(0, 76rem)
+    minmax(14rem, 20rem) minmax(var(--aui-space-8), 1fr);
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="expanded"]
+  [data-aui-adaptive-region="content"] {
+  grid-column: 2;
+}
+
+[data-aui-profile="web-editorial"][data-aui-size-class="expanded"]
+  [data-aui-adaptive-region="inspector"] {
+  grid-column: 3;
+}
+
+/* Increased contrast keeps the same hierarchy with explicit boundaries. */
+@media (prefers-contrast: more) {
+  :root,
+  [data-aui-fidelity="apple-fidelity-web/v1"] {
+    --aui-separator: currentColor;
+    --aui-material-regular-border: currentColor;
+    --aui-material-clear-border: currentColor;
+    --aui-focus-outer: var(--aui-accent);
+    --aui-shadow-functional: none;
+    --aui-shadow-transient: 0 0 0 2px currentColor;
+  }
+
+  [data-aui-component="list"] > :is(
+    [aria-current="page"],
+    [aria-selected="true"],
+    [aria-pressed="true"]
+  ) {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+}
+
+/* Translucency always has an opaque, bounded functional fallback. */
+@media (prefers-reduced-transparency: reduce) {
+  [data-aui-layer="functional"][data-aui-material] {
+    border-color: var(--aui-separator-opaque);
+    background: var(--aui-content-plane);
+    box-shadow: var(--aui-shadow-hairline);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  [data-aui-layer="functional"][data-aui-material]::before,
+  [data-aui-layer="functional"][data-aui-material="clear"]::after {
+    content: none;
+  }
+}
+
+[data-aui-no-backdrop] [data-aui-layer="functional"][data-aui-material] {
+  border-color: var(--aui-separator-opaque);
+  background: var(--aui-content-plane);
+  box-shadow: var(--aui-shadow-hairline);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+[data-aui-no-backdrop] [data-aui-layer="functional"][data-aui-material]::before,
+[data-aui-no-backdrop] [data-aui-layer="functional"][data-aui-material="clear"]::after {
+  content: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-aui-layer="functional"][data-aui-material] {
+    border-color: var(--aui-separator-opaque);
+    background: var(--aui-content-plane);
+    box-shadow: var(--aui-shadow-hairline);
+  }
+
+  [data-aui-layer="functional"][data-aui-material]::before,
+  [data-aui-layer="functional"][data-aui-material="clear"]::after {
+    content: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  [data-aui-fidelity="apple-fidelity-web/v1"] {
+    --aui-motion-fast: 60ms;
+    --aui-motion-standard: 80ms;
+    --aui-motion-slow: 100ms;
+    --aui-ease-spring: linear;
+    --aui-press-scale: 1;
+  }
+
+  [data-aui-pressable] {
+    transform: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root,
+  [data-aui-fidelity="apple-fidelity-web/v1"] {
+    --aui-accent: Highlight;
+    --aui-accent-foreground: HighlightText;
+    --aui-label-primary: CanvasText;
+    --aui-label-secondary: CanvasText;
+    --aui-canvas: Canvas;
+    --aui-content-plane: Canvas;
+    --aui-content-plane-secondary: Canvas;
+    --aui-fill: Canvas;
+    --aui-fill-strong: Canvas;
+    --aui-separator: CanvasText;
+    --aui-separator-opaque: CanvasText;
+    --aui-focus-outer: Highlight;
+    --aui-shadow-functional: none;
+    --aui-shadow-transient: none;
+  }
+
+  [data-aui-layer="functional"][data-aui-material] {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    forced-color-adjust: auto;
+  }
+
+  [data-aui-layer="functional"][data-aui-material]::before,
+  [data-aui-layer="functional"][data-aui-material="clear"]::after,
+  [data-aui-pressable]::after {
+    content: none;
+  }
+
+  [data-aui-component="list"] > :is(
+    [aria-current="page"],
+    [aria-selected="true"],
+    [aria-pressed="true"]
+  ) {
+    border: 2px solid Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
+@container (max-width: 37.499rem) {
+  [data-aui-component="segmented"] {
+    inline-size: 100%;
+  }
+
+  [data-aui-component="sheet"] {
+    padding: var(--aui-space-4);
+  }
+}

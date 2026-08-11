@@ -11,12 +11,12 @@ func TestVersionInfoReportsExtensionCapabilities(t *testing.T) {
 		"0.1.173",
 		"29009f0b2ea1",
 		"2026-08-09T16:09:17+08:00",
-		"1.0.0",
-		"account_cost_loss_ledger.v1",
+		"1.1.0",
+		"account_cost_loss_ledger.v1|account_economics_sampling.v1",
 	)
 
 	require.Equal(t,
-		"Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00, extension: 1.0.0, capabilities: account_cost_loss_ledger.v1)",
+		"Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00, extension: 1.1.0, capabilities: account_cost_loss_ledger.v1|account_economics_sampling.v1)",
 		info,
 	)
 }

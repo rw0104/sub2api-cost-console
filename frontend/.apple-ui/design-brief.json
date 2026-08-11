@@ -1,0 +1,286 @@
+{
+  "schema_version": "1.1",
+  "mission_contract": "apple-design-knowledge-to-interface/v1",
+  "delivery_mode": "functional-implementation",
+  "visual_intent": {
+    "mode": "apple-fidelity",
+    "reason": "Strict Apple fidelity is the default visual contract."
+  },
+  "visual_system": {
+    "contract": "apple-fidelity-web/v1",
+    "profile": "macos-productivity",
+    "manifest_ref": "visual-system.json",
+    "required_axes": [
+      "platform-anatomy",
+      "typography",
+      "semantic-color",
+      "geometry",
+      "functional-material",
+      "component-states",
+      "motion",
+      "responsive-continuity"
+    ],
+    "evidence_ids": ["official-1", "image-1", "video-1", "derived-1"]
+  },
+  "target": {
+    "platform_or_web_analogy": "Windows Tauri desktop web app with macOS productivity analogy",
+    "form_factors": [
+      "expanded desktop window with dense data tables",
+      "regular resizable desktop window",
+      "compact desktop window with stacked summaries and horizontally scrollable tables"
+    ],
+    "input_modes": ["keyboard", "pointer", "touch fallback", "screen reader"],
+    "platform_adaptations": [
+      "Keep Windows/Tauri window behavior and existing Vue routing; use macOS productivity only for density, toolbar anatomy, materials, focus, and keyboard interaction.",
+      "Use native HTML selects for modest value lists so Windows and assistive technology retain familiar selection behavior.",
+      "Preserve all committed filters and the active workspace while the layout changes size class."
+    ]
+  },
+  "primary_user_outcome": "Make economics and account-health history truthful at every time scale, expose bounded health inspection, and keep the desktop shell coherent",
+  "essential_content_hierarchy": [
+    "Global freshness and source-health summary: users first see whether each source is measured, estimated, stale, unavailable, or genuinely zero.",
+    "Time semantics: natural day, rolling window, lifetime cumulative, and retained history are labeled before numeric comparison.",
+    "Adaptive operational metrics and charts: 5-second to 6-hour buckets target 30-120 points; only valid finite values render as money, counts, or latency and unavailable values render a reason and retry path.",
+    "Account, model, and route evidence tables: each row exposes measured, fallback, estimated, or missing provenance.",
+    "Data governance workspace: source inventory, retention policy, history coverage, immutable-ledger boundary, and safe maintenance actions."
+  ],
+  "product_expression": {
+    "adjectives": ["trustworthy", "calm", "operational", "precise", "dense but breathable"],
+    "rationale": "The console manages money and account availability. Visual polish must reduce ambiguity and increase confidence, never make estimates look more authoritative."
+  },
+  "media_evidence": {
+    "required": true,
+    "reason": "The HIG Materials composition and WWDC25 interaction sequence directly inform separation of the data content plane from the floating functional toolbar."
+  },
+  "evidence_decisions": [
+    {
+      "id": "official-1",
+      "evidence_class": "official",
+      "source_ref": "https://developer.apple.com/design/human-interface-guidelines/materials",
+      "observation": "Apple describes Liquid Glass as a distinct functional layer for navigation and controls, while content surfaces such as tables and data panels remain standard or opaque; status and accessibility guidance requires meaning beyond color alone.",
+      "communicative_purpose": "Protect legibility and make control hierarchy predictable above information-dense content.",
+      "product_decision": "Apply one Regular functional material scope to the sticky console toolbar and transient governance dialog only; keep metrics, charts, tables, and history records opaque.",
+      "condition_changes": "At compact widths the toolbar stacks and horizontally scrolls destinations, but the active workspace and filters remain unchanged.",
+      "accessibility_adaptation": "Reduced transparency and no-backdrop modes use an opaque toolbar; increased contrast and forced colors retain borders, focus, labels, icons, and status text."
+    },
+    {
+      "id": "image-1",
+      "evidence_class": "observed-image",
+      "source_ref": "references/hig-image-atlas.json#hig-materials-intro",
+      "observation": "A 740×416 construction drawing shows a capsule overlapping a square; bent square edges communicate that the upper functional surface affects but does not replace background content.",
+      "media_analysis": {
+        "canvas": "Wide 740×416 landscape teaching illustration with a centered construction diagram.",
+        "composition": "One capsule crosses a square on a visible grid; overlap is the focal relationship and yellow line art remains restrained.",
+        "focal_points": ["capsule and square overlap", "bent background edges beneath the capsule"],
+        "layers": ["construction grid", "background content square", "foreground functional capsule", "line-art lensing cue"],
+        "crop_behavior": "The relationship, not any protected artwork, transfers to the product; compact layouts retain a complete toolbar above complete content rather than cropping either layer.",
+        "negative_space": "Open space around the overlap keeps the cause-and-effect relationship readable.",
+        "purpose": "Teach functional-layer separation, geometry, and visible causality."
+      },
+      "communicative_purpose": "Users can distinguish controls that change the view from the data that is being inspected.",
+      "product_decision": "Keep the toolbar visually floating over a quiet content field; use explicit source badges and boundaries instead of applying glass to every metric card.",
+      "condition_changes": "Expanded windows use one continuous toolbar; compact windows stack its groups without nesting material surfaces.",
+      "accessibility_adaptation": "The hierarchy remains intact when blur, grid decoration, and accent color are removed."
+    },
+    {
+      "id": "video-1",
+      "evidence_class": "observed-video",
+      "source_ref": "references/videos.md#wwdc25-219-dynamics-adaptivity-principles",
+      "observation": "Sparse keyframes show input-local contact feedback, content moving beneath one floating control plane, controls adapting to background, and menus preserving their triggering origin.",
+      "media_analysis": {
+        "time_range": "WWDC25 session 219, Dynamics 1:29–6:00 and Principles 10:31–18:53; sparse keyframes at 220s, 300s, and 400s.",
+        "initial_state": "A quiet control plane sits above legible content.",
+        "transition": "Pointer or touch contact produces local light and restrained scale while scroll state activates one contextual edge.",
+        "interruption": "Presentation feedback begins from the current rendered state and can be reversed without blocking product input.",
+        "completion": "The chosen workspace or maintenance action is visibly and semantically committed, with focus retained or returned.",
+        "input_feedback": "Feedback originates at the actual control, while labels, focus rings, pressed state, and live status provide redundant cues.",
+        "reduced_motion": "Remove spatial flex and lens travel; keep a short opacity/color acknowledgement and immediate semantic state update."
+      },
+      "communicative_purpose": "Immediate causal feedback confirms which control changed the operational view without distracting from live data.",
+      "product_decision": "Use the compiled presentation runtime for toolbar press and pointer-local light; data refresh and selection remain Vue product state, and destructive sample reset uses an anchored confirmation dialog.",
+      "condition_changes": "Pointer feedback is enabled on desktop; keyboard focus remains first-class; reduced-motion and touch paths do not depend on hover.",
+      "accessibility_adaptation": "Focus-visible, aria-current/aria-selected, status text, and confirmation copy carry the same meaning without animation."
+    },
+    {
+      "id": "derived-1",
+      "evidence_class": "derived",
+      "source_ref": "derived-from:official-1,image-1,video-1",
+      "derived_from": ["official-1", "image-1", "video-1"],
+      "observation": "A trustworthy economics console needs a coherent desktop toolbar, an opaque data plane, explicit provenance states, and reversible presentation feedback.",
+      "communicative_purpose": "Make money, health, and history decisions scannable without turning missing data into convincing-looking zeros.",
+      "product_decision": "Compile macos-productivity with the existing Sub2API operational lime accent, add a reusable DataValue state model, introduce a data-governance workspace, and prohibit generic numeric formatters from coercing null or non-finite values to zero.",
+      "condition_changes": "Dense tables scroll on compact windows; summary grids reflow; source truth and active filters persist across all size classes.",
+      "accessibility_adaptation": "Every data state includes text and icon semantics, tables retain reading order, dialogs return focus, and preference fallbacks remove blur/motion without hiding controls."
+    }
+  ],
+  "information_architecture": {
+    "navigation_model": "One persistent desktop toolbar exposes five peer workspaces: asset overview, upstream ranking, channel pool, data governance, and API access. A separately styled Sub2API Settings action leaves the monitoring workspace without pretending to be a sixth selected peer. Route query state preserves the active destination.",
+    "component_anatomy": [
+      "Windows desktop titlebar: app identity, drag region, minimize, maximize/restore, and close using native Windows semantics above the product toolbar.",
+      "Functional toolbar: brand/version, workspace destination group, explicit Sub2API Settings destination, time-window value selector, refresh-period value selector, refresh and fullscreen actions.",
+      "Truth status strip: source name, measured/estimated/stale/unavailable state, last success time, and failure reason.",
+      "Truthful metric: label, optional finite value, unit, provenance badge, time scope, empty/error explanation, and optional recovery action.",
+      "Opaque data sections: metric grids, adaptive charts with at most three visible series, explicit partial/no-data overlays and event markers, plus account/model/route tables with row-level provenance.",
+      "Data governance workspace: source inventory, time semantics, history coverage, retention policy, immutable-ledger notice, and confirmed maintenance actions.",
+      "Confirmation dialog: exact derived-data target, consequence, cancel, and primary confirm; billing ledgers cannot be deleted from this surface."
+    ],
+    "location_action_destination": "The active toolbar destination is labeled and selected; each workspace heading describes its scope; maintenance actions sit next to the history source they affect and explain the post-action state.",
+    "selection_controls": [
+      {
+        "id": "console-static-value-selects",
+        "user_intent": "choose one persistent observation range, refresh interval, ranking metric, model grouping, or audit filter from a short static list",
+        "chosen_pattern": "native-select",
+        "options_shape": "two to nine static mutually exclusive values with short labels",
+        "why_this_pattern": "The choices need no preview, rich rows, search, or nested actions; native Windows and assistive behavior is a product benefit.",
+        "why_native_select": "Retains reliable keyboard, zoom, touch, and screen-reader behavior in the Tauri WebView while exposing the current value.",
+        "compact_adaptation": "native-select with stacked visible label",
+        "expanded_adaptation": "compact native-select inside the functional toolbar or local filter group",
+        "keyboard_and_focus": "Platform-native open, arrow navigation, commit, and focus behavior.",
+        "dismissal_and_persistence": "A committed change updates Vue state and reloads the exact requested window; cancel leaves the prior value.",
+        "accessibility_state": "Visible label is associated with the select and the committed option remains exposed.",
+        "control_state_id": "console-static-value-selects-control",
+        "source_refs": ["references/selection-controls.md#native-select-valid-when-intentional"],
+        "verification_probes": [
+          {"probe": "commit", "state_id": "console-select-commit", "action": "Choose a different observation window", "expected_visible": "The label and data time scope update to the committed value", "expected_semantic": "The select value and dependent headings match", "expected_focus": "Focus remains on the select"},
+          {"probe": "keyboard-navigation", "state_id": "console-select-keyboard", "action": "Focus the select and change value with the keyboard", "expected_visible": "The selected value and data scope update once", "expected_semantic": "A native change event commits one value", "expected_focus": "Focus remains on the select"},
+          {"probe": "platform-fallback", "state_id": "console-select-platform", "action": "Use the control in the Windows WebView and browser fallback", "expected_visible": "The native popup remains legible and current value visible", "expected_semantic": "The control remains a labeled native select", "expected_focus": "Platform-native focus is preserved"}
+        ]
+      },
+      {
+        "id": "workspace-and-platform-modes",
+        "user_intent": "switch among a small visible set of peer workspaces or account-platform views",
+        "chosen_pattern": "segmented-control",
+        "options_shape": "three to five visible mutually exclusive destinations or modes",
+        "why_this_pattern": "The alternatives and current selection must remain glanceable in a desktop operations console.",
+        "why_not_native_select": "Hiding peer destinations would weaken wayfinding and slow repeated monitoring.",
+        "compact_adaptation": "horizontally scrollable labeled segment group without truncating the selected item",
+        "expanded_adaptation": "persistent toolbar or local segmented group",
+        "keyboard_and_focus": "Tab enters the group; arrow keys move the active choice; activation updates aria-current or aria-selected.",
+        "dismissal_and_persistence": "Selection persists in route or local product state and does not use a transient popup.",
+        "accessibility_state": "Group label, selected state, visible text, and non-color indicator.",
+        "control_state_id": "workspace-and-platform-modes-control",
+        "source_refs": ["references/selection-controls.md#segmented-controls"],
+        "verification_probes": [
+          {"probe": "commit", "state_id": "segments-commit", "action": "Activate another workspace or platform", "expected_visible": "Exactly one segment and its content are selected", "expected_semantic": "aria-current or aria-selected moves to the committed segment", "expected_focus": "Focus remains on the activated segment"},
+          {"probe": "keyboard-navigation", "state_id": "segments-keyboard", "action": "Navigate the visible choices by keyboard", "expected_visible": "The intended choice becomes selected without hiding labels", "expected_semantic": "The group exposes one selected item", "expected_focus": "Focus follows the active item"},
+          {"probe": "non-color-selection", "state_id": "segments-non-color", "action": "Inspect with color removed or forced colors", "expected_visible": "Selection remains identifiable by shape, text weight, and indicator", "expected_semantic": "Selected state remains exposed", "expected_focus": "The selected control stays keyboard reachable"}
+        ]
+      },
+      {
+        "id": "model-account-filter",
+        "user_intent": "choose one account whose retained model-cost history should be inspected",
+        "chosen_pattern": "native-select",
+        "options_shape": "dynamic account list with one aggregate option; desktop users primarily select by account name",
+        "why_this_pattern": "This change preserves the existing stable control while truthful data-state work is completed; account search remains available in the upstream workspace.",
+        "why_native_select": "The current Tauri WebView supplies typeahead and a scrollable system list without introducing an unverified custom combobox.",
+        "compact_adaptation": "full-width labeled native select",
+        "expanded_adaptation": "labeled native select with enough inline width for account identity",
+        "keyboard_and_focus": "Native typeahead, arrows, commit, and focus behavior.",
+        "dismissal_and_persistence": "Commit reloads the exact model window; cancellation preserves the previous account.",
+        "accessibility_state": "Visible label and selected account name; deleted accounts remain represented only through retained-history labels, not fabricated live rows.",
+        "control_state_id": "model-account-filter-control",
+        "source_refs": ["references/selection-controls.md#native-select-valid-when-intentional"],
+        "verification_probes": [
+          {"probe": "commit", "state_id": "account-filter-commit", "action": "Choose a specific account", "expected_visible": "The heading and model rows show the selected account scope", "expected_semantic": "The select value and data query scope match", "expected_focus": "Focus remains on the select"},
+          {"probe": "keyboard-navigation", "state_id": "account-filter-keyboard", "action": "Use native typeahead or arrows", "expected_visible": "A named account can be selected", "expected_semantic": "One option is committed", "expected_focus": "Native focus is preserved"},
+          {"probe": "platform-fallback", "state_id": "account-filter-platform", "action": "Open the account list in the Windows WebView", "expected_visible": "Long account labels remain inspectable and the selected value is visible", "expected_semantic": "The control remains a native labeled select", "expected_focus": "The platform restores focus after closing"}
+        ]
+      },
+      {
+        "id": "history-date-time-fields",
+        "user_intent": "enter bounded history, expiry, and audit date-time values with the platform picker",
+        "chosen_pattern": "native-date-picker",
+        "options_shape": "calendar dates and local date-time values constrained by each form's minimum and maximum",
+        "why_this_pattern": "These controls collect literal temporal values rather than choosing actions or navigating destinations; the Windows WebView picker supplies familiar calendar, keyboard, locale, and touch behavior.",
+        "why_native_picker": "The value is a literal date or local date-time and does not require rich results, search, actions, or custom preview; using the WebView's native picker preserves locale, validation, keyboard, and touch conventions.",
+        "compact_adaptation": "full-width labeled native date or datetime-local input",
+        "expanded_adaptation": "labeled native date or datetime-local field aligned with the related form values",
+        "keyboard_and_focus": "Platform-native typing, picker invocation, validation, commit, and focus behavior.",
+        "dismissal_and_persistence": "Closing without commit preserves the prior form value; submitting the parent form persists the validated temporal value.",
+        "accessibility_state": "Every temporal input keeps a visible associated label, native value semantics, validation text, and disabled or required state.",
+        "control_state_id": "history-date-time-fields-control",
+        "source_refs": ["references/selection-controls.md#native-date-and-time-inputs"],
+        "verification_probes": [
+          {"probe": "commit", "state_id": "date-time-commit", "action": "Choose a valid date or local date-time", "expected_visible": "The committed localized value remains visible", "expected_semantic": "The native input value matches the form state", "expected_focus": "Focus returns to or remains on the input"},
+          {"probe": "keyboard-navigation", "state_id": "date-time-keyboard", "action": "Enter and adjust the value with the keyboard", "expected_visible": "The date parts update without hiding validation", "expected_semantic": "The native input exposes the updated value", "expected_focus": "Platform-native focus is preserved"},
+          {"probe": "validation", "state_id": "date-time-validation", "action": "Enter a value outside the permitted boundary", "expected_visible": "The form exposes a specific validation message", "expected_semantic": "The invalid state is announced and submission is blocked", "expected_focus": "Focus can return to the invalid field"}
+        ]
+      }
+    ],
+    "selection_controls_none_reason": ""
+  },
+  "visual_direction": {
+    "typography": "Use the compiled system stack with compact desktop text roles: tight display headings, readable body leading, tabular/monospaced numerals for money and diagnostics, and wrapping for status explanations.",
+    "color": "Retain the product-owned Sub2API operational lime as selection and primary-action accent; separate success, warning, danger, information, labels, surfaces, and focus into semantic roles.",
+    "color_system": {
+      "source": "existing Sub2API Cost Console operational lime and dark instrumentation identity",
+      "source_evidence": "The current product consistently uses #B9E55A for selected navigation and primary refresh actions; the graph-paper field is an established economics-console identity rather than a generic AI palette.",
+      "role_map": [
+        "label-primary: essential money, status, and headings",
+        "label-secondary: provenance and time-scope explanation",
+        "canvas/surface/surface-raised: dark opaque data hierarchy",
+        "action/selection: Sub2API lime, reserved for active destination and one primary action",
+        "success/warning/danger/info: independent operational states paired with icon and text",
+        "focus-ring: high-contrast light-lime boundary distinct from selected fill",
+        "material-regular: neutral adaptive toolbar material with opaque fallback"
+      ],
+      "appearance_matrix": {
+        "light": "Compiled profile supplies light roles; data states preserve labels and non-color cues.",
+        "dark": "Primary shipped appearance uses deep neutral surfaces, restrained lime selection, readable white labels, and stronger separators around dense tables.",
+        "increased_contrast": "Strengthen boundaries, focus, text separation, and chart patterns without changing state meanings.",
+        "reduced_transparency": "Toolbar and dialogs become opaque neutral surfaces with explicit borders.",
+        "forced_colors": "Use system Canvas, CanvasText, Highlight, ButtonText, and visible outlines; icons and state labels remain present."
+      },
+      "accent_distribution": "Accent foreground marks ordinary selection; accent background is limited to the active workspace and the one primary maintenance/refresh action in a group; status colors never reuse accent semantics.",
+      "non_color_cues": ["status icon", "explicit status label", "provenance badge text", "selected indicator/weight", "border or pattern", "aria state"],
+      "measured_pairs": ["not-tested during briefing; final runtime verification must measure primary/secondary text, accent controls, focus, warnings, and error states on actual dark and light surfaces"],
+      "gradient_rationale": "The existing subtle orthogonal grid is retained only on the canvas as product-owned instrumentation context; chart series and status never depend on decorative gradients, and functional material gradients come only from the compiled profile."
+    },
+    "geometry": "Use compact fixed-radius desktop controls, stable opaque section containers, and concentric toolbar/dialog geometry; capsules are reserved for visible segments, status badges, and prominent actions.",
+    "material": "One Regular functional material scope covers the sticky toolbar; data cards, charts, tables, and governance records remain opaque. Reduced transparency, increased contrast, forced colors, and no-backdrop use explicit opaque boundaries.",
+    "imagery": {
+      "purpose": "No decorative product imagery is introduced; live data and provenance are the focal content. HIG imagery informs layer relationships only.",
+      "focal_points": ["global truth status", "selected workspace", "primary metric values", "history source and consequence of each action"],
+      "crop_behavior": "No bitmap crop; compact layouts reflow complete semantic groups and preserve table access through labeled horizontal scrolling.",
+      "viewport_adaptations": ["expanded multi-column summaries", "regular balanced grids", "compact stacked summaries and scrollable tables"]
+    },
+    "motion": {
+      "purpose": "Confirm causal control interaction and source refresh without animating money values or implying data that has not arrived.",
+      "state_transitions": [
+        "press feedback begins immediately at the toolbar control and is interruptible",
+        "workspace change preserves route state and uses restrained content cross-fade",
+        "source refresh shows loading then measured/empty/error result without zero interpolation",
+        "history confirmation opens from its action region and returns focus after cancel or completion"
+      ],
+      "reduced_motion_adaptation": "Disable lens travel, scale, and spatial transition; retain immediate semantic updates and a short opacity/color acknowledgement."
+    }
+  },
+  "accessibility": {
+    "semantic_structure": "Landmarks, one page heading, labeled workspace navigation, real buttons/selects, table headers, status regions, and modal dialog semantics describe the interface without styling.",
+    "input_equivalence": "Every action is keyboard and pointer reachable; native selects preserve platform input; workspace groups expose selection; dialogs support Escape, Cancel, confirmation, and focus return.",
+    "large_text_and_localization": "Use rem-based typography, wrap status and provenance text, stack control groups and metric grids, and never truncate the only words that distinguish a data state.",
+    "contrast_and_non_color_cues": "State color is always paired with icon, label, badge text, selected geometry, or border; visible focus and forced-color outlines remain.",
+    "reduced_transparency_adaptation": "Compiled opaque fallback replaces toolbar/dialog blur while preserving layer position, separation, focus, and status hierarchy."
+  },
+  "deliberate_deviations": {
+    "items": [
+      {
+        "decision": "Keep the established Windows/Tauri dark graph-paper product identity instead of adding fake macOS window chrome.",
+        "reason": "The macOS productivity profile governs hierarchy, density, toolbar anatomy, focus, and motion; imitating platform chrome would reduce familiarity on Windows and obscure the product's own identity."
+      },
+      {
+        "decision": "Retain the native account select during this release instead of introducing a custom searchable combobox.",
+        "reason": "A custom composite needs focused keyboard, touch, screen-reader, dismissal, and runtime verification; truthful data states and history governance are the higher-priority user outcome for this release."
+      }
+    ],
+    "none_reason": ""
+  },
+  "anti_pattern_risks": [
+    {"risk": "Applying translucent material to every metric card", "mitigation": "Restrict compiled Regular material to the toolbar and transient dialog; keep the data plane opaque."},
+    {"risk": "Using formatted zero for missing or failed data", "mitigation": "Introduce explicit source and value states; numeric formatters accept only finite available values."},
+    {"risk": "Using lime for action, health, warning, and decoration at once", "mitigation": "Separate selection/action accent from operational success, warning, danger, and information roles."},
+    {"risk": "A history reset button implies billing data deletion", "mitigation": "Name the exact derived economics-sample target, keep usage and loss ledgers immutable from this panel, and require explicit confirmation."},
+    {"risk": "Responsive design merely shrinks the dense canvas", "mitigation": "Reflow summaries and toolbar groups while preserving scrollable evidence tables, selection, and source state."}
+  ],
+  "open_questions": []
+}

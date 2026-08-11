@@ -231,6 +231,7 @@ func ProvideAccountTestService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
+	rateLimitService *RateLimitService,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -244,6 +245,7 @@ func ProvideAccountTestService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.SetSettingService(settingService)
+	service.SetRateLimitService(rateLimitService)
 	return service
 }
 
@@ -429,6 +431,19 @@ func ProvideRateLimitService(
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	svc.SetAccountCostLossService(accountCostLoss)
+	return svc
+}
+
+// ProvideAccountEconomicsService starts the persistent observation adapter.
+// The samples contain cumulative usage only; billing and procurement ledgers
+// remain authoritative in usage_logs and account_cost_loss_events.
+func ProvideAccountEconomicsService(
+	accountRepo AccountRepository,
+	economicsRepo AccountEconomicsRepository,
+	accountCostLoss *AccountCostLossService,
+) *AccountEconomicsService {
+	svc := NewAccountEconomicsService(accountRepo, economicsRepo, accountCostLoss)
+	svc.Start()
 	return svc
 }
 
@@ -759,6 +774,7 @@ var ProviderSet = wire.NewSet(
 	NewCompositeRouteResolver,
 	NewAccountService,
 	NewAccountCostLossService,
+	ProvideAccountEconomicsService,
 	NewProxyService,
 	NewRedeemService,
 	NewPromoService,

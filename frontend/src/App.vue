@@ -12,6 +12,7 @@ import { updateFavicon } from '@/utils/branding'
 import { isDesktopRuntime } from '@/api/url'
 import DesktopBackendGate from '@/features/desktop/DesktopBackendGate.vue'
 import DesktopUpdateCenter from '@/features/desktop/DesktopUpdateCenter.vue'
+import DesktopTitleBar from '@/features/desktop/DesktopTitleBar.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,6 +23,7 @@ const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 const desktopBackendReady = ref(!isDesktopRuntime())
+const desktopRuntime = isDesktopRuntime()
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -151,13 +153,24 @@ onMounted(async () => {
 </script>
 
 <template>
-  <DesktopBackendGate v-if="!desktopBackendReady" @ready="onDesktopBackendReady" />
-  <template v-else>
-    <NavigationProgress />
-    <RouterView />
-    <Toast />
-    <AnnouncementPopup />
-    <AdminComplianceDialog />
-    <DesktopUpdateCenter />
-  </template>
+  <div class="app-window" :class="{ 'app-window--desktop': desktopRuntime }">
+    <DesktopTitleBar v-if="desktopRuntime" />
+    <div class="app-window__content">
+      <DesktopBackendGate v-if="!desktopBackendReady" @ready="onDesktopBackendReady" />
+      <template v-else>
+        <NavigationProgress />
+        <RouterView />
+        <Toast />
+        <AnnouncementPopup />
+        <AdminComplianceDialog />
+        <DesktopUpdateCenter />
+      </template>
+    </div>
+  </div>
 </template>
+
+<style>
+.app-window { min-height: 100vh; }
+.app-window--desktop { display: flex; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; background: #0c110d; border: 1px solid #2f3930; }
+.app-window--desktop .app-window__content { min-height: 0; flex: 1; overflow: auto; }
+</style>

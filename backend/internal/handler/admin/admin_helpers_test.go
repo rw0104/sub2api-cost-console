@@ -193,9 +193,13 @@ func TestParseOpsRealtimeWindow(t *testing.T) {
 }
 
 func TestPickThroughputBucketSeconds(t *testing.T) {
+	require.Equal(t, 5, pickThroughputBucketSeconds(time.Minute))
+	require.Equal(t, 15, pickThroughputBucketSeconds(5*time.Minute))
 	require.Equal(t, 60, pickThroughputBucketSeconds(30*time.Minute))
 	require.Equal(t, 300, pickThroughputBucketSeconds(6*time.Hour))
-	require.Equal(t, 3600, pickThroughputBucketSeconds(48*time.Hour))
+	require.Equal(t, 900, pickThroughputBucketSeconds(24*time.Hour))
+	require.Equal(t, 7200, pickThroughputBucketSeconds(7*24*time.Hour))
+	require.Equal(t, 21600, pickThroughputBucketSeconds(30*24*time.Hour))
 }
 
 func TestParseOpsQueryMode(t *testing.T) {

@@ -50,6 +50,81 @@ export interface AccountCostLossStatesResponse {
   states: AccountCostLossState[]
 }
 
+export interface AccountEconomicsSnapshot {
+  algorithm_version: string
+  projection_version: string
+  sampled_at: string
+  scope: { platform?: string }
+  cny_per_usd: number
+  health: {
+    account_count: number
+    normal_count: number
+    rate_limited_count: number
+    error_count: number
+    healthy_ratio: number
+    membership_hash: string
+  }
+  actual: {
+    billed_usd: number
+    account_cost_usd: number
+    procurement_accrued_cny: number
+    impairment_loss_cny: number
+    economic_cost_cny: number
+    contribution_margin_cny: number
+    cny_per_billed_usd: number | null
+    payback_ratio: number | null
+    projected_contribution_cny_per_hour: number | null
+    estimated_payback_hours: number | null
+  }
+  projection: {
+    version: string
+    confidence: 'unavailable' | 'low' | 'medium' | 'high'
+    warning?: string
+    valid_intervals: number
+    reset_intervals: number
+    coverage_hours: number
+    billed_usd_per_hour: number | null
+    account_cost_usd_per_hour: number | null
+    capacity_adjusted_billed_usd_per_hour: number | null
+    capacity_adjusted_account_cost_usd_per_hour: number | null
+    capacity_adjustment: number
+    healthy_capacity_ratio: number
+  }
+  data_quality: {
+    status: 'complete' | 'partial'
+    sample_count: number
+    invalid_cost_profile_count: number
+    exchange_rate_source: string
+  }
+  series: Array<{
+    sampled_at: string
+    normal_count: number
+    rate_limited_count: number
+    error_count: number
+    billed_usd_per_hour: number | null
+    account_cost_usd_per_hour: number | null
+    stable: boolean
+  }>
+  events: Array<{
+    occurred_at: string
+    kind: 'core_started' | 'pool_membership_changed' | 'counter_regression' | 'sampling_gap' | 'impairment_confirmed' | string
+    label: string
+    severity: 'info' | 'warning' | string
+  }>
+}
+
+export async function getEconomicsSnapshot(input: {
+  scope?: string
+  platform?: string
+  account_ids?: string
+  cny_per_usd: number
+  exchange_rate_source?: string
+  window_hours?: number
+}): Promise<AccountEconomicsSnapshot> {
+  const { data } = await apiClient.get<AccountEconomicsSnapshot>('/admin/accounts/economics/snapshot', { params: input })
+  return data
+}
+
 export interface AccountCostLossEvent {
   id: number
   account_id?: number
@@ -635,9 +710,10 @@ export interface BatchTodayStatsResponse {
  * @param accountIds - 账号 ID 列表
  * @returns 以账号 ID（字符串）为键的统计映射
  */
-export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTodayStatsResponse> {
+export async function getBatchTodayStats(accountIds: number[], startTime?: string): Promise<BatchTodayStatsResponse> {
   const { data } = await apiClient.post<BatchTodayStatsResponse>('/admin/accounts/today-stats/batch', {
-    account_ids: accountIds
+    account_ids: accountIds,
+    start_time: startTime
   })
   return data
 }
@@ -1175,7 +1251,8 @@ export const accountsAPI = {
   listCostLossStates,
   confirmCostLoss,
   recordCostLossRefund,
-  reverseCostLoss
+  reverseCostLoss,
+  getEconomicsSnapshot
 }
 
 export default accountsAPI

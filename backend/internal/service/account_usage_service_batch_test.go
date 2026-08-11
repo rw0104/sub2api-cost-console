@@ -13,6 +13,20 @@ import (
 // Minimal UsageLogRepository stub for batch usage tests (HEAD lacks geminiUsageLogRepoStub).
 type usageBatchLogRepoStub struct{}
 
+type usageBatchWindowRecorder struct {
+	usageBatchLogRepoStub
+	start time.Time
+}
+
+func (r *usageBatchWindowRecorder) GetAccountWindowStatsBatch(_ context.Context, ids []int64, start time.Time) (map[int64]*usagestats.AccountStats, error) {
+	r.start = start
+	result := make(map[int64]*usagestats.AccountStats, len(ids))
+	for _, id := range ids {
+		result[id] = &usagestats.AccountStats{Requests: 1, Cost: 2.5}
+	}
+	return result, nil
+}
+
 var _ UsageLogRepository = (*usageBatchLogRepoStub)(nil)
 
 func (r *usageBatchLogRepoStub) Create(context.Context, *UsageLog) (bool, error) {
@@ -187,5 +201,22 @@ func TestAccountUsageService_GetUsageBatch_BestEffortByAccount(t *testing.T) {
 
 	if !strings.Contains(strings.ToLower(errorsByAccount[7003]), "does not support usage query") {
 		t.Fatalf("expected API key account error to be preserved, got %q", errorsByAccount[7003])
+	}
+}
+
+func TestAccountUsageService_GetWindowStatsBatchUsesClientCalendarBoundary(t *testing.T) {
+	start := time.Date(2026, time.August, 11, 7, 0, 0, 0, time.UTC)
+	repo := &usageBatchWindowRecorder{}
+	svc := &AccountUsageService{usageLogRepo: repo}
+
+	stats, err := svc.GetWindowStatsBatch(context.Background(), []int64{423}, start)
+	if err != nil {
+		t.Fatalf("GetWindowStatsBatch() error = %v", err)
+	}
+	if !repo.start.Equal(start) {
+		t.Fatalf("window start = %s, want %s", repo.start, start)
+	}
+	if stats[423] == nil || stats[423].Cost != 2.5 {
+		t.Fatalf("unexpected stats: %#v", stats[423])
 	}
 }

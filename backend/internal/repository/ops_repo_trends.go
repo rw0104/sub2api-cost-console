@@ -24,8 +24,7 @@ func (r *opsRepository) GetThroughputTrend(ctx context.Context, filter *service.
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
 	}
-	if bucketSeconds != 60 && bucketSeconds != 300 && bucketSeconds != 3600 {
-		// Keep a small, predictable set of supported buckets for now.
+	if !supportedOpsBucketSeconds(bucketSeconds) {
 		bucketSeconds = 60
 	}
 
@@ -42,7 +41,16 @@ func (r *opsRepository) GetThroughputTrend(ctx context.Context, filter *service.
 WITH usage_buckets AS (
   SELECT ` + usageBucketExpr + ` AS bucket,
          COUNT(*) AS success_count,
-         COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS token_consumed
+		 COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS token_consumed,
+		 COALESCE(SUM(input_tokens), 0) AS input_tokens,
+		 COALESCE(SUM(output_tokens), 0) AS output_tokens,
+		 COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+		 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+		 COALESCE(SUM(actual_cost), 0) AS user_billed_usd,
+		 COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS account_cost_usd,
+		 percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) AS duration_p95_ms,
+		 percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p50_ms,
+		 percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) AS ttft_p95_ms
   FROM usage_logs ul
   ` + usageJoin + `
   ` + usageWhere + `
@@ -76,15 +84,27 @@ combined AS (
     SUM(success_count) AS success_count,
     SUM(error_count) AS error_count,
     SUM(token_consumed) AS token_consumed,
-    SUM(switch_count) AS switch_count
+	SUM(input_tokens) AS input_tokens,
+	SUM(output_tokens) AS output_tokens,
+	SUM(cache_creation_tokens) AS cache_creation_tokens,
+	SUM(cache_read_tokens) AS cache_read_tokens,
+	SUM(switch_count) AS switch_count,
+	SUM(user_billed_usd) AS user_billed_usd,
+	SUM(account_cost_usd) AS account_cost_usd,
+	MAX(duration_p95_ms) AS duration_p95_ms,
+	MAX(ttft_p50_ms) AS ttft_p50_ms,
+	MAX(ttft_p95_ms) AS ttft_p95_ms
   FROM (
-    SELECT bucket, success_count, 0 AS error_count, token_consumed, 0 AS switch_count
+	SELECT bucket, success_count, 0 AS error_count, token_consumed,
+	       input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+	       0 AS switch_count, user_billed_usd, account_cost_usd,
+	       duration_p95_ms, ttft_p50_ms, ttft_p95_ms
     FROM usage_buckets
     UNION ALL
-    SELECT bucket, 0, error_count, 0, 0
+	SELECT bucket, 0, error_count, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL
     FROM error_buckets
     UNION ALL
-    SELECT bucket, 0, 0, 0, switch_count
+	SELECT bucket, 0, 0, 0, 0, 0, 0, 0, switch_count, 0, 0, NULL, NULL, NULL
     FROM switch_buckets
   ) t
   GROUP BY bucket
@@ -92,8 +112,19 @@ combined AS (
 SELECT
   bucket,
   (success_count + error_count) AS request_count,
+	success_count,
+	error_count,
   token_consumed,
-  switch_count
+	input_tokens,
+	output_tokens,
+	cache_creation_tokens,
+	cache_read_tokens,
+	switch_count,
+	user_billed_usd,
+	account_cost_usd,
+	duration_p95_ms,
+	ttft_p50_ms,
+	ttft_p95_ms
 FROM combined
 ORDER BY bucket ASC`
 
@@ -108,10 +139,17 @@ ORDER BY bucket ASC`
 	points := make([]*service.OpsThroughputTrendPoint, 0, 256)
 	for rows.Next() {
 		var bucket time.Time
-		var requests int64
-		var tokens sql.NullInt64
+		var requests, successes, errors int64
+		var tokens, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens sql.NullInt64
 		var switches sql.NullInt64
-		if err := rows.Scan(&bucket, &requests, &tokens, &switches); err != nil {
+		var userBilledUSD, accountCostUSD sql.NullFloat64
+		var durationP95, ttftP50, ttftP95 sql.NullFloat64
+		if err := rows.Scan(
+			&bucket, &requests, &successes, &errors, &tokens,
+			&inputTokens, &outputTokens, &cacheCreationTokens, &cacheReadTokens,
+			&switches, &userBilledUSD, &accountCostUSD,
+			&durationP95, &ttftP50, &ttftP95,
+		); err != nil {
 			return nil, err
 		}
 		tokenConsumed := int64(0)
@@ -131,12 +169,13 @@ ORDER BY bucket ASC`
 		tps := roundTo1DP(float64(tokenConsumed) / denom)
 
 		points = append(points, &service.OpsThroughputTrendPoint{
-			BucketStart:   bucket.UTC(),
-			RequestCount:  requests,
-			TokenConsumed: tokenConsumed,
-			SwitchCount:   switchCount,
-			QPS:           qps,
-			TPS:           tps,
+			BucketStart: bucket.UTC(), RequestCount: requests, SuccessCount: successes, ErrorCount: errors,
+			TokenConsumed: tokenConsumed, InputTokens: inputTokens.Int64, OutputTokens: outputTokens.Int64,
+			CacheCreationTokens: cacheCreationTokens.Int64, CacheReadTokens: cacheReadTokens.Int64,
+			SwitchCount: switchCount, UserBilledUSD: userBilledUSD.Float64, AccountCostUSD: accountCostUSD.Float64,
+			ContributionUSD: userBilledUSD.Float64 - accountCostUSD.Float64,
+			DurationP95Ms:   nullableRoundedInt(durationP95), TTFTP50Ms: nullableRoundedInt(ttftP50), TTFTP95Ms: nullableRoundedInt(ttftP95),
+			QPS: qps, TPS: tps,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -332,26 +371,28 @@ LIMIT $4`
 }
 
 func opsBucketExprForUsage(bucketSeconds int) string {
-	switch bucketSeconds {
-	case 3600:
-		return "date_trunc('hour', ul.created_at)"
-	case 300:
-		// 5-minute buckets in UTC.
-		return "to_timestamp(floor(extract(epoch from ul.created_at) / 300) * 300)"
-	default:
-		return "date_trunc('minute', ul.created_at)"
-	}
+	return fmt.Sprintf("to_timestamp(floor(extract(epoch from ul.created_at) / %d) * %d)", bucketSeconds, bucketSeconds)
 }
 
 func opsBucketExprForError(bucketSeconds int) string {
-	switch bucketSeconds {
-	case 3600:
-		return "date_trunc('hour', created_at)"
-	case 300:
-		return "to_timestamp(floor(extract(epoch from created_at) / 300) * 300)"
+	return fmt.Sprintf("to_timestamp(floor(extract(epoch from created_at) / %d) * %d)", bucketSeconds, bucketSeconds)
+}
+
+func supportedOpsBucketSeconds(value int) bool {
+	switch value {
+	case 5, 15, 60, 300, 600, 900, 3600, 7200, 21600:
+		return true
 	default:
-		return "date_trunc('minute', created_at)"
+		return false
 	}
+}
+
+func nullableRoundedInt(value sql.NullFloat64) *int {
+	if !value.Valid {
+		return nil
+	}
+	rounded := int(value.Float64 + 0.5)
+	return &rounded
 }
 
 func opsBucketLabel(bucketSeconds int) string {
@@ -364,6 +405,9 @@ func opsBucketLabel(bucketSeconds int) string {
 			h = 1
 		}
 		return fmt.Sprintf("%dh", h)
+	}
+	if bucketSeconds < 60 {
+		return fmt.Sprintf("%ds", bucketSeconds)
 	}
 	m := bucketSeconds / 60
 	if m <= 0 {
@@ -439,7 +483,7 @@ func (r *opsRepository) GetErrorTrend(ctx context.Context, filter *service.OpsDa
 	if bucketSeconds <= 0 {
 		bucketSeconds = 60
 	}
-	if bucketSeconds != 60 && bucketSeconds != 300 && bucketSeconds != 3600 {
+	if !supportedOpsBucketSeconds(bucketSeconds) {
 		bucketSeconds = 60
 	}
 
@@ -455,6 +499,7 @@ SELECT
   COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND is_business_limited) AS business_limited,
   COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND NOT is_business_limited) AS error_sla,
   COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) NOT IN (429, 529)) AS upstream_excl,
+	COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 402) AS upstream_402,
   COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 429) AS upstream_429,
   COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 529) AS upstream_529
 FROM ops_error_logs
@@ -471,8 +516,8 @@ ORDER BY 1 ASC`
 	points := make([]*service.OpsErrorTrendPoint, 0, 256)
 	for rows.Next() {
 		var bucket time.Time
-		var total, businessLimited, sla, upstreamExcl, upstream429, upstream529 int64
-		if err := rows.Scan(&bucket, &total, &businessLimited, &sla, &upstreamExcl, &upstream429, &upstream529); err != nil {
+		var total, businessLimited, sla, upstreamExcl, upstream402, upstream429, upstream529 int64
+		if err := rows.Scan(&bucket, &total, &businessLimited, &sla, &upstreamExcl, &upstream402, &upstream429, &upstream529); err != nil {
 			return nil, err
 		}
 		points = append(points, &service.OpsErrorTrendPoint{
@@ -483,6 +528,7 @@ ORDER BY 1 ASC`
 			ErrorCountSLA:        sla,
 
 			UpstreamErrorCountExcl429529: upstreamExcl,
+			Upstream402Count:             upstream402,
 			Upstream429Count:             upstream429,
 			Upstream529Count:             upstream529,
 		})

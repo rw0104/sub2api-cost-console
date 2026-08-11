@@ -34,7 +34,7 @@ const emit = defineEmits<{
 }>()
 
 const value = computed(() => {
-  if (!props.state) return '—'
+  if (!props.state) return '未测试'
   if (props.state.loading) return '检测中'
   if (props.state.latency_ms != null) return `${Math.max(1, Math.round(props.state.latency_ms)).toLocaleString()} ms`
   return props.state.success ? '可用' : '失败'

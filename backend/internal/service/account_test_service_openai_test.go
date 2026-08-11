@@ -368,7 +368,7 @@ func TestAccountTestService_OpenAI429ActiveAccountDoesNotClearError(t *testing.T
 	require.NotNil(t, account.RateLimitResetAt)
 }
 
-func TestAccountTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeState(t *testing.T) {
+func TestAccountTestService_OpenAI429WithoutResetSignalUsesFallbackCooldown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -389,12 +389,38 @@ func TestAccountTestService_OpenAI429WithoutResetSignalDoesNotMutateRuntimeState
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
-	require.Zero(t, repo.rateLimitedID)
-	require.Nil(t, repo.rateLimitedAt)
-	require.Zero(t, repo.clearedErrorID)
-	require.Equal(t, StatusError, account.Status)
-	require.Equal(t, "stale 403", account.ErrorMessage)
-	require.Nil(t, account.RateLimitResetAt)
+	require.Equal(t, account.ID, repo.rateLimitedID)
+	require.NotNil(t, repo.rateLimitedAt)
+	require.Greater(t, repo.rateLimitedAt.Unix(), time.Now().Unix())
+	require.Equal(t, account.ID, repo.clearedErrorID)
+	require.Equal(t, StatusActive, account.Status)
+	require.Empty(t, account.ErrorMessage)
+	require.NotNil(t, account.RateLimitResetAt)
+}
+
+func TestAccountTestService_OpenAI402DeactivatedWorkspaceUsesRuntimeTerminalHandling(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	ledger := &memoryCostLossRepository{event: &AccountCostLossEvent{ID: 91}}
+	runtimeRateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	runtimeRateLimits.SetAccountCostLossService(NewAccountCostLossService(ledger))
+	svc := &AccountTestService{accountRepo: repo, rateLimitService: runtimeRateLimits}
+	startedAt := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	account := &Account{
+		ID: 82, Name: "k12-workspace", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		CreatedAt: startedAt, UpdatedAt: startedAt, Extra: map[string]any{"plan_type": "k12"},
+		Credentials: map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{map[string]any{
+				"error_code": 402, "keywords": []any{"deactivated_workspace"}, "duration_minutes": 30,
+			}},
+		},
+	}
+
+	svc.reconcileOpenAIProbeFailure(context.Background(), account, http.StatusPaymentRequired, http.Header{}, []byte(`{"error":{"code":"deactivated_workspace","message":"Workspace has been deactivated"}}`))
+
+	require.Equal(t, TerminalFailureWorkspaceDeactivated, ledger.recorded.Failure.Reason)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, repo.setErrorCalls, "the terminal loss transaction owns account disabling")
 }
 
 func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {

@@ -18,15 +18,15 @@ const RANGE_MILLISECONDS: Record<CostCenterRange, number> = {
 }
 
 const TREND_BUCKET_MILLISECONDS: Record<CostCenterRange, number> = {
-  today: 60 * 60 * 1000,
-  '1m': 60 * 1000,
-  '5m': 60 * 1000,
+  today: 15 * 60 * 1000,
+  '1m': 5 * 1000,
+  '5m': 15 * 1000,
   '30m': 60 * 1000,
   '1h': 60 * 1000,
-  '6h': 60 * 60 * 1000,
-  '24h': 60 * 60 * 1000,
-  '7d': 24 * 60 * 60 * 1000,
-  '30d': 24 * 60 * 60 * 1000,
+  '6h': 5 * 60 * 1000,
+  '24h': 15 * 60 * 1000,
+  '7d': 2 * 60 * 60 * 1000,
+  '30d': 6 * 60 * 60 * 1000,
 }
 
 export function costTrendBucketHours(range: CostCenterRange): number {
@@ -55,29 +55,25 @@ export function localDateParameter(value: Date): string {
 }
 
 function bucketStart(value: Date, range: CostCenterRange): Date {
-  const bucket = new Date(value)
-  bucket.setMilliseconds(0)
-  if (range === '1m' || range === '5m' || range === '30m' || range === '1h') {
-    bucket.setSeconds(0)
-  } else if (range === '7d' || range === '30d') {
-    bucket.setHours(0, 0, 0, 0)
-  } else {
-    bucket.setMinutes(0, 0, 0)
-  }
-  return bucket
+  const size = TREND_BUCKET_MILLISECONDS[range]
+  return new Date(Math.floor(value.getTime() / size) * size)
 }
 
 function parseTrendDate(value: string): Date {
-  const localParts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):?(\d{2})?:?(\d{2})?)?$/)
-  if (localParts) {
-    return new Date(
-      Number(localParts[1]),
-      Number(localParts[2]) - 1,
-      Number(localParts[3]),
-      Number(localParts[4] ?? 0),
-      Number(localParts[5] ?? 0),
-      Number(localParts[6] ?? 0),
-    )
+  const utcParts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):?(\d{2})?:?(\d{2})?)?$/)
+  if (utcParts) {
+    // Sub2API's dashboard SQL formats timestamptz buckets without an offset.
+    // PostgreSQL stores and aggregates those values in UTC, so interpreting the
+    // string as browser-local time shifts every point and can filter the entire
+    // series out of a rolling window.
+    return new Date(Date.UTC(
+      Number(utcParts[1]),
+      Number(utcParts[2]) - 1,
+      Number(utcParts[3]),
+      Number(utcParts[4] ?? 0),
+      Number(utcParts[5] ?? 0),
+      Number(utcParts[6] ?? 0),
+    ))
   }
   return new Date(value)
 }
