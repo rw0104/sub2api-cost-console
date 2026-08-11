@@ -10,7 +10,7 @@ use desktop_runtime::{
     check_core_update, desktop_backend_prepare_relaunch, desktop_backend_start,
     desktop_backend_status, desktop_backend_stop, initialize_backend, inspect_core_identity,
     install_core_update, prepare_core_rollback, restore_bundled_core, shutdown_backend,
-    start_backend,
+    start_backend, BackendSupervisor, CoreCompatibilityAction,
 };
 use desktop_shell::{handle_main_window_event, setup_desktop_shell};
 use setup_environment::{detect_setup_environment, provision_quick_setup};
@@ -28,6 +28,22 @@ fn main() {
             let supervisor = initialize_backend(&handle)
                 .map_err(|error| format!("failed to initialize desktop backend: {error}"))?;
             app.manage(supervisor.clone());
+            match inspect_core_identity(handle.clone()) {
+                Ok(identity)
+                    if matches!(identity.action, CoreCompatibilityAction::InstallBundled) =>
+                {
+                    let state = app.state::<BackendSupervisor>();
+                    if let Err(error) =
+                        tauri::async_runtime::block_on(restore_bundled_core(handle.clone(), state))
+                    {
+                        eprintln!("failed to activate required bundled Sub2API core: {error}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("failed to inspect bundled Sub2API core compatibility: {error}");
+                }
+            }
             if let Err(error) = start_backend(handle, supervisor) {
                 eprintln!("failed to start managed Sub2API backend: {error}");
             }

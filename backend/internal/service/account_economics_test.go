@@ -19,6 +19,22 @@ type economicsRepositoryStub struct {
 	samples []AccountEconomicsSample
 }
 
+type economicsCostLossRepositoryStub struct {
+	states []AccountCostLossState
+}
+
+func (s *economicsCostLossRepositoryStub) RecordTerminalFailure(context.Context, AccountCostLossDraft, string) (*AccountCostLossEvent, bool, error) {
+	return nil, false, nil
+}
+
+func (s *economicsCostLossRepositoryStub) ListStates(context.Context) ([]AccountCostLossState, error) {
+	return append([]AccountCostLossState(nil), s.states...), nil
+}
+
+func (s *economicsCostLossRepositoryStub) RecordAdjustment(context.Context, AccountCostLossAdjustment) (*AccountCostLossEvent, bool, error) {
+	return nil, false, nil
+}
+
 func (s *economicsRepositoryStub) SumUsageTotals(context.Context, []int64) (AccountEconomicsUsageTotals, error) {
 	return s.totals, nil
 }
@@ -192,7 +208,7 @@ func TestAccountEconomicsServiceBuildsVersionedSnapshotFromExistingLedgers(t *te
 	service := NewAccountEconomicsService(
 		&economicsAccountReaderStub{accounts: []Account{account}},
 		repo,
-		NewAccountCostLossService(&memoryCostLossRepository{}),
+		NewAccountCostLossService(&economicsCostLossRepositoryStub{}),
 	)
 
 	snapshot, err := service.GetSnapshot(context.Background(), AccountEconomicsQuery{

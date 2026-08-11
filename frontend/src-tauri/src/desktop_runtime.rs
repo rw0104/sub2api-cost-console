@@ -1882,6 +1882,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_1_5_core_is_replaced_when_desktop_requires_economics_sampling() {
+        let current = CoreVersionRecord {
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: vec![
+                "account_cost_loss_ledger.v1".into(),
+                "account_economics_sampling.v1".into(),
+            ],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
     fn newer_upstream_core_is_never_downgraded_to_gain_a_missing_extension() {
         let current = core_record("0.1.174", "upstream174", "official-sha");
         let bundled = CoreVersionRecord {
@@ -2112,13 +2136,17 @@ mod tests {
     }
 
     #[test]
-    fn official_core_cannot_claim_the_desktop_algorithm_without_capabilities() {
+    fn core_cannot_claim_the_desktop_algorithm_without_every_required_capability() {
         let mut official = core_record("0.1.173", "29009f0b2ea1", "official");
-        official.algorithm_version = "1.5.0".into();
+        official.algorithm_version = "1.6.0".into();
 
         assert_eq!(effective_algorithm_version(&official), "unavailable");
         official.capabilities = vec!["account_cost_loss_ledger.v1".into()];
-        assert_eq!(effective_algorithm_version(&official), "1.5.0");
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official
+            .capabilities
+            .push("account_economics_sampling.v1".into());
+        assert_eq!(effective_algorithm_version(&official), "1.6.0");
     }
 
     #[test]

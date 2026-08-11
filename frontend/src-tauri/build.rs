@@ -49,7 +49,10 @@ fn main() {
     let extension_version = std::fs::read_to_string("../CORE_EXTENSION_VERSION")
         .expect("frontend/CORE_EXTENSION_VERSION must exist");
     let core_capabilities = std::fs::read_to_string("../CORE_CAPABILITIES")
-        .expect("frontend/CORE_CAPABILITIES must exist");
+        .expect("frontend/CORE_CAPABILITIES must exist")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let upstream_commit = std::fs::read_to_string("../UPSTREAM_SUB2API_COMMIT")
         .expect("frontend/UPSTREAM_SUB2API_COMMIT must exist");
     println!("cargo:rerun-if-changed=../CORE_VERSION");
@@ -71,7 +74,7 @@ fn main() {
     );
     println!(
         "cargo:rustc-env=SUB2API_CORE_CAPABILITIES={}",
-        core_capabilities.trim()
+        core_capabilities
     );
     println!(
         "cargo:rustc-env=SUB2API_UPSTREAM_COMMIT={}",
