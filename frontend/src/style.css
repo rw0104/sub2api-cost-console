@@ -531,6 +531,113 @@
     @apply border-l-primary-500;
   }
 
+  /* Modern customizable selects. WebView2 renders the open picker with the
+     same semantic surfaces, spacing and focus language as the application,
+     while native form and keyboard behavior remain intact. */
+  @supports (appearance: base-select) {
+    select:not([multiple]):not([size]),
+    select:not([multiple]):not([size])::picker(select) {
+      appearance: base-select;
+    }
+
+    select:not([multiple]):not([size]) {
+      min-height: 2.5rem;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+    }
+
+    select:not([multiple]):not([size])::picker-icon {
+      margin-inline-start: 0.5rem;
+      color: rgb(107 114 128);
+      transition: rotate 160ms ease, color 160ms ease;
+    }
+
+    select:not([multiple]):not([size]):open::picker-icon {
+      rotate: 180deg;
+    }
+
+    select:not([multiple]):not([size])::picker(select) {
+      max-height: min(20rem, calc(100vh - 2rem));
+      margin-block: 0.375rem;
+      padding: 0.375rem;
+      overflow: auto;
+      color: rgb(31 41 55);
+      background: rgb(255 255 255 / 98%);
+      border: 1px solid rgb(209 213 219);
+      border-radius: 0.75rem;
+      box-shadow: 0 18px 45px rgb(15 23 42 / 18%), 0 2px 8px rgb(15 23 42 / 10%);
+    }
+
+    select:not([multiple]):not([size]) option {
+      min-height: 2.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.625rem 0.75rem;
+      border: 0;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      transition: background-color 120ms ease, color 120ms ease;
+    }
+
+    select:not([multiple]):not([size]) option:hover,
+    select:not([multiple]):not([size]) option:focus-visible {
+      background: rgb(243 244 246);
+      outline: none;
+    }
+
+    select:not([multiple]):not([size]) option:checked {
+      color: rgb(21 128 61);
+      background: rgb(220 252 231);
+      font-weight: 600;
+    }
+
+    select:not([multiple]):not([size]) option::checkmark {
+      order: 2;
+      margin-inline-start: auto;
+      color: currentColor;
+    }
+
+    select:not([multiple]):not([size]) optgroup {
+      padding: 0.375rem;
+      color: rgb(107 114 128);
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    :root.dark select:not([multiple]):not([size])::picker(select),
+    [data-aui-appearance="dark"] select:not([multiple]):not([size])::picker(select) {
+      color: #e5ece5;
+      background: rgb(18 24 19 / 98%);
+      border-color: #3b473d;
+      box-shadow: 0 20px 48px rgb(0 0 0 / 42%), 0 2px 9px rgb(0 0 0 / 28%);
+    }
+
+    :root.dark select:not([multiple]):not([size]) option:hover,
+    :root.dark select:not([multiple]):not([size]) option:focus-visible,
+    [data-aui-appearance="dark"] select:not([multiple]):not([size]) option:hover,
+    [data-aui-appearance="dark"] select:not([multiple]):not([size]) option:focus-visible {
+      background: #252e27;
+    }
+
+    :root.dark select:not([multiple]):not([size]) option:checked,
+    [data-aui-appearance="dark"] select:not([multiple]):not([size]) option:checked {
+      color: #dff7a8;
+      background: #30431f;
+    }
+
+    :root.dark select:not([multiple]):not([size])::picker-icon,
+    [data-aui-appearance="dark"] select:not([multiple]):not([size])::picker-icon {
+      color: #9aa69c;
+    }
+  }
+
+  :root.dark select:not([multiple]),
+  [data-aui-appearance="dark"] select:not([multiple]) {
+    color-scheme: dark;
+  }
+
   /* ============ 侧边栏 ============ */
   .sidebar {
     @apply fixed inset-y-0 left-0 z-40;

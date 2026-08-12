@@ -118,6 +118,7 @@ router.afterEach(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
+  document.documentElement.classList.remove('desktop-runtime')
 })
 
 async function initializeApplication() {
@@ -145,6 +146,7 @@ async function onDesktopBackendReady() {
 }
 
 onMounted(async () => {
+  document.documentElement.classList.toggle('desktop-runtime', desktopRuntime)
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
   if (desktopBackendReady.value) {
     await initializeApplication()
@@ -171,6 +173,46 @@ onMounted(async () => {
 
 <style>
 .app-window { min-height: 100vh; }
-.app-window--desktop { display: flex; height: 100vh; min-height: 0; flex-direction: column; overflow: hidden; background: #0c110d; border: 1px solid #2f3930; }
-.app-window--desktop .app-window__content { min-height: 0; flex: 1; overflow: auto; }
+.app-window--desktop {
+  --desktop-titlebar-height: 36px;
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: #0c110d;
+  border: 1px solid #2f3930;
+}
+.app-window--desktop .app-window__content {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+/* Fixed descendants use the viewport instead of the flex content box. Keep
+   them below the custom Tauri titlebar so every Sub2API route shares one
+   desktop safe area. */
+.app-window--desktop .app-window__content .sidebar {
+  top: var(--desktop-titlebar-height);
+}
+.app-window--desktop .app-window__content .navigation-progress {
+  top: var(--desktop-titlebar-height);
+}
+.app-window--desktop .app-window__content .min-h-screen {
+  min-height: calc(100vh - var(--desktop-titlebar-height));
+}
+.app-window--desktop .app-window__content .h-screen {
+  height: calc(100vh - var(--desktop-titlebar-height));
+}
+
+/* Teleported dialogs live under <body>, outside .app-window__content. They
+   still belong to the application layer and must not cover the native window
+   controls or drag region. */
+:root.desktop-runtime {
+  --desktop-titlebar-height: 36px;
+}
+:root.desktop-runtime body :is(.fixed.inset-0, .modal-overlay) {
+  top: var(--desktop-titlebar-height);
+}
 </style>

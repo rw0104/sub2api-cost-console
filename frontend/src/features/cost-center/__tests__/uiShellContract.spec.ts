@@ -50,7 +50,17 @@ describe('cost center UI shell contract', () => {
     const workspaceItems = source.match(/const workspaceItems = \[([\s\S]*?)\n\]/)?.[1] ?? ''
     expect(workspaceItems).not.toContain("key: 'governance'")
     expect(workspaceItems).toContain("key: 'api'")
-    expect(source).toContain('class="cost-tool-button cost-governance-button"')
+    expect(source).toContain('class="cost-icon-button cost-governance-button"')
+    expect(source).toContain('aria-label="数据治理"')
     expect(source).toContain("@click=\"activePanel = 'governance'\"")
+  })
+
+  it('renders one compact, non-wrapping segmented workspace control', () => {
+    expect(source).toContain('data-aui-component="segmented"')
+    expect(source).not.toContain('data-aui-component="sidebar"')
+    expect(source).toContain(':aria-pressed="activePanel === item.key"')
+    expect(source).toMatch(/\.cost-workspaces button\s*\{[\s\S]*?white-space:\s*nowrap;/)
+    expect(source).toMatch(/\.cost-workspaces button\s*\{[\s\S]*?width:\s*142px;[\s\S]*?flex:\s*0 0 142px;/)
+    expect(source).toMatch(/\.cost-toolbar\s*\{[\s\S]*?min-height:\s*74px;/)
   })
 })

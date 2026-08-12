@@ -32,7 +32,7 @@
     "input_modes": ["keyboard", "pointer", "touch fallback", "screen reader"],
     "platform_adaptations": [
       "Keep Windows/Tauri window behavior and existing Vue routing; use macOS productivity only for density, toolbar anatomy, materials, focus, and keyboard interaction.",
-      "Use native HTML selects for modest value lists so Windows and assistive technology retain familiar selection behavior.",
+      "Use Chromium 134+ customizable HTML selects for modest value lists so the open picker shares the product visual system while native form, keyboard, and assistive semantics remain intact; unsupported browsers keep a functional fallback.",
       "Preserve all committed filters and the active workspace while the layout changes size class."
     ]
   },
@@ -114,7 +114,7 @@
     }
   ],
   "information_architecture": {
-    "navigation_model": "One persistent desktop toolbar exposes five peer workspaces: asset overview, upstream ranking, channel pool, data governance, and API access. A separately styled Sub2API Settings action leaves the monitoring workspace without pretending to be a sixth selected peer. Route query state preserves the active destination.",
+    "navigation_model": "One persistent desktop toolbar exposes four peer monitoring workspaces: asset overview, upstream ranking, channel pool, and API access. Data governance is a compact labeled utility in the trailing action group, and Sub2API Settings is the fifth equal-width destination segment. Route query state preserves the active destination.",
     "component_anatomy": [
       "Windows desktop titlebar: app identity, drag region, minimize, maximize/restore, and close using native Windows semantics above the product toolbar.",
       "Functional toolbar: brand/version, workspace destination group, explicit Sub2API Settings destination, time-window value selector, refresh-period value selector, refresh and fullscreen actions.",
@@ -131,11 +131,11 @@
         "user_intent": "choose one persistent observation range, refresh interval, ranking metric, model grouping, or audit filter from a short static list",
         "chosen_pattern": "native-select",
         "options_shape": "two to nine static mutually exclusive values with short labels",
-        "why_this_pattern": "The choices need no preview, rich rows, search, or nested actions; native Windows and assistive behavior is a product benefit.",
-        "why_native_select": "Retains reliable keyboard, zoom, touch, and screen-reader behavior in the Tauri WebView while exposing the current value.",
-        "compact_adaptation": "native-select with stacked visible label",
-        "expanded_adaptation": "compact native-select inside the functional toolbar or local filter group",
-        "keyboard_and_focus": "Platform-native open, arrow navigation, commit, and focus behavior.",
+        "why_this_pattern": "The choices need no preview, rich rows, search, or nested actions; Chromium's customizable select supplies a product-styled top-layer picker without replacing the form control state machine.",
+        "why_native_select": "The Chromium 134+ base-select appearance exposes the trigger, picker, options, focus and checkmark for styling while retaining value, form, zoom, touch, keyboard and assistive semantics; unsupported browsers progressively fall back to their native picker.",
+        "compact_adaptation": "customizable select with a stacked visible label and viewport-bounded picker",
+        "expanded_adaptation": "compact customizable select inside the functional toolbar or local filter group",
+        "keyboard_and_focus": "Native open, arrow navigation, commit, Escape, Tab and focus behavior; CSS changes presentation only.",
         "dismissal_and_persistence": "A committed change updates Vue state and reloads the exact requested window; cancel leaves the prior value.",
         "accessibility_state": "Visible label is associated with the select and the committed option remains exposed.",
         "control_state_id": "console-static-value-selects-control",
@@ -171,10 +171,10 @@
         "user_intent": "choose one account whose retained model-cost history should be inspected",
         "chosen_pattern": "native-select",
         "options_shape": "dynamic account list with one aggregate option; desktop users primarily select by account name",
-        "why_this_pattern": "This change preserves the existing stable control while truthful data-state work is completed; account search remains available in the upstream workspace.",
-        "why_native_select": "The current Tauri WebView supplies typeahead and a scrollable system list without introducing an unverified custom combobox.",
-        "compact_adaptation": "full-width labeled native select",
-        "expanded_adaptation": "labeled native select with enough inline width for account identity",
+        "why_this_pattern": "The selected account remains a stable form value while Chromium's customizable picker removes the unstyled system popup; account search remains available in the upstream workspace.",
+        "why_native_select": "The current Tauri WebView supplies typeahead and a scrollable list, while base-select exposes the complete open surface for product styling without introducing an unverified custom combobox state machine.",
+        "compact_adaptation": "full-width labeled customizable select",
+        "expanded_adaptation": "labeled customizable select with enough inline width for account identity",
         "keyboard_and_focus": "Native typeahead, arrows, commit, and focus behavior.",
         "dismissal_and_persistence": "Commit reloads the exact model window; cancellation preserves the previous account.",
         "accessibility_state": "Visible label and selected account name; deleted accounts remain represented only through retained-history labels, not fabricated live rows.",
@@ -203,7 +203,9 @@
         "verification_probes": [
           {"probe": "commit", "state_id": "date-time-commit", "action": "Choose a valid date or local date-time", "expected_visible": "The committed localized value remains visible", "expected_semantic": "The native input value matches the form state", "expected_focus": "Focus returns to or remains on the input"},
           {"probe": "keyboard-navigation", "state_id": "date-time-keyboard", "action": "Enter and adjust the value with the keyboard", "expected_visible": "The date parts update without hiding validation", "expected_semantic": "The native input exposes the updated value", "expected_focus": "Platform-native focus is preserved"},
-          {"probe": "validation", "state_id": "date-time-validation", "action": "Enter a value outside the permitted boundary", "expected_visible": "The form exposes a specific validation message", "expected_semantic": "The invalid state is announced and submission is blocked", "expected_focus": "Focus can return to the invalid field"}
+          {"probe": "validation", "state_id": "date-time-validation", "action": "Enter a value outside the permitted boundary", "expected_visible": "The form exposes a specific validation message", "expected_semantic": "The invalid state is announced and submission is blocked", "expected_focus": "Focus can return to the invalid field"},
+          {"probe": "constraint-rejection", "state_id": "date-time-constraint", "action": "Attempt to commit a date outside the configured minimum or maximum", "expected_visible": "The unavailable value is rejected with a specific boundary message", "expected_semantic": "The invalid value is not committed and the native constraint remains exposed", "expected_focus": "Focus remains on or returns to the constrained field"},
+          {"probe": "regional-format", "state_id": "date-time-regional", "action": "Inspect and commit the value under the active browser locale", "expected_visible": "The platform picker and visible value use the active regional order", "expected_semantic": "The submitted ISO value still maps to the same calendar instant", "expected_focus": "Platform-native focus is preserved"}
         ]
       }
     ],
@@ -274,8 +276,8 @@
         "reason": "The macOS productivity profile governs hierarchy, density, toolbar anatomy, focus, and motion; imitating platform chrome would reduce familiarity on Windows and obscure the product's own identity."
       },
       {
-        "decision": "Retain the native account select during this release instead of introducing a custom searchable combobox.",
-        "reason": "A custom composite needs focused keyboard, touch, screen-reader, dismissal, and runtime verification; truthful data states and history governance are the higher-priority user outcome for this release."
+        "decision": "Retain the account select semantics but opt every single-choice select into Chromium's customizable picker instead of introducing a bespoke combobox.",
+        "reason": "The modern picker provides product-owned trigger, popup, option and checked states while preserving the browser's form and keyboard contract; an unsupported runtime degrades to a functional native select."
       }
     ],
     "none_reason": ""

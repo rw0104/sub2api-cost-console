@@ -31,7 +31,7 @@
         <nav
           class="cost-workspaces"
           aria-label="成本中心工作区"
-          data-aui-component="sidebar"
+          data-aui-component="segmented"
           data-aui-adaptive-region="navigation"
         >
           <button
@@ -42,6 +42,7 @@
             data-aui-pressable
             :class="{ active: activePanel === item.key }"
             :aria-current="activePanel === item.key ? 'page' : undefined"
+            :aria-pressed="activePanel === item.key"
             @click="activePanel = item.key"
           >
             <component :is="item.icon" :size="15" />
@@ -91,14 +92,14 @@
           </button>
           <button
             type="button"
-            class="cost-tool-button cost-governance-button"
+            class="cost-icon-button cost-governance-button"
             :class="{ active: activePanel === 'governance' }"
             :aria-current="activePanel === 'governance' ? 'page' : undefined"
+            aria-label="数据治理"
             title="数据来源、历史数据与保留策略"
             @click="activePanel = 'governance'"
           >
             <CircleCheck :size="16" />
-            <span>数据治理</span>
           </button>
           <button type="button" class="cost-icon-button" title="刷新 (Ctrl+R)" aria-label="刷新数据" :disabled="loading" @click="reload">
             <RefreshCcw :size="17" :class="{ 'cost-spin': loading }" />
@@ -1501,16 +1502,16 @@ button:active { transform: translateY(1px); }
 }
 
 .cost-toolbar {
-  min-height: 82px;
-  grid-template-columns: minmax(280px, .95fr) auto minmax(360px, 1fr);
-  gap: 12px;
-  padding: 8px 14px 8px 18px;
+  min-height: 74px;
+  grid-template-columns: minmax(270px, .85fr) auto minmax(350px, 1fr);
+  gap: 10px;
+  padding: 7px 14px 7px 18px;
   border-bottom-color: rgb(66 77 67 / 82%);
   box-shadow: 0 10px 28px rgb(0 0 0 / 16%);
 }
 
 .cost-brand-block {
-  padding: 10px 4px;
+  padding: 6px 4px;
 }
 
 .cost-brand-block h1 {
@@ -1520,30 +1521,34 @@ button:active { transform: translateY(1px); }
 
 .cost-workspaces {
   align-self: center;
-  height: 52px;
+  width: max-content;
+  height: 48px;
   gap: 4px;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid var(--cost-line-strong);
   border-radius: var(--cost-radius-md);
   background: rgb(18 23 19 / 84%);
 }
 
 .cost-workspaces button {
-  min-width: 116px;
-  height: 42px;
-  gap: 7px;
-  padding: 0 14px;
+  width: 142px;
+  min-width: 142px;
+  flex: 0 0 142px;
+  height: 40px;
+  gap: 6px;
+  padding: 0 10px;
   border: 0;
   border-radius: var(--cost-radius-sm);
   background: transparent;
+  white-space: nowrap;
 }
 
 .cost-workspaces button:last-child { border-right: 0; }
 .cost-workspaces button.active { box-shadow: 0 4px 14px rgb(185 229 90 / 14%); }
 .cost-workspaces .cost-workspaces__settings {
-  min-width: 138px;
-  margin-left: 3px;
-  border-left: 1px solid var(--cost-line);
+  min-width: 142px;
+  margin-left: 0;
+  border-left: 0;
   color: #b8c5bb;
 }
 .cost-workspaces .cost-workspaces__settings:hover { color: #10140f; background: #c8ed79; }
@@ -1553,20 +1558,20 @@ button:active { transform: translateY(1px); }
 }
 
 .cost-toolbar__actions {
-  gap: 7px;
-  padding: 8px 0 8px 8px;
+  gap: 6px;
+  padding: 6px 0 6px 6px;
 }
 
 .cost-select-label select,
 .cost-tool-button,
 .cost-icon-button,
 .cost-primary-button {
-  height: 40px;
+  height: 38px;
   border-radius: var(--cost-radius-sm);
 }
 
 .cost-select-label select { padding-right: 28px; }
-.cost-icon-button { width: 40px; }
+.cost-icon-button { width: 38px; }
 .cost-primary-button { padding-inline: 15px; }
 
 .cost-workspace {
