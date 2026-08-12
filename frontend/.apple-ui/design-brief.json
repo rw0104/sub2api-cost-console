@@ -225,15 +225,20 @@
         "material-regular: neutral adaptive toolbar material with opaque fallback"
       ],
       "appearance_matrix": {
-        "light": "Compiled profile supplies light roles; data states preserve labels and non-color cues.",
-        "dark": "Primary shipped appearance uses deep neutral surfaces, restrained lime selection, readable white labels, and stronger separators around dense tables.",
+        "light": "The host Sub2API application may use semantic light roles, but the economics console is an explicit dark product surface and must not inherit the host or operating-system light content plane.",
+        "dark": "Every economics workspace, including overview, upstream ranking, account pool, governance, API access, and transient inspectors, shares one explicit dark semantic boundary with deep neutral surfaces, restrained lime selection, readable white labels, and stronger separators around dense tables.",
         "increased_contrast": "Strengthen boundaries, focus, text separation, and chart patterns without changing state meanings.",
         "reduced_transparency": "Toolbar and dialogs become opaque neutral surfaces with explicit borders.",
         "forced_colors": "Use system Canvas, CanvasText, Highlight, ButtonText, and visible outlines; icons and state labels remain present."
       },
       "accent_distribution": "Accent foreground marks ordinary selection; accent background is limited to the active workspace and the one primary maintenance/refresh action in a group; status colors never reuse accent semantics.",
       "non_color_cues": ["status icon", "explicit status label", "provenance badge text", "selected indicator/weight", "border or pattern", "aria state"],
-      "measured_pairs": ["not-tested during briefing; final runtime verification must measure primary/secondary text, accent controls, focus, warnings, and error states on actual dark and light surfaces"],
+      "measured_pairs": [
+        "label-primary #E9EDE6 on canvas #0D110E: 16.06:1",
+        "label-tertiary #7F8B81 on surface #141915: 5.01:1",
+        "accent #B9E55A on canvas #0D110E: 13.06:1",
+        "accent foreground #10140F on accent #B9E55A: 12.77:1"
+      ],
       "gradient_rationale": "The existing subtle orthogonal grid is retained only on the canvas as product-owned instrumentation context; chart series and status never depend on decorative gradients, and functional material gradients come only from the compiled profile."
     },
     "geometry": "Use compact fixed-radius desktop controls, stable opaque section containers, and concentric toolbar/dialog geometry; capsules are reserved for visible segments, status badges, and prominent actions.",

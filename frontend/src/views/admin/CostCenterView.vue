@@ -4,6 +4,7 @@
       class="cost-console"
       data-aui-fidelity="apple-fidelity-web/v1"
       data-aui-profile="macos-productivity"
+      data-aui-appearance="dark"
       data-aui-component="window"
       data-aui-adaptive="workspace"
       :class="{
@@ -87,6 +88,17 @@
           <button type="button" class="cost-tool-button" :class="{ active: autoRefresh }" :title="autoRefresh ? `自动刷新 ${countdown}s` : '开启自动刷新'" @click="toggleAutoRefresh">
             <Activity :size="16" />
             <span>{{ autoRefresh ? `${countdown}s` : '自动刷新' }}</span>
+          </button>
+          <button
+            type="button"
+            class="cost-tool-button cost-governance-button"
+            :class="{ active: activePanel === 'governance' }"
+            :aria-current="activePanel === 'governance' ? 'page' : undefined"
+            title="数据来源、历史数据与保留策略"
+            @click="activePanel = 'governance'"
+          >
+            <CircleCheck :size="16" />
+            <span>数据治理</span>
           </button>
           <button type="button" class="cost-icon-button" title="刷新 (Ctrl+R)" aria-label="刷新数据" :disabled="loading" @click="reload">
             <RefreshCcw :size="17" :class="{ 'cost-spin': loading }" />
@@ -715,8 +727,7 @@ const workspaceItems = [
   { key: 'overview' as const, label: '资产总览', shortcut: '1', icon: Gauge },
   { key: 'upstreams' as const, label: '上游排行', shortcut: '2', icon: Database },
   { key: 'oauth' as const, label: '渠道号池', shortcut: '3', icon: BarChart3 },
-  { key: 'governance' as const, label: '数据治理', shortcut: '4', icon: CircleCheck },
-  { key: 'api' as const, label: 'API 接入', shortcut: '5', icon: KeyRound },
+  { key: 'api' as const, label: 'API 接入', shortcut: '4', icon: KeyRound },
 ]
 const distributionColors = ['#b9e55a', '#79b6d9', '#d6aa47', '#d58473', '#8a91bf', '#72a68d', '#b78db7']
 
@@ -1322,6 +1333,47 @@ onBeforeUnmount(() => {
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* The economics console is an intentionally dark product surface regardless
+   of the Windows/browser appearance. Keep the Apple semantic roles inside
+   this boundary so content planes, functional materials, text, controls and
+   popovers cannot fall back to the light profile. */
+.cost-console[data-aui-fidelity="apple-fidelity-web/v1"][data-aui-appearance="dark"] {
+  color-scheme: dark;
+  --aui-accent: var(--cost-lime);
+  --aui-accent-hover: #c3e975;
+  --aui-accent-pressed: #caeb87;
+  --aui-accent-wash: rgb(185 229 90 / 18%);
+  --aui-accent-foreground: #10140f;
+  --aui-label-primary: var(--cost-text);
+  --aui-label-secondary: #a8b2aa;
+  --aui-label-tertiary: var(--cost-muted);
+  --aui-label-quaternary: #69756c;
+  --aui-canvas: var(--cost-bg);
+  --aui-content-plane: var(--cost-bg);
+  --aui-content-plane-secondary: var(--cost-panel);
+  --aui-fill: rgb(127 139 129 / 16%);
+  --aui-fill-strong: rgb(127 139 129 / 28%);
+  --aui-separator: rgb(66 77 67 / 78%);
+  --aui-separator-opaque: var(--cost-line-strong);
+  --aui-focus-outer: rgb(185 229 90 / 56%);
+  --aui-material-regular-fill: rgb(13 17 14 / 96%);
+  --aui-material-regular-border: rgb(66 77 67 / 82%);
+  --aui-material-clear-fill: rgb(20 25 21 / 88%);
+  --aui-material-clear-border: rgb(66 77 67 / 72%);
+  color: var(--cost-text);
+  background-color: var(--cost-bg);
+}
+
+.cost-console[data-aui-appearance="dark"] > main[data-aui-layer="content"] {
+  color: var(--cost-text);
+  background-color: var(--cost-bg);
+  background-image:
+    linear-gradient(rgb(76 91 78 / 12%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(76 91 78 / 12%) 1px, transparent 1px);
+  background-size: 36px 36px;
+  border-color: var(--cost-line);
+}
 .cost-console--embedded { min-height: calc(100vh - 64px); margin: -1rem; }
 .cost-console input, .cost-console select { user-select: text; -webkit-user-select: text; }
 button, select, input { font: inherit; }
@@ -1344,6 +1396,7 @@ button:active { transform: translateY(1px); }
 .cost-tool-button, .cost-icon-button, .cost-primary-button { display: inline-flex; height: 36px; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; color: #a8b2aa; background: #151a15; border: 1px solid var(--cost-line-strong); font-size: 11px; }
 .cost-icon-button { width: 36px; padding: 0; }
 .cost-tool-button.active { color: var(--cost-lime); border-color: #6e8c37; }
+.cost-governance-button.active { background: rgb(185 229 90 / 10%); }
 .cost-primary-button { height: 40px; color: #11150f; background: var(--cost-lime); border-color: var(--cost-lime); font-size: 13px; font-weight: 720; }
 .cost-primary-button--outline { color: var(--cost-lime); background: transparent; border-color: #75993a; }
 .cost-error { display: flex; align-items: center; gap: 10px; padding: 10px 20px; color: #f0b6a6; background: #3a201b; border-bottom: 1px solid #78483b; font-size: 12px; }
