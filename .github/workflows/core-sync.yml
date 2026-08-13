@@ -1,39 +1,36 @@
-name: Compatible Core Candidate
+name: Compatible Core Auto Update
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: compatible-core-candidate
+  group: compatible-core-auto-update
   cancel-in-progress: false
 
 jobs:
   discover:
-    name: Discover a newer upstream release
+    name: Discover an unpublished upstream core
     runs-on: ubuntu-slim
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.upstream.outputs.tag }}
       version: ${{ steps.upstream.outputs.version }}
-      extension: ${{ steps.upstream.outputs.extension }}
       upstream_commit: ${{ steps.upstream.outputs.upstream_commit }}
-      upstream_short: ${{ steps.upstream.outputs.upstream_short }}
-      needs_sync: ${{ steps.upstream.outputs.needs_sync }}
-      needs_merge: ${{ steps.upstream.outputs.needs_merge }}
+      needs_update: ${{ steps.upstream.outputs.needs_update }}
     steps:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
-            frontend/CORE_VERSION
             frontend/CORE_EXTENSION_VERSION
+            frontend/ALGORITHM_VERSION
           sparse-checkout-cone-mode: false
       - id: upstream
-        name: Compare stable and upstream versions
+        name: Compare upstream release with core-stable
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,54 +39,56 @@ jobs:
           tag="$(gh api repos/Wei-Shaw/sub2api/releases/latest --jq .tag_name)"
           [[ "$tag" == v* ]] || { echo "Unsupported upstream tag: $tag" >&2; exit 1; }
           version="${tag#v}"
-          current="$(tr -d '[:space:]' < frontend/CORE_VERSION)"
           extension="$(tr -d '[:space:]' < frontend/CORE_EXTENSION_VERSION)"
+          algorithm="$(tr -d '[:space:]' < frontend/ALGORITHM_VERSION)"
           refs="$(git ls-remote https://github.com/Wei-Shaw/sub2api.git "refs/tags/$tag" "refs/tags/$tag^{}")"
           commit="$(awk '$2 ~ /\^\{\}$/ {print $1; exit}' <<< "$refs")"
           [[ -n "$commit" ]] || commit="$(awk 'NR == 1 {print $1}' <<< "$refs")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "Unable to resolve upstream commit for $tag" >&2; exit 1; }
-          short="${commit:0:12}"
-          candidate_tag="core-candidate-v${version}-ext${extension}-${short}"
+          stable_version="0.0.0"
+          stable_commit=""
+          stable_extension=""
+          stable_algorithm=""
+          if gh release download core-stable --repo "$GITHUB_REPOSITORY" --pattern core-latest.json --output core-stable.json >/dev/null 2>&1; then
+            stable_version="$(jq -r '.version // "0.0.0"' core-stable.json)"
+            stable_commit="$(jq -r '.upstream_commit // ""' core-stable.json)"
+            stable_extension="$(jq -r '.extension_version // ""' core-stable.json)"
+            stable_algorithm="$(jq -r '.algorithm_version // ""' core-stable.json)"
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "extension=$extension" >> "$GITHUB_OUTPUT"
           echo "upstream_commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "upstream_short=$short" >> "$GITHUB_OUTPUT"
-          if gh release view "$candidate_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Candidate $candidate_tag already exists; awaiting review or explicit deletion." >&2
-            echo "needs_sync=false" >> "$GITHUB_OUTPUT"
-            echo "needs_merge=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$current" == "$version" ]]; then
-            echo "Current main already contains $version; building its missing candidate without opening a redundant PR." >&2
-            echo "needs_sync=true" >> "$GITHUB_OUTPUT"
-            echo "needs_merge=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
-            echo "Refusing to build older upstream $version over stable $current" >&2
-            echo "needs_sync=false" >> "$GITHUB_OUTPUT"
-            echo "needs_merge=false" >> "$GITHUB_OUTPUT"
+          if [[ "$stable_version" == "$version" && "$stable_commit" == "$commit" && "$stable_extension" == "$extension" && "$stable_algorithm" == "$algorithm" ]]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$stable_version" == "$version" && -n "$stable_commit" && "$stable_commit" != "$commit" ]]; then
+            echo "Upstream tag $tag no longer matches the commit already published to core-stable" >&2
+            exit 1
+          elif [[ "$stable_version" == "$version" && -n "$stable_extension" && "$(printf '%s\n%s\n' "$stable_extension" "$extension" | sort -V | tail -n 1)" != "$extension" ]]; then
+            echo "Refusing to replace stable extension $stable_extension with older extension $extension" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$(printf '%s\n%s\n' "$stable_version" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+            echo "Refusing to replace stable $stable_version with older upstream $version" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
           else
-            echo "needs_sync=true" >> "$GITHUB_OUTPUT"
-            echo "needs_merge=true" >> "$GITHUB_OUTPUT"
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
           fi
 
-  candidate:
-    name: Merge, verify and publish a candidate
+  update:
+    name: Merge, verify and publish core-stable
     needs: discover
-    if: needs.discover.outputs.needs_sync == 'true'
+    if: needs.discover.outputs.needs_update == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
       contents: write
       issues: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
 
       - id: merge
-        name: Merge upstream with explicit conflict policy
+        name: Merge upstream with the reviewed conflict policy
         shell: pwsh
         run: |
           git remote add upstream-sync https://github.com/Wei-Shaw/sub2api.git
@@ -114,28 +113,22 @@ jobs:
           }
           $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
           if ($commit -ne '${{ needs.discover.outputs.upstream_commit }}') { throw 'Fetched upstream tag moved after discovery' }
-          [IO.File]::WriteAllText((Resolve-Path frontend/CORE_VERSION), '${{ needs.discover.outputs.version }}', [Text.UTF8Encoding]::new($false))
-          [IO.File]::WriteAllText((Resolve-Path backend/cmd/server/VERSION), '${{ needs.discover.outputs.version }}', [Text.UTF8Encoding]::new($false))
-          [IO.File]::WriteAllText((Resolve-Path frontend/UPSTREAM_SUB2API_COMMIT), $commit, [Text.UTF8Encoding]::new($false))
-          git add backend/cmd/server/VERSION frontend/CORE_VERSION frontend/UPSTREAM_SUB2API_COMMIT
-          git diff --cached --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "chore(core): prepare Sub2API ${{ needs.discover.outputs.tag }} candidate"
-          }
-          $candidateCommit = git rev-parse HEAD
-          "candidate_commit=$candidateCommit" >> $env:GITHUB_OUTPUT
+          $utf8NoBom = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Resolve-Path frontend/CORE_VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path backend/cmd/server/VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path frontend/UPSTREAM_SUB2API_COMMIT), $commit, $utf8NoBom)
           "blocked=false" >> $env:GITHUB_OUTPUT
 
-      - name: Report an unreviewed conflict
+      - name: Stop only for an unknown conflict
         if: steps.merge.outputs.blocked == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $title = "Compatible core candidate blocked: ${{ needs.discover.outputs.tag }}"
+          $title = "Compatible core auto-update blocked: ${{ needs.discover.outputs.tag }}"
           $count = gh issue list --repo '${{ github.repository }}' --state open --search "`"$title`" in:title" --json number --jq length
           if ($count -eq '0') {
-            gh issue create --repo '${{ github.repository }}' --title $title --body "Unreviewed merge conflicts: ${{ steps.merge.outputs.conflict_files }}. Stable core was not changed."
+            gh issue create --repo '${{ github.repository }}' --title $title --body "Unknown merge conflicts require source review: ${{ steps.merge.outputs.conflict_files }}. Existing core-stable was not changed."
           }
           throw $title
 
@@ -145,7 +138,7 @@ jobs:
       - run: corepack enable
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -153,73 +146,59 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: corepack pnpm@9 install --frozen-lockfile
-      - name: Verify merged backend
+      - name: Run backend contract
         working-directory: backend
         run: go test ./...
-      - name: Verify desktop activation and rollback contract
+      - name: Run desktop activation, identity and rollback contract
         working-directory: frontend/src-tauri
         run: cargo test --features custom-protocol
-      - name: Verify desktop update UI contract
-        working-directory: frontend
-        run: corepack pnpm@9 exec vitest run src/features/desktop/__tests__/DesktopUpdateCenter.spec.ts
-      - name: Verify the complete frontend contract
+      - name: Run frontend and updater contract
         working-directory: frontend
         run: |
           corepack pnpm@9 test:run
           corepack pnpm@9 lint:check
-      - name: Build candidate core and immutable manifest
+      - name: Build and authenticate the stable core
         working-directory: frontend
         env:
-          CORE_RELEASE_TAG: core-candidate-v${{ needs.discover.outputs.version }}-ext${{ needs.discover.outputs.extension }}-${{ needs.discover.outputs.upstream_short }}
-          CORE_RELEASE_CHANNEL: candidate
+          CORE_RELEASE_TAG: core-stable
+          CORE_RELEASE_CHANNEL: stable
         run: |
           corepack pnpm@9 build
           node scripts/prepare-desktop-sidecar.mjs
           node scripts/prepare-core-release.mjs
-      - id: publish
-        name: Push candidate branch and open review PR
-        if: needs.discover.outputs.needs_merge == 'true'
+      - name: Recheck stable immediately before publishing
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh auth setup-git
-          $branch = 'automation/core-${{ needs.discover.outputs.version }}'
-          git fetch origin "refs/heads/$branch`:refs/remotes/origin/$branch" 2>$null
-          git push --force-with-lease origin "HEAD:refs/heads/$branch"
-          $url = gh pr list --repo '${{ github.repository }}' --head $branch --state open --json url --jq '.[0].url'
-          if (-not $url) {
-            $url = gh pr create --repo '${{ github.repository }}' --base main --head $branch `
-              --title "chore(core): validate Sub2API ${{ needs.discover.outputs.tag }}" `
-              --body "Automated candidate only. Merge after reviewing upstream changes and checks. Promotion to core-stable is a separate manual workflow."
+          New-Item -ItemType Directory -Force stable-check | Out-Null
+          gh release download core-stable --dir stable-check --pattern core-latest.json 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $stable = Get-Content -Raw stable-check/core-latest.json | ConvertFrom-Json
+            if ([version]$stable.version -gt [version]'${{ needs.discover.outputs.version }}') {
+              throw "core-stable advanced to $($stable.version); refusing to overwrite it with ${{ needs.discover.outputs.version }}"
+            }
+            $targetExtension = (Get-Content -Raw frontend/CORE_EXTENSION_VERSION).Trim()
+            if ([version]$stable.version -eq [version]'${{ needs.discover.outputs.version }}' -and [version]$stable.extension_version -gt [version]$targetExtension) {
+              throw "core-stable extension advanced to $($stable.extension_version); refusing to overwrite it with $targetExtension"
+            }
           }
-          "branch=$branch" >> $env:GITHUB_OUTPUT
-          "pr_url=$url" >> $env:GITHUB_OUTPUT
-      - name: Publish immutable prerelease candidate
+      - name: Publish the verified core directly to the client stable channel
         shell: pwsh
         working-directory: frontend
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'core-candidate-v${{ needs.discover.outputs.version }}-ext${{ needs.discover.outputs.extension }}-${{ needs.discover.outputs.upstream_short }}'
-          $reviewTarget = '${{ steps.publish.outputs.pr_url }}'
-          if (-not $reviewTarget) {
-            $reviewTarget = 'https://github.com/${{ github.repository }}/commit/${{ steps.merge.outputs.candidate_commit }}'
+          gh release view core-stable 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create core-stable --title 'Sub2API compatible core stable channel' --notes 'Automatically tested compatible core releases.' --prerelease
           }
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Immutable candidate tag already exists: $tag"
-          }
-          gh release create $tag `
-            --target '${{ steps.merge.outputs.candidate_commit }}' `
-            --title "Compatible core candidate ${{ needs.discover.outputs.tag }}" `
-            --notes "Candidate only. Review $reviewTarget and use Compatible Core Promote after merge." `
-            --prerelease `
-            (Resolve-Path release-assets/core-latest.json) `
+          gh release upload core-stable `
+            (Resolve-Path 'release-assets/sub2api-core_*.zip') `
             (Resolve-Path release-assets/CORE_SHA256SUMS.txt) `
-            (Resolve-Path 'release-assets/sub2api-core_*.zip')
+            (Resolve-Path release-assets/core-latest.json) --clobber
       - uses: actions/upload-artifact@v7
         with:
-          name: compatible-core-candidate-${{ needs.discover.outputs.version }}
+          name: compatible-core-stable-${{ needs.discover.outputs.version }}
           if-no-files-found: error
           path: frontend/release-assets/*

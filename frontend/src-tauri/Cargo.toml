@@ -1,6 +1,6 @@
 [package]
 name = "sub2api-cost-console"
-version = "0.2.20"
+version = "0.2.21"
 description = "Sub2API desktop cost operations console"
 authors = ["Sub2API"]
 edition = "2021"

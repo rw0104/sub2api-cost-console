@@ -30,12 +30,15 @@
       </dl>
 
       <p class="desktop-update__managed-note">
-        启动后及每 6 小时自动检查桌面与内核通道：持续跟踪 Wei-Shaw/sub2api 上游，扩展兼容内核由 rw0104/sub2api-cost-console 自动构建。兼容内核自动下载、校验并在下次安全启动时切换。
+        启动后及每 5 分钟自动检查桌面与内核稳定通道：持续跟踪 Wei-Shaw/sub2api 上游，扩展兼容内核由 rw0104/sub2api-cost-console 自动构建。发现后自动下载、校验；可一键立即重启启用，也可在下次安全启动时切换。
       </p>
 
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
         <div><span>{{ progressMessage }}</span><b>{{ progressPercent }}%</b></div>
         <p><i :style="{ width: `${progressPercent}%` }"></i></p>
+        <button v-if="progressStage === 'ready'" type="button" :disabled="isBusy" @click="activateStagedCore">
+          <RefreshCcw :size="14" /> 立即重启并启用最新内核
+        </button>
       </div>
 
       <div v-if="coreIdentity?.last_error" class="desktop-update__errors" role="alert">
@@ -239,7 +242,14 @@ const algorithmVersionLabel = computed(() => algorithmVersion.value === 'unavail
   ? '不可用（缺少账本能力）'
   : `v${algorithmVersion.value}`)
 const showBundledCoreChoice = computed(() => Boolean(coreIdentity.value?.action === 'install_bundled' && !bundledChoiceDismissed.value))
-const hasUpdate = computed(() => Boolean(appUpdate.value || coreUpdate.value?.available || coreUpdate.value?.compatibility_pending || showBundledCoreChoice.value))
+const hasUpdate = computed(() => Boolean(
+  appUpdate.value
+  || coreUpdate.value?.available
+  || coreUpdate.value?.staged
+  || coreUpdate.value?.compatibility_pending
+  || progressStage.value === 'ready'
+  || showBundledCoreChoice.value,
+))
 const checkState = computed(() => resolveUpdateCheckState({
   checking: checking.value,
   hasUpdate: hasUpdate.value,
@@ -379,7 +389,10 @@ async function installCore(automatic = false) {
     progressStage.value = 'ready'
     if (automatic) {
       progressMessage.value = `兼容内核 v${result.version} 已自动下载并验证，将在下次安全启动时启用`
-      if (coreUpdate.value) coreUpdate.value.available = false
+      if (coreUpdate.value) {
+        coreUpdate.value.available = false
+        coreUpdate.value.staged = true
+      }
     } else {
       progressMessage.value = `内核 v${result.version} 已验证，正在安全重启`
       await invoke('desktop_backend_prepare_relaunch')
@@ -388,6 +401,20 @@ async function installCore(automatic = false) {
   } catch (error) {
     errorMessage.value = messageOf(error)
     progressStage.value = ''
+  } finally {
+    operation.value = null
+  }
+}
+
+async function activateStagedCore() {
+  operation.value = 'core'
+  errorMessage.value = ''
+  progressMessage.value = '正在安全重启并启用已验证的最新内核'
+  try {
+    await invoke('desktop_backend_prepare_relaunch')
+    await relaunch()
+  } catch (error) {
+    errorMessage.value = messageOf(error)
   } finally {
     operation.value = null
   }
@@ -451,7 +478,7 @@ onMounted(async () => {
   }))
   await loadRuntimeVersions().catch(() => undefined)
   window.setTimeout(() => checkAll(true), 1800)
-  interval = window.setInterval(() => checkAll(true), 6 * 60 * 60 * 1000)
+  interval = window.setInterval(() => checkAll(true), 5 * 60 * 1000)
 })
 
 onBeforeUnmount(() => {
