@@ -233,6 +233,43 @@ export function elapsedHours(startedAt: DateInput, now: DateInput = Date.now()):
   return (nowMs - startedAtMs) / MILLISECONDS_PER_HOUR
 }
 
+export function isStartedInLocalMonth(startedAt: DateInput, now: DateInput = Date.now()): boolean {
+  const startedAtMs = timestamp(startedAt)
+  const nowMs = timestamp(now)
+  if (startedAtMs === null || nowMs === null || startedAtMs > nowMs) return false
+  const started = new Date(startedAtMs)
+  const current = new Date(nowMs)
+  return started.getFullYear() === current.getFullYear() && started.getMonth() === current.getMonth()
+}
+
+export function isTimestampInWindow(value: DateInput, start: DateInput, end: DateInput): boolean {
+  const valueMs = timestamp(value)
+  const startMs = timestamp(start)
+  const endMs = timestamp(end)
+  return valueMs !== null && startMs !== null && endMs !== null && valueMs >= startMs && valueMs <= endMs
+}
+
+export function procurementCostInWindow(
+  profile: CostProfile,
+  start: DateInput,
+  end: DateInput,
+  stoppedAt?: DateInput | null,
+): number {
+  if (!Number.isFinite(profile.amount) || profile.amount < 0) return 0
+  const profileStartMs = timestamp(profile.started_at)
+  const windowStartMs = timestamp(start)
+  const windowEndMs = timestamp(end)
+  if (profileStartMs === null || windowStartMs === null || windowEndMs === null || windowEndMs < windowStartMs) return 0
+  const stoppedAtMs = stoppedAt == null ? null : timestamp(stoppedAt)
+  const effectiveEndMs = stoppedAtMs === null ? windowEndMs : Math.min(windowEndMs, stoppedAtMs)
+  if (profile.billing_cycle === 'one_time') {
+    return profileStartMs >= windowStartMs && profileStartMs <= effectiveEndMs ? profile.amount : 0
+  }
+  const effectiveStartMs = Math.max(windowStartMs, profileStartMs)
+  if (effectiveEndMs <= effectiveStartMs) return 0
+  return hourlyRate(profile) * ((effectiveEndMs - effectiveStartMs) / MILLISECONDS_PER_HOUR)
+}
+
 export function accruedCost(profile: CostProfile, now: DateInput = Date.now()): number {
   if (!Number.isFinite(profile.amount) || profile.amount < 0) return 0
 

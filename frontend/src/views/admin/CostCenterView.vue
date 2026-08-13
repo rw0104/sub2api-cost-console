@@ -101,7 +101,7 @@
           >
             <CircleCheck :size="16" />
           </button>
-          <button type="button" class="cost-icon-button" title="刷新 (Ctrl+R)" aria-label="刷新数据" :disabled="loading" @click="reload">
+          <button type="button" class="cost-icon-button" title="刷新 (Ctrl+R)" aria-label="刷新数据" :disabled="loading" @click="reload()">
             <RefreshCcw :size="17" :class="{ 'cost-spin': loading }" />
           </button>
           <button type="button" class="cost-icon-button" title="全屏 (F11)" aria-label="切换全屏" @click="toggleFullscreen">
@@ -113,7 +113,7 @@
       <div v-if="error" class="cost-error" role="alert">
         <TriangleAlert :size="17" />
         <span>{{ error }}</span>
-        <button type="button" @click="reload">重试</button>
+          <button type="button" @click="reload()">重试</button>
       </div>
 
       <main
@@ -161,11 +161,11 @@
               <MetricCell label="平滑产出速率（USD）" :value="formatUsd(rollingOutputUsd, 2)" :note="`${rollingTrendLabel} · actual_cost / 小时`" :state="sourceStates.dashboard.status" accent="gold" />
               <MetricCell label="固定采购成本（CNY，配置推算）" :value="procurementHourlyCny == null ? '无数据' : `${formatCny(procurementHourlyCny, 4)}/h`" note="独立成本档案；绝不作为 Token/API 美元成本" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" accent="blue" />
               <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" :state="combineSourceAvailability(sourceStates.dashboard, sourceStates.accounts, sourceStates.costLoss)" accent="blue" />
-              <MetricCell label="已确认封禁损失" :value="formatCny(totalImpairmentCny, 2)" note="终局事件未摊销余额 − 退款 − 冲销" :state="sourceStates.costLoss.status" accent="gold" />
-              <MetricCell label="经济总成本" :value="formatCny(totalEconomicCostCny, 2)" :note="`采购累计 + 封禁净损失 · 含 ${archivedLossAccountCount} 个已删除账号`" :state="assetLedgerState" accent="gold" />
+              <MetricCell :label="`${rangeLabel}新增封禁损失`" :value="formatCny(accountEconomics?.actual.window_impairment_loss_cny ?? windowImpairmentCny, 2)" :note="`仅统计 ${rangeLabel} 内确认的终局损失；历史账本 ¥${formatPlainNumber(totalImpairmentCny, 2)}`" :state="accountEconomics ? sourceStates.economics.status : sourceStates.costLoss.status" accent="gold" />
+              <MetricCell :label="`${rangeLabel}新增经济成本`" :value="formatCny(accountEconomics?.actual.window_economic_cost_cny ?? windowEconomicCostCny, 2)" :note="`窗口内新增采购 + 新增封禁损失；生命周期累计 ¥${formatPlainNumber(totalEconomicCostCny, 2)}`" :state="accountEconomics ? sourceStates.economics.status : assetLedgerState" accent="gold" />
               <MetricCell label="今日上游账号成本（USD）" :value="formatUsd(todayAccountCostUsd, 3)" note="本机自然日 · usage_logs 价格快照 × 账号倍率" :state="sourceStates.todayStats.status" />
               <MetricCell label="最近窗口用户计费（USD）" :value="formatUsd(windowActualOutputUsd, 3)" note="usage_logs actual_cost" :state="sourceStates.dashboard.status" />
-              <MetricCell label="预计月度采购" :value="formatCny(monthlyProcurementForecastCny, 2)" note="配置采购费率 × 730h；经营预测，不是账单事实" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" />
+              <MetricCell label="本月采购投入" :value="formatCny(monthlyProcurementForecastCny, 2)" :note="`当前经常性费率 × 730h + 本月采购（含 ${monthlyDeletedPurchaseCount} 个已删除账号快照）；配置推算，不是 API 调用成本`" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" />
               <MetricCell label="可用账号" :value="hasMeasuredData(sourceStates.accounts) ? `${activeAccounts.length} / ${accounts.length}` : unavailableValueLabel(sourceStates.accounts)" :note="usageSyncedCount ? `窗口平均余量 ${formatPercent(quotaRemainingAverage)}` : sourceStates.accountUsage.reason" :state="combineSourceAvailability(sourceStates.accounts, sourceStates.accountUsage)" />
             </div>
           </div>
@@ -173,33 +173,34 @@
           <div class="cost-chart-row">
             <ChartPanel title="API 产出速率" :caption="`${rangeLabel} · 真实 usage_logs，统一折算为 $/h`">
               <CostLineChart
-                :labels="trendLabels"
+                :labels="financialTrend.map((point) => formatTrendLabel(point.timestamp))"
                 :series="[
                   { label: '当前采样', data: trendActualCost, color: '#e0bd4e', fill: true },
                   { label: rollingTrendLabel, data: rollingTrendActualCost, color: '#b9e55a', dashed: true },
                 ]"
                 value-prefix="$"
-                :state="trendSourceState.status"
-                :state-reason="trendSourceState.reason"
+                :state="trendFinancialState.status"
+                :state-reason="trendFinancialReason"
               />
             </ChartPanel>
             <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购配置推算`">
               <CostLineChart
-                :labels="trendLabels"
+                :labels="financialTrend.map((point) => formatTrendLabel(point.timestamp))"
                 :series="[
                   { label: apiCostBasisLabel, data: trendStandardCost, color: '#d8b94d' },
                   { label: '采购基线', data: procurementBaseline, color: '#7eb6d8', dashed: true },
                   { label: '综合成本', data: trendCombinedCost, color: '#b9e55a' },
                 ]"
                 value-prefix="¥"
-                :state="combineSourceAvailability(trendSourceState, sourceStates.accounts, sourceStates.costLoss)"
-                :state-reason="trendSourceState.reason || sourceStates.costLoss.reason"
+                :state="combineSourceAvailability(trendFinancialState, sourceStates.accounts, sourceStates.costLoss)"
+                :state-reason="trendFinancialReason || sourceStates.costLoss.reason"
               />
             </ChartPanel>
           </div>
 
           <AdaptiveOperationsCharts
             :ops-trend="opsTrend"
+            :financial-trend="financialTrend"
             :error-trend="opsErrorTrend"
             :economics="accountEconomics"
             :cny-per-usd="exchangeRate.rate"
@@ -427,7 +428,7 @@
           <div class="cost-ranking-bar" aria-label="上游实时排行控制">
             <div class="cost-ranking-bar__title">
               <Trophy :size="16" />
-              <div><strong>实时排行</strong><span>根据当前筛选结果动态重排</span></div>
+              <div><strong>实时排行</strong><span>仅对有真实请求、探测或异常证据的账号编号</span></div>
             </div>
             <label class="cost-ranking-select">
               <span>排行依据</span>
@@ -440,7 +441,7 @@
                 <option value="latency">连接测试总耗时</option>
               </select>
             </label>
-            <span class="cost-ranking-bar__summary">显示 {{ upstreamRows.length }} 个账号<span v-if="upstreamRows[0]"> · 当前第 1 名：{{ upstreamRows[0].account.name }}</span></span>
+            <span class="cost-ranking-bar__summary">显示 {{ upstreamRows.length }} 个账号<span v-if="rankedUpstreamCount"> · 纳入排行 {{ rankedUpstreamCount }} 个 · 第 1 名：{{ upstreamRows[0].account.name }}</span><span v-else> · 当前没有足够排行证据</span></span>
           </div>
 
           <div class="cost-selection-bar" aria-label="上游账号批量操作">
@@ -472,7 +473,7 @@
                 <tr v-for="row in upstreamRows" :key="row.account.id" :class="[`status-${row.currentState.state}`, { selected: selectedAccount?.id === row.account.id, 'row-selected': selectedAccountIds.has(row.account.id) }]">
                   <td class="cost-select-column"><input type="checkbox" :checked="selectedAccountIds.has(row.account.id)" :aria-label="`选择 ${row.account.name}`" @change="toggleAccountSelection(row.account.id)" /></td>
                   <td class="cost-account-cell">
-                    <div class="cost-account-primary"><span class="cost-rank-badge" :data-rank="row.rank">#{{ row.rank }}</span><strong>{{ row.account.name }}</strong></div>
+                    <div class="cost-account-primary"><span class="cost-rank-badge" :class="{ 'is-unranked': row.rank == null }" :data-rank="row.rank || undefined">{{ row.rank == null ? '未排名' : `#${row.rank}` }}</span><strong>{{ row.account.name }}</strong></div>
                     <small>#{{ row.account.id }} · {{ describeCostAccountOrigin(row.account) }} / {{ row.plan }}</small>
                   </td>
                   <td><StatusLabel :state="row.currentState.state" :label="row.currentState.label" /></td>
@@ -484,7 +485,7 @@
                     </div>
                     <small v-else>{{ sourceStates.accountUsage.status === 'unavailable' ? `无数据：${sourceStates.accountUsage.reason}` : sourceStates.accountUsage.status === 'stale' ? '旧数据不可用' : '等待同步' }}</small>
                   </td>
-                  <td><span class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><small>{{ row.scoreRaw == null ? '质量分回退' : `${row.scoreRaw.toFixed(2)} / ${row.scoreMax.toFixed(2)}` }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
+                  <td><span v-if="row.scoreRaw != null" class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><span v-else class="cost-score is-unavailable">无数据</span><small>{{ row.scoreRaw == null ? '内核未提供账号调度分' : `${row.scoreRaw.toFixed(2)} / ${row.scoreMax.toFixed(2)}` }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
                   <td><strong>{{ row.account.priority }}</strong><small>当前</small></td>
                   <td><strong>{{ formatCompactDate(row.account.created_at) }}</strong><small>{{ row.lossState?.active ? `终局于 ${formatCompactDate(row.lossState.occurred_at)}` : `${row.elapsedHours.toFixed(1)}h 已计费` }}</small></td>
                   <td><strong class="cost-lime">{{ assetLedgerState === 'unavailable' ? '无数据' : row.billingMode === 'metered' && row.profile.source !== 'custom' ? '按 Token' : `${formatCny(row.hourlyCost, 5)}/h` }}</strong><small>{{ assetLedgerState === 'unavailable' ? sourceStates.costLoss.reason : row.billingMode === 'metered' ? (row.profile.source === 'custom' ? '自动按量 + 固定附加' : '模型/渠道价格自动计算') : `配置推算 · ${row.profile.source === 'custom' ? '用户自定义' : '美国套餐默认估算'}` }}</small></td>
@@ -522,7 +523,7 @@
               <MetricCell label="当前池 API 产出速率" :value="formatOptionalUsd(oauthOutputHourlyUsd, 2)" :note="economicsSampleNote" :state="economicsDisplayState" accent="gold" />
               <MetricCell label="当前池综合成本" :value="formatOptionalCnyRate(oauthCombinedHourlyCny, 2)" note="稳定区间 API 成本 + 配置采购费率" :state="economicsDisplayState" accent="gold" />
               <MetricCell label="今日当前池产出" :value="formatUsd(oauthTodayOutputUsd, 3)" note="本机自然日 · 现存账号真实用户计费" :state="sourceStates.todayStats.status" />
-              <MetricCell label="今日剩余预期" :value="formatOptionalUsd(oauthRemainingForecastUsd, 2)" note="仅按持久化稳定区间速率外推；成员变化会重置" :state="accountEconomics?.projection.confidence === 'unavailable' ? 'partial' : sourceStates.economics.status" />
+              <MetricCell label="预计今日剩余 API 产出（USD）" :value="formatOptionalUsd(oauthRemainingForecastUsd, 2)" note="从当前时刻到本机 24:00 的产出预测；非余额，成员变化会重置" :state="accountEconomics?.projection.confidence === 'unavailable' ? 'partial' : sourceStates.economics.status" />
               <MetricCell label="每 1 USD 产出采购成本" :value="!accountEconomics ? '无数据' : accountEconomics.actual.cny_per_billed_usd == null ? '无有效产出' : formatCny(accountEconomics.actual.cny_per_billed_usd, 2)" note="经济成本 CNY / 历史实际产出 USD" :state="economicsDisplayState" />
               <MetricCell label="经济数据完整度" :value="economicsQualityLabel" :note="economicsQualityNote" :state="economicsDisplayState" accent="lime" />
             </div>
@@ -539,15 +540,15 @@
             <div class="cost-platform-tabs" role="tablist" aria-label="渠道号池平台">
               <button v-for="item in accountPoolProviderTabs" :key="item.key" type="button" role="tab" :aria-selected="poolPlatform === item.key" :class="{ active: poolPlatform === item.key }" @click="poolPlatform = item.key">{{ item.label }}</button>
             </div>
-            <button type="button" class="cost-primary-button cost-primary-button--outline" @click="reload"><RefreshCcw :size="16" /> 刷新号池核算</button>
+            <button type="button" class="cost-primary-button cost-primary-button--outline" @click="reload()"><RefreshCcw :size="16" /> 刷新号池核算</button>
           </div>
 
           <div class="cost-pool-summary">
             <MetricCell label="渠道账号" :value="hasMeasuredData(sourceStates.accounts) ? formatInteger(oauthAccounts.length) : '无数据'" :note="oauthActiveCount == null ? sourceStates.todayStats.reason : `${oauthActiveCount} 个已产生请求`" :state="sourceStates.accounts.status" />
             <MetricCell label="号池经济成本" :value="formatCny(accountEconomics?.actual.economic_cost_cny ?? (assetLedgerState === 'measured' ? oauthAccruedCny : null), 2)" :note="`采购累计 + 封禁损失 · 当前费率 ${formatCny(oauthHourlyCny, 4)}/h`" :state="accountEconomics ? sourceStates.economics.status : assetLedgerState" />
             <MetricCell label="封禁净损失" :value="formatCny(accountEconomics?.actual.impairment_loss_cny ?? (hasMeasuredData(sourceStates.costLoss) ? oauthImpairmentCny : null), 2)" note="含已删除账号的有效终局损失账本" :state="accountEconomics ? sourceStates.economics.status : sourceStates.costLoss.status" accent="gold" />
-            <MetricCell label="今日 API 账号成本" :value="formatUsd(oauthTodayCostUsd, 4)" note="本机自然日真实账号成本" :state="sourceStates.todayStats.status" accent="lime" />
-            <MetricCell label="今日 API 产出" :value="formatUsd(oauthTodayOutputUsd, 4)" :note="`推导利润 ${formatUsd(oauthTodayProfitUsd, 3)}`" :state="sourceStates.todayStats.status" accent="blue" />
+            <MetricCell label="今日上游账号调用成本（USD）" :value="formatUsd(oauthTodayCostUsd, 4)" note="成本项：本机自然日 usage_logs 账号成本快照" :state="sourceStates.todayStats.status" accent="lime" />
+            <MetricCell label="今日用户 API 计费产出（USD）" :value="formatUsd(oauthTodayOutputUsd, 4)" :note="`收入项：actual_cost · 推导毛利 ${formatUsd(oauthTodayProfitUsd, 3)}`" :state="sourceStates.todayStats.status" accent="blue" />
             <MetricCell label="号池运行状态" :value="accountEconomics ? `${accountEconomics.health.normal_count} 可调度` : hasMeasuredData(sourceStates.accounts) ? `${oauthNormalCount} 可调度` : '无数据'" :note="accountEconomics ? `限流 ${accountEconomics.health.rate_limited_count} · 错误 ${accountEconomics.health.error_count} · ${oauthUnverifiedCount} 个未主动探测` : hasMeasuredData(sourceStates.accounts) ? `限流 ${oauthLimitedCount} · 错误 ${oauthErrorCount} · ${oauthUnverifiedCount} 个未主动探测` : sourceStates.accounts.reason" :state="oauthUnverifiedCount > 0 ? 'partial' : accountEconomics ? sourceStates.economics.status : sourceStates.accounts.status" />
             <div class="cost-pool-output">
               <span>API 美元产出</span><strong>{{ formatUsd(oauthTodayOutputUsd, 2) }}</strong>
@@ -661,6 +662,9 @@ import {
   formatMoney,
   inferPlan,
   isDefaultSubscriptionCostProfile,
+  isStartedInLocalMonth,
+  isTimestampInWindow,
+  procurementCostInWindow,
   resolveAccountBillingMode,
   resolveCostProfile,
   type CostProfile,
@@ -670,7 +674,8 @@ import {
   useCostCenterData,
   type CostCenterRange,
 } from '@/features/cost-center/useCostCenterData'
-import { costTrendBucketHours as resolveCostTrendBucketHours } from '@/features/cost-center/usageWindow'
+import { costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
+import { selectFinancialTrend } from '@/features/cost-center/financialTrend'
 import { hasMeasuredData, unavailableValueLabel, type DataAvailability, type DataSourceState } from '@/features/cost-center/dataState'
 import type { ModelRouteRow } from '@/features/cost-center/modelRouteAnalysis'
 import { calculateDesktopScale } from '@/features/cost-center/desktopScale'
@@ -682,6 +687,7 @@ import {
 } from '@/features/cost-center/modelCostAnalysis'
 import {
   describeCurrentAccountState,
+  hasAccountRankingEvidence,
   normalizeSchedulerScore,
   resolveSchedulerBaseScoreMax,
 } from '@/features/cost-center/upstreamTable'
@@ -874,13 +880,65 @@ const archivedEconomicCostCny = computed(() => archivedLatestCostLossStates.valu
 const archivedImpairmentCny = computed(() => archivedLatestCostLossStates.value.reduce(
   (sum, state) => sum + convertCurrency(state.net_loss, state.currency, 'CNY', exchangeRate.value.rate), 0,
 ))
-const archivedLossAccountCount = computed(() => archivedLatestCostLossStates.value.length)
 const currentImpairmentCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.impairmentCny, 0))
 const assetLedgerState = computed<DataAvailability>(() => combineSourceAvailability(sourceStates.value.accounts, sourceStates.value.costLoss))
 const totalImpairmentCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.costLoss) ? currentImpairmentCny.value + archivedImpairmentCny.value : null)
 const totalEconomicCostCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss) ? totalAccruedCny.value + archivedEconomicCostCny.value : null)
+const observationBounds = computed(() => usageWindowBounds(range.value, now.value))
+const windowLatestCostLossStates = computed(() => [...latestCostLossByAccount.value.values()].filter((state) => (
+  state.active && isTimestampInWindow(state.occurred_at, observationBounds.value.start, observationBounds.value.end)
+)))
+const windowImpairmentCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.costLoss)
+  ? windowLatestCostLossStates.value.reduce(
+      (sum, state) => sum + convertCurrency(state.net_loss, state.currency, 'CNY', exchangeRate.value.rate), 0,
+    )
+  : null)
+const windowCurrentProcurementCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + convertCurrency(
+  procurementCostInWindow(
+    row.profile,
+    observationBounds.value.start,
+    observationBounds.value.end,
+    row.lossState?.active ? row.lossState.occurred_at : null,
+  ),
+  row.profile.currency,
+  'CNY',
+  exchangeRate.value.rate,
+), 0))
+const windowArchivedProcurementCny = computed(() => archivedLatestCostLossStates.value.reduce((sum, state) => sum + convertCurrency(
+  procurementCostInWindow(
+    state.cost_profile,
+    observationBounds.value.start,
+    observationBounds.value.end,
+    state.active ? state.occurred_at : null,
+  ),
+  state.cost_profile.currency,
+  'CNY',
+  exchangeRate.value.rate,
+), 0))
+const windowEconomicCostCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss)
+  ? windowCurrentProcurementCny.value + windowArchivedProcurementCny.value + (windowImpairmentCny.value ?? 0)
+  : null)
 const procurementHourlyCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss) ? accountLedgers.value.reduce((sum, row) => sum + row.hourlyCny, 0) : null)
-const monthlyProcurementForecastCny = computed<number | null>(() => procurementHourlyCny.value == null ? null : procurementHourlyCny.value * 730)
+const currentMonthActiveOneTimeProcurementCny = computed(() => accountLedgers.value.reduce((sum, row) => {
+  if (row.profile.billing_cycle !== 'one_time' || !isStartedInLocalMonth(row.profile.started_at, now.value)) return sum
+  return sum + convertCurrency(row.profile.amount, row.profile.currency, 'CNY', exchangeRate.value.rate)
+}, 0))
+const archivedMonthlyOneTimeStates = computed(() => archivedLatestCostLossStates.value.filter((state) => (
+  state.cost_profile.billing_cycle === 'one_time' && isStartedInLocalMonth(state.cost_profile.started_at, now.value)
+)))
+const archivedMonthlyOneTimeCount = computed(() => archivedMonthlyOneTimeStates.value.length)
+const archivedMonthlyOneTimeProcurementCny = computed(() => archivedMonthlyOneTimeStates.value.reduce((sum, state) => (
+  sum + convertCurrency(state.cost_profile.amount, state.cost_profile.currency, 'CNY', exchangeRate.value.rate)
+), 0))
+const currentMonthOneTimeProcurementCny = computed(() => currentMonthActiveOneTimeProcurementCny.value + archivedMonthlyOneTimeProcurementCny.value)
+const factualMonthOneTimeProcurementCny = computed(() => accountEconomics.value?.actual.month_one_time_procurement_cny)
+const monthlyDeletedOneTimeCount = computed(() => accountEconomics.value?.actual.month_deleted_one_time_purchase_count ?? archivedMonthlyOneTimeCount.value)
+const monthlyDeletedRecurringProcurementCny = computed(() => accountEconomics.value?.actual.month_deleted_recurring_procurement_cny ?? 0)
+const monthlyDeletedRecurringCount = computed(() => accountEconomics.value?.actual.month_deleted_recurring_purchase_count ?? 0)
+const monthlyDeletedPurchaseCount = computed(() => monthlyDeletedOneTimeCount.value + monthlyDeletedRecurringCount.value)
+const monthlyProcurementForecastCny = computed<number | null>(() => procurementHourlyCny.value == null
+  ? null
+  : procurementHourlyCny.value * 730 + (factualMonthOneTimeProcurementCny.value ?? currentMonthOneTimeProcurementCny.value) + monthlyDeletedRecurringProcurementCny.value)
 const defaultCostProfileCount = computed(() => accountLedgers.value.filter((row) => isDefaultSubscriptionCostProfile(row.account)).length)
 const todayAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? accountLedgers.value.reduce((sum, row) => sum + Number(row.today?.cost || 0), 0) : null)
 const dayElapsedHours = computed(() => Math.max(1 / 60, now.value.getHours() + now.value.getMinutes() / 60))
@@ -891,13 +949,12 @@ const rollingTrendLabel = computed(() => ({ today: '4 小时移动平均', '1m':
 const requestSmoothingPoints = computed(() => ({ today: 12, '1m': 2, '5m': 3, '30m': 5, '1h': 10, '6h': 6, '24h': 12, '7d': 6, '30d': 6 })[range.value])
 const windowActualOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.actual_cost)) : null)
 const windowAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.account_cost ?? point.cost)) : null)
-const apiCostBasisLabel = computed(() => opsTrend.value.length || trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
+const apiCostBasisLabel = computed(() => trendUsesAccountCost.value ? 'API 账号实算成本' : 'API 标准价成本')
 const apiOutputHourlyUsd = computed<number | null>(() => windowActualOutputUsd.value == null ? null : windowActualOutputUsd.value / selectedRangeHours.value)
 const combinedHourlyCny = computed<number | null>(() => procurementHourlyCny.value == null || windowAccountCostUsd.value == null ? null : procurementHourlyCny.value + windowAccountCostUsd.value * exchangeRate.value.rate / selectedRangeHours.value)
 const todayRequests = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? accountLedgers.value.reduce((sum, row) => sum + Number(row.today?.requests || 0), 0) : null)
 
 const trendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trend.value.map((point) => formatTrendLabel(point.date)))
-const trendSourceState = computed(() => opsTrend.value.length ? sourceStates.value.ops : sourceStates.value.dashboard)
 const opsBucketHours = computed(() => {
   if (opsTrend.value.length < 2) return trendBucketHours.value
   const left = new Date(opsTrend.value[0].bucket_start).getTime()
@@ -905,15 +962,24 @@ const opsBucketHours = computed(() => {
   const hours = Math.abs(right - left) / 3_600_000
   return Number.isFinite(hours) && hours > 0 ? hours : trendBucketHours.value
 })
-const trendActualCost = computed(() => opsTrend.value.length
-  ? opsTrend.value.map((point) => divideFiniteChartValue(point.user_billed_usd, opsBucketHours.value))
-  : trend.value.map((point) => divideFiniteChartValue(point.actual_cost, trendBucketHours.value)))
+const financialTrend = computed(() => selectFinancialTrend(
+  opsTrend.value,
+  trend.value,
+  opsBucketHours.value,
+  trendBucketHours.value,
+))
+const trendFinancialUsesOps = computed(() => financialTrend.value[0]?.source === 'ops')
+const trendFinancialState = computed(() => trendFinancialUsesOps.value ? sourceStates.value.ops : sourceStates.value.dashboard)
+const trendFinancialReason = computed(() => trendFinancialUsesOps.value
+  ? sourceStates.value.ops.reason
+  : opsTrend.value.length && trend.value.length
+    ? 'Ops 运行点缺少经济字段，已使用同窗口 usage_logs 成本事实'
+    : sourceStates.value.dashboard.reason)
+const trendActualCost = computed(() => financialTrend.value.map((point) => divideFiniteChartValue(point.billedUsd, point.bucketHours)))
 const rollingTrendActualCost = computed(() => movingAverage(trendActualCost.value, trendSmoothingPoints.value))
 const rollingOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? rollingTrendActualCost.value.at(-1) ?? apiOutputHourlyUsd.value : null)
-const trendStandardCost = computed(() => opsTrend.value.length
-  ? opsTrend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.account_cost_usd, opsBucketHours.value), exchangeRate.value.rate))
-  : trend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.account_cost ?? point.cost, trendBucketHours.value), exchangeRate.value.rate)))
-const procurementBaseline = computed(() => trendLabels.value.map(() => procurementHourlyCny.value))
+const trendStandardCost = computed(() => financialTrend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.accountCostUsd, point.bucketHours), exchangeRate.value.rate)))
+const procurementBaseline = computed(() => financialTrend.value.map(() => procurementHourlyCny.value))
 const trendCombinedCost = computed(() => trendStandardCost.value.map((value, index) => procurementHourlyCny.value == null || windowAccountCostUsd.value == null || value == null ? null : value + (procurementBaseline.value[index] ?? 0)))
 const qualityTrendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trendLabels.value)
 const requestVolumeTrend = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => Number(point.request_count || 0)) : trend.value.map((point) => Number(point.requests || 0)))
@@ -968,7 +1034,7 @@ const upstreamRows = computed(() => {
       const hasRawScore = Number.isFinite(rawScore)
       return {
         ...row,
-        score: hasRawScore ? normalizeSchedulerScore(rawScore, schedulerBaseScoreMax.value) : qualityScore.value,
+        score: hasRawScore ? normalizeSchedulerScore(rawScore, schedulerBaseScoreMax.value) : 0,
         scoreRaw: hasRawScore ? rawScore : null,
         scoreMax: schedulerBaseScoreMax.value,
         hourlyCost: row.hourlyCny,
@@ -977,8 +1043,18 @@ const upstreamRows = computed(() => {
         groups: row.account.groups?.map((group) => group.name) ?? [],
       }
     })
+    .map((row) => ({
+      ...row,
+      rankingEligible: hasAccountRankingEvidence(rankingMetric.value, {
+        today: row.today,
+        probe: probes.value[String(row.account.id)],
+        state: row.currentState.state,
+      }),
+    }))
+  let rank = 0
   return rows
     .sort((a, b) => {
+      if (a.rankingEligible !== b.rankingEligible) return a.rankingEligible ? -1 : 1
       const aValue = rankingValue(a, rankingMetric.value)
       const bValue = rankingValue(b, rankingMetric.value)
       if (rankingMetric.value === 'latency') {
@@ -989,8 +1065,9 @@ const upstreamRows = computed(() => {
       }
       return bValue - aValue || b.score - a.score
     })
-    .map((row, index) => ({ ...row, rank: index + 1 }))
+    .map((row) => ({ ...row, rank: row.rankingEligible ? ++rank : null }))
 })
+const rankedUpstreamCount = computed(() => upstreamRows.value.filter((row) => row.rank != null).length)
 
 const allVisibleAccountsSelected = computed(() => upstreamRows.value.length > 0 && upstreamRows.value.every((row) => selectedAccountIds.value.has(row.account.id)))
 const someVisibleAccountsSelected = computed(() => upstreamRows.value.some((row) => selectedAccountIds.value.has(row.account.id)))
@@ -1149,6 +1226,7 @@ function sumFiniteTrendValues(values: unknown[]): number | null { const numbers 
 function movingAverage(values: Array<number | null>, windowSize: number): Array<number | null> { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1).filter((value): value is number => value != null && Number.isFinite(value)); return slice.length ? slice.reduce((sum, value) => sum + value, 0) / slice.length : null }) }
 function formatInteger(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Math.round(Number(value)).toLocaleString() }
 function formatPercent(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : `${(Number(value) * 100).toFixed(1)}%` }
+function formatPlainNumber(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Number(value).toFixed(digits) }
 function formatCny(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : formatMoney(Number(value), 'CNY', digits) }
 function formatUsd(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : formatMoney(Number(value), 'USD', digits) }
 function formatOptionalUsd(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '待采样' : formatUsd(Number(value), digits) }
@@ -1190,15 +1268,15 @@ function formatTrendLabel(value: string): string { const date = new Date(value.i
 function donutGradient(items: Array<{ value: number; color: string }>): string { const total = items.reduce((sum, item) => sum + Math.max(0, item.value), 0); if (!total) return 'conic-gradient(#303830 0 100%)'; let cursor = 0; const stops = items.map((item) => { const start = cursor; cursor += Math.max(0, item.value) / total * 100; return `${item.color} ${start}% ${cursor}%` }); return `conic-gradient(${stops.join(', ')})` }
 function statusRingGradient(normal: number, limited: number, errors: number): string { const total = Math.max(1, normal + limited + errors); const normalEnd = normal / total * 100; const limitedEnd = normalEnd + limited / total * 100; return `conic-gradient(#b9e55a 0 ${normalEnd}%, #9c8a54 ${normalEnd}% ${limitedEnd}%, #995c50 ${limitedEnd}% 100%)` }
 let reloadQueued = false
-async function reload() {
+async function reload(background = false) {
   if (loading.value) {
     reloadQueued = true
     return
   }
   do {
     reloadQueued = false
-    await data.reload(range.value)
-    if (poolPlatform.value !== 'all') await data.loadAccountEconomics(poolPlatform.value, range.value, oauthAccounts.value.map((row) => row.account.id))
+    await data.reload(range.value, { background })
+    if (poolPlatform.value !== 'all') await data.loadAccountEconomics(poolPlatform.value, range.value, oauthAccounts.value.map((row) => row.account.id), { background })
   } while (reloadQueued)
   countdown.value = refreshIntervalSeconds.value
 }
@@ -1270,7 +1348,7 @@ function handleKeydown(event: KeyboardEvent) {
 async function refreshOnResume() {
   if (document.visibilityState !== 'visible') return
   countdown.value = refreshIntervalSeconds.value
-  await reload()
+  await reload(lastUpdated.value != null)
 }
 
 function readDesktopViewport() {
@@ -1295,7 +1373,7 @@ onMounted(async () => {
     now.value = new Date()
     if (!autoRefresh.value || document.visibilityState !== 'visible') return
     countdown.value -= 1
-    if (countdown.value <= 0) reload()
+    if (countdown.value <= 0) reload(true)
   }, 1000)
   await reload()
 })
@@ -1820,6 +1898,8 @@ button:active { transform: translateY(1px); }
 .cost-rank-badge[data-rank='1'] { color: #10150e; background: var(--cost-lime); border-color: var(--cost-lime); }
 .cost-rank-badge[data-rank='2'] { color: #132019; background: #8bb9d0; border-color: #8bb9d0; }
 .cost-rank-badge[data-rank='3'] { color: #1c170c; background: #d3ad4e; border-color: #d3ad4e; }
+.cost-rank-badge.is-unranked { flex-basis: 42px; color: #748078; background: transparent; border-style: dashed; font-weight: 500; }
+.cost-score.is-unavailable { color: #79847c; background: #192019; font-weight: 500; }
 
 @media (max-width: 900px) {
   .cost-ranking-bar {

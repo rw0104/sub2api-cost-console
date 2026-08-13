@@ -8,7 +8,10 @@ import {
   formatMoney,
   hourlyRate,
   inferPlan,
+  isStartedInLocalMonth,
   isDefaultSubscriptionCostProfile,
+  isTimestampInWindow,
+  procurementCostInWindow,
   resolveAccountBillingMode,
   resolveCostProfile,
   COST_ALGORITHM_VERSION,
@@ -44,6 +47,48 @@ function profile(overrides: Partial<CostProfile> = {}): CostProfile {
 }
 
 describe('cost center model', () => {
+  it('recognizes one-time purchases started in the current local month', () => {
+    const now = new Date(2026, 7, 12, 10, 0, 0)
+
+    expect(isStartedInLocalMonth(new Date(2026, 7, 1, 0, 0, 0), now)).toBe(true)
+    expect(isStartedInLocalMonth(new Date(2026, 6, 31, 23, 59, 59), now)).toBe(false)
+    expect(isStartedInLocalMonth(new Date(2026, 7, 13, 0, 0, 0), now)).toBe(false)
+  })
+
+  it('excludes historical loss events from the selected observation window', () => {
+    expect(isTimestampInWindow(
+      '2026-08-10T12:00:00.000Z',
+      '2026-08-12T06:00:00.000Z',
+      '2026-08-12T12:00:00.000Z',
+    )).toBe(false)
+    expect(isTimestampInWindow(
+      '2026-08-12T11:00:00.000Z',
+      '2026-08-12T06:00:00.000Z',
+      '2026-08-12T12:00:00.000Z',
+    )).toBe(true)
+  })
+
+  it('counts only procurement incurred inside the selected observation window', () => {
+    const start = '2026-08-12T06:00:00.000Z'
+    const end = '2026-08-12T12:00:00.000Z'
+
+    expect(procurementCostInWindow(profile({
+      amount: 4,
+      billing_cycle: 'one_time',
+      started_at: '2026-08-10T12:00:00.000Z',
+    }), start, end)).toBe(0)
+    expect(procurementCostInWindow(profile({
+      amount: 4,
+      billing_cycle: 'one_time',
+      started_at: '2026-08-12T08:00:00.000Z',
+    }), start, end)).toBe(4)
+    expect(procurementCostInWindow(profile({
+      amount: 24,
+      billing_cycle: 'daily',
+      started_at: '2026-08-12T04:00:00.000Z',
+    }), start, end, '2026-08-12T09:00:00.000Z')).toBe(3)
+  })
+
   it('starts recurring cost at zero when the account joins', () => {
     const resolved = resolveCostProfile(account({ extra: { plan_type: 'plus' } }))
     expect(accruedCost(resolved, JOINED_AT)).toBe(0)

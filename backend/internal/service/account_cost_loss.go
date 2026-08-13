@@ -94,21 +94,22 @@ type AccountCostLossEvent struct {
 }
 
 type AccountCostLossState struct {
-	AccountIDSnapshot int64     `json:"account_id"`
-	AccountName       string    `json:"account_name"`
-	Platform          string    `json:"platform"`
-	AccountType       string    `json:"account_type"`
-	TerminalEventID   int64     `json:"terminal_event_id"`
-	OccurredAt        time.Time `json:"occurred_at"`
-	Currency          string    `json:"currency"`
-	AccruedCost       float64   `json:"accrued_cost"`
-	GrossLoss         float64   `json:"gross_loss"`
-	RefundAmount      float64   `json:"refund_amount"`
-	ReversalAmount    float64   `json:"reversal_amount"`
-	NetLoss           float64   `json:"net_loss"`
-	RecognizedCost    float64   `json:"recognized_cost"`
-	Active            bool      `json:"active"`
-	AccountDeleted    bool      `json:"account_deleted"`
+	AccountIDSnapshot int64                      `json:"account_id"`
+	AccountName       string                     `json:"account_name"`
+	Platform          string                     `json:"platform"`
+	AccountType       string                     `json:"account_type"`
+	TerminalEventID   int64                      `json:"terminal_event_id"`
+	OccurredAt        time.Time                  `json:"occurred_at"`
+	Currency          string                     `json:"currency"`
+	AccruedCost       float64                    `json:"accrued_cost"`
+	GrossLoss         float64                    `json:"gross_loss"`
+	RefundAmount      float64                    `json:"refund_amount"`
+	ReversalAmount    float64                    `json:"reversal_amount"`
+	NetLoss           float64                    `json:"net_loss"`
+	RecognizedCost    float64                    `json:"recognized_cost"`
+	CostProfile       AccountCostProfileSnapshot `json:"cost_profile"`
+	Active            bool                       `json:"active"`
+	AccountDeleted    bool                       `json:"account_deleted"`
 }
 
 type AccountCostLossAdjustment struct {

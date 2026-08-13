@@ -122,10 +122,6 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-release.mjs
 
-      - name: Package extension-compatible core update
-        working-directory: frontend
-        run: node scripts/prepare-core-release.mjs
-
       - name: Upload desktop updater metadata and checksums
         shell: pwsh
         working-directory: frontend
@@ -136,21 +132,6 @@ jobs:
             (Resolve-Path release-assets/latest.json) `
             (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) `
             (Resolve-Path DESKTOP_RELEASE_NOTES.md) --clobber
-
-      - name: Publish independent compatible core channel
-        shell: pwsh
-        working-directory: frontend
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view core-stable 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create core-stable --title "Sub2API compatible core channel" --notes "Automatically published extension-compatible Sub2API core builds." --prerelease
-          }
-          gh release upload core-stable `
-            (Resolve-Path release-assets/core-latest.json) `
-            (Resolve-Path release-assets/CORE_SHA256SUMS.txt) `
-            (Resolve-Path "release-assets/sub2api-core_*.zip") --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7

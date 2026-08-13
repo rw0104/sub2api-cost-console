@@ -64,16 +64,24 @@ type AccountPoolUnitEconomicsInput struct {
 }
 
 type AccountPoolUnitEconomics struct {
-	BilledUSD                       float64  `json:"billed_usd"`
-	AccountCostUSD                  float64  `json:"account_cost_usd"`
-	ProcurementAccruedCNY           float64  `json:"procurement_accrued_cny"`
-	ImpairmentLossCNY               float64  `json:"impairment_loss_cny"`
-	EconomicCostCNY                 float64  `json:"economic_cost_cny"`
-	ContributionMarginCNY           float64  `json:"contribution_margin_cny"`
-	CNYPerBilledUSD                 *float64 `json:"cny_per_billed_usd"`
-	PaybackRatio                    *float64 `json:"payback_ratio"`
-	ProjectedContributionCNYPerHour *float64 `json:"projected_contribution_cny_per_hour"`
-	EstimatedPaybackHours           *float64 `json:"estimated_payback_hours"`
+	BilledUSD                           float64  `json:"billed_usd"`
+	AccountCostUSD                      float64  `json:"account_cost_usd"`
+	ProcurementAccruedCNY               float64  `json:"procurement_accrued_cny"`
+	ImpairmentLossCNY                   float64  `json:"impairment_loss_cny"`
+	EconomicCostCNY                     float64  `json:"economic_cost_cny"`
+	WindowProcurementCNY                float64  `json:"window_procurement_cny"`
+	WindowImpairmentLossCNY             float64  `json:"window_impairment_loss_cny"`
+	WindowEconomicCostCNY               float64  `json:"window_economic_cost_cny"`
+	ContributionMarginCNY               float64  `json:"contribution_margin_cny"`
+	CNYPerBilledUSD                     *float64 `json:"cny_per_billed_usd"`
+	PaybackRatio                        *float64 `json:"payback_ratio"`
+	ProjectedContributionCNYPerHour     *float64 `json:"projected_contribution_cny_per_hour"`
+	EstimatedPaybackHours               *float64 `json:"estimated_payback_hours"`
+	MonthOneTimeProcurementCNY          float64  `json:"month_one_time_procurement_cny"`
+	MonthOneTimePurchaseCount           int      `json:"month_one_time_purchase_count"`
+	MonthDeletedOneTimePurchaseCount    int      `json:"month_deleted_one_time_purchase_count"`
+	MonthDeletedRecurringProcurementCNY float64  `json:"month_deleted_recurring_procurement_cny"`
+	MonthDeletedRecurringPurchaseCount  int      `json:"month_deleted_recurring_purchase_count"`
 }
 
 type AccountEconomicsUsageTotals struct {
@@ -81,10 +89,18 @@ type AccountEconomicsUsageTotals struct {
 	AccountCostUSD float64
 }
 
+type AccountProcurementProfile struct {
+	AccountID   int64
+	Platform    string
+	Deleted     bool
+	CostProfile AccountCostProfileSnapshot
+}
+
 type AccountEconomicsRepository interface {
 	SumUsageTotals(ctx context.Context, accountIDs []int64) (AccountEconomicsUsageTotals, error)
+	ListProcurementProfiles(ctx context.Context) ([]AccountProcurementProfile, error)
 	UpsertSample(ctx context.Context, sample AccountEconomicsSample) error
-	ListSamples(ctx context.Context, scopeKey string, since time.Time) ([]AccountEconomicsSample, error)
+	ListSamples(ctx context.Context, scopeKey string, since, until time.Time) ([]AccountEconomicsSample, error)
 	PruneSamples(ctx context.Context, before time.Time) error
 }
 
@@ -223,7 +239,7 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	if err != nil {
 		return nil, err
 	}
-	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, now.Add(-window))
+	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, now.Add(-window), now)
 	if err != nil {
 		return nil, fmt.Errorf("list economics samples: %w", err)
 	}
@@ -238,6 +254,18 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 		return nil, fmt.Errorf("list account cost loss states: %w", err)
 	}
 	includeDeleted := includeArchivedEconomics(query.Scope, query.AccountIDs)
+	procurementProfiles, err := s.repo.ListProcurementProfiles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list account procurement profiles: %w", err)
+	}
+	monthOneTimeProcurementCNY, monthOneTimePurchaseCount, monthDeletedOneTimePurchaseCount, monthDeletedRecurringProcurementCNY, monthDeletedRecurringPurchaseCount := summarizeMonthlyProcurementProfiles(
+		procurementProfiles, query.Platform, query.AccountIDs, cnyPerUSD, now, includeDeleted,
+	)
+	windowStart := now.Add(-window)
+	windowProcurementCNY, windowImpairmentCNY := summarizeWindowEconomics(
+		accounts, procurementProfiles, states, query.Platform, query.AccountIDs,
+		cnyPerUSD, windowStart, now, includeDeleted,
+	)
 	procurement, impairment, hourly, invalid := summarizeProcurementEconomics(accounts, states, query.Platform, cnyPerUSD, now, includeDeleted)
 	quality.InvalidCostProfileCount = invalid
 	if invalid > 0 {
@@ -260,8 +288,15 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 		BilledUSDPerHour:      projection.CapacityAdjustedBilledUSDPerHour,
 		AccountCostUSDPerHour: projection.CapacityAdjustedAccountCostUSDPerHour,
 	})
+	actual.MonthOneTimeProcurementCNY = monthOneTimeProcurementCNY
+	actual.MonthOneTimePurchaseCount = monthOneTimePurchaseCount
+	actual.MonthDeletedOneTimePurchaseCount = monthDeletedOneTimePurchaseCount
+	actual.MonthDeletedRecurringProcurementCNY = monthDeletedRecurringProcurementCNY
+	actual.MonthDeletedRecurringPurchaseCount = monthDeletedRecurringPurchaseCount
+	actual.WindowProcurementCNY = windowProcurementCNY
+	actual.WindowImpairmentLossCNY = windowImpairmentCNY
+	actual.WindowEconomicCostCNY = windowProcurementCNY + windowImpairmentCNY
 	series, events := BuildAccountEconomicsSeries(samples, window)
-	windowStart := now.Add(-window)
 	if !s.startedAt.Before(windowStart) && !s.startedAt.After(now) {
 		events = append(events, AccountEconomicsEvent{
 			OccurredAt: s.startedAt, Kind: "core_started", Label: "核心进程启动", Severity: "info",
@@ -535,6 +570,151 @@ func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossS
 		impairmentCNY += costAmountToCNY(state.NetLoss, state.Currency, cnyPerUSD)
 	}
 	return procurementCNY, impairmentCNY, hourlyCNY, invalid
+}
+
+func summarizeMonthlyProcurementProfiles(
+	profiles []AccountProcurementProfile,
+	platform string,
+	accountIDs []int64,
+	cnyPerUSD float64,
+	now time.Time,
+	includeDeleted bool,
+) (oneTimeCNY float64, oneTimeCount, deletedOneTimeCount int, deletedRecurringCNY float64, deletedRecurringCount int) {
+	selected := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		if id > 0 {
+			selected[id] = struct{}{}
+		}
+	}
+	platform = normalizeEconomicsPlatform(platform)
+	for _, item := range profiles {
+		if item.CostProfile.Amount < 0 || item.CostProfile.StartedAt.IsZero() || item.CostProfile.StartedAt.After(now) {
+			continue
+		}
+		if platform != "" && !strings.EqualFold(item.Platform, platform) {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, exists := selected[item.AccountID]; !exists {
+				continue
+			}
+		} else if item.Deleted && !includeDeleted {
+			continue
+		}
+		started := item.CostProfile.StartedAt.In(now.Location())
+		if started.Year() != now.Year() || started.Month() != now.Month() {
+			continue
+		}
+		amountCNY := costAmountToCNY(item.CostProfile.Amount, item.CostProfile.Currency, cnyPerUSD)
+		if item.CostProfile.BillingCycle == "one_time" {
+			oneTimeCNY += amountCNY
+			oneTimeCount++
+			if item.Deleted {
+				deletedOneTimeCount++
+			}
+		} else if item.Deleted {
+			deletedRecurringCNY += amountCNY
+			deletedRecurringCount++
+		}
+	}
+	return oneTimeCNY, oneTimeCount, deletedOneTimeCount, deletedRecurringCNY, deletedRecurringCount
+}
+
+func summarizeWindowEconomics(
+	accounts []Account,
+	profiles []AccountProcurementProfile,
+	states []AccountCostLossState,
+	platform string,
+	accountIDs []int64,
+	cnyPerUSD float64,
+	windowStart, windowEnd time.Time,
+	includeDeleted bool,
+) (procurementCNY, impairmentCNY float64) {
+	selected := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		if id > 0 {
+			selected[id] = struct{}{}
+		}
+	}
+	platform = normalizeEconomicsPlatform(platform)
+	latestActive := make(map[int64]AccountCostLossState)
+	for _, state := range states {
+		if !state.Active || (platform != "" && !strings.EqualFold(state.Platform, platform)) {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, exists := selected[state.AccountIDSnapshot]; !exists {
+				continue
+			}
+		} else if state.AccountDeleted && !includeDeleted {
+			continue
+		}
+		previous, exists := latestActive[state.AccountIDSnapshot]
+		if !exists || state.OccurredAt.After(previous.OccurredAt) {
+			latestActive[state.AccountIDSnapshot] = state
+		}
+	}
+	for _, state := range latestActive {
+		if !state.OccurredAt.Before(windowStart) && !state.OccurredAt.After(windowEnd) {
+			impairmentCNY += costAmountToCNY(state.NetLoss, state.Currency, cnyPerUSD)
+		}
+	}
+
+	profileByID := make(map[int64]AccountProcurementProfile, len(profiles))
+	for _, item := range profiles {
+		profileByID[item.AccountID] = item
+	}
+	for _, account := range accounts {
+		if _, exists := profileByID[account.ID]; exists {
+			continue
+		}
+		profile, err := resolveAccountCostProfileSnapshot(&account)
+		if err == nil {
+			profileByID[account.ID] = AccountProcurementProfile{AccountID: account.ID, Platform: account.Platform, CostProfile: profile}
+		}
+	}
+	for accountID, item := range profileByID {
+		if platform != "" && !strings.EqualFold(item.Platform, platform) {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, exists := selected[accountID]; !exists {
+				continue
+			}
+		} else if item.Deleted && !includeDeleted {
+			continue
+		}
+		stop := windowEnd
+		if state, exists := latestActive[accountID]; exists && state.OccurredAt.Before(stop) {
+			stop = state.OccurredAt
+		}
+		procurementCNY += costAmountToCNY(procurementCostBetween(item.CostProfile, windowStart, stop), item.CostProfile.Currency, cnyPerUSD)
+	}
+	return procurementCNY, impairmentCNY
+}
+
+func procurementCostBetween(profile AccountCostProfileSnapshot, start, end time.Time) float64 {
+	if profile.Amount < 0 || profile.StartedAt.IsZero() || end.Before(start) {
+		return 0
+	}
+	if profile.BillingCycle == "one_time" {
+		if !profile.StartedAt.Before(start) && !profile.StartedAt.After(end) {
+			return profile.Amount
+		}
+		return 0
+	}
+	cycleHours := costCycleHours[profile.BillingCycle]
+	if cycleHours <= 0 {
+		return 0
+	}
+	effectiveStart := start
+	if profile.StartedAt.After(effectiveStart) {
+		effectiveStart = profile.StartedAt
+	}
+	if !end.After(effectiveStart) {
+		return 0
+	}
+	return profile.Amount / cycleHours * end.Sub(effectiveStart).Hours()
 }
 
 func accruedCostAt(profile AccountCostProfileSnapshot, now time.Time) (accrued, hourly float64) {

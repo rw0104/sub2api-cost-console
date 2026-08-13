@@ -1,35 +1,36 @@
-name: Compatible Core Sync
+name: Compatible Core Auto Update
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '2-59/5 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: compatible-core-sync
+  group: compatible-core-auto-update
   cancel-in-progress: false
 
 jobs:
   discover:
-    name: Check the latest upstream release
+    name: Discover an unpublished upstream core
     runs-on: ubuntu-slim
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.upstream.outputs.tag }}
       version: ${{ steps.upstream.outputs.version }}
-      needs_sync: ${{ steps.upstream.outputs.needs_sync }}
+      upstream_commit: ${{ steps.upstream.outputs.upstream_commit }}
+      needs_update: ${{ steps.upstream.outputs.needs_update }}
     steps:
-      - name: Checkout cost console metadata
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          sparse-checkout: frontend/CORE_VERSION
+          sparse-checkout: |
+            frontend/CORE_EXTENSION_VERSION
+            frontend/ALGORITHM_VERSION
           sparse-checkout-cone-mode: false
-
-      - name: Discover latest upstream release
-        id: upstream
+      - id: upstream
+        name: Compare upstream release with core-stable
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,38 +39,56 @@ jobs:
           tag="$(gh api repos/Wei-Shaw/sub2api/releases/latest --jq .tag_name)"
           [[ "$tag" == v* ]] || { echo "Unsupported upstream tag: $tag" >&2; exit 1; }
           version="${tag#v}"
-          current="$(sed -e 's/[[:space:]]//g' frontend/CORE_VERSION)"
-          {
-            echo "tag=$tag"
-            echo "version=$version"
-            if [[ "$current" == "$version" ]]; then
-              echo "needs_sync=false"
-            elif [[ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
-              echo "Refusing to sync older upstream version $version over current $current" >&2
-              echo "needs_sync=false"
-            else
-              echo "needs_sync=true"
-            fi
-          } >> "$GITHUB_OUTPUT"
+          extension="$(tr -d '[:space:]' < frontend/CORE_EXTENSION_VERSION)"
+          algorithm="$(tr -d '[:space:]' < frontend/ALGORITHM_VERSION)"
+          refs="$(git ls-remote https://github.com/Wei-Shaw/sub2api.git "refs/tags/$tag" "refs/tags/$tag^{}")"
+          commit="$(awk '$2 ~ /\^\{\}$/ {print $1; exit}' <<< "$refs")"
+          [[ -n "$commit" ]] || commit="$(awk 'NR == 1 {print $1}' <<< "$refs")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "Unable to resolve upstream commit for $tag" >&2; exit 1; }
+          stable_version="0.0.0"
+          stable_commit=""
+          stable_extension=""
+          stable_algorithm=""
+          if gh release download core-stable --repo "$GITHUB_REPOSITORY" --pattern core-latest.json --output core-stable.json >/dev/null 2>&1; then
+            stable_version="$(jq -r '.version // "0.0.0"' core-stable.json)"
+            stable_commit="$(jq -r '.upstream_commit // ""' core-stable.json)"
+            stable_extension="$(jq -r '.extension_version // ""' core-stable.json)"
+            stable_algorithm="$(jq -r '.algorithm_version // ""' core-stable.json)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_commit=$commit" >> "$GITHUB_OUTPUT"
+          if [[ "$stable_version" == "$version" && "$stable_commit" == "$commit" && "$stable_extension" == "$extension" && "$stable_algorithm" == "$algorithm" ]]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$stable_version" == "$version" && -n "$stable_commit" && "$stable_commit" != "$commit" ]]; then
+            echo "Upstream tag $tag no longer matches the commit already published to core-stable" >&2
+            exit 1
+          elif [[ "$stable_version" == "$version" && -n "$stable_extension" && "$(printf '%s\n%s\n' "$stable_extension" "$extension" | sort -V | tail -n 1)" != "$extension" ]]; then
+            echo "Refusing to replace stable extension $stable_extension with older extension $extension" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$(printf '%s\n%s\n' "$stable_version" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+            echo "Refusing to replace stable $stable_version with older upstream $version" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
 
-  sync-and-publish:
-    name: Merge, verify and publish the compatible core
+  update:
+    name: Merge, verify and publish core-stable
     needs: discover
-    if: needs.discover.outputs.needs_sync == 'true'
+    if: needs.discover.outputs.needs_update == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
     permissions:
       contents: write
       issues: write
-    runs-on: windows-latest
-    timeout-minutes: 90
     steps:
-      - name: Checkout cost console
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
 
-      - name: Fetch and merge upstream release
-        id: merge
+      - id: merge
+        name: Merge upstream with the reviewed conflict policy
         shell: pwsh
         run: |
           git remote add upstream-sync https://github.com/Wei-Shaw/sub2api.git
@@ -78,87 +97,93 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
           if ($LASTEXITCODE -ne 0) {
-            $files = (git diff --name-only --diff-filter=U) -join ', '
-            git merge --abort
-            "conflict=true" >> $env:GITHUB_OUTPUT
-            "conflict_files=$files" >> $env:GITHUB_OUTPUT
-            exit 0
+            $conflicts = @(git diff --name-only --diff-filter=U)
+            $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+            if ($unknown.Count -gt 0) {
+              $files = $conflicts -join ', '
+              git merge --abort
+              "blocked=true" >> $env:GITHUB_OUTPUT
+              "conflict_files=$files" >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+            if ($conflicts -contains 'README.md') { git checkout --ours -- README.md }
+            if ($conflicts -contains 'backend/cmd/server/VERSION') { git checkout --theirs -- backend/cmd/server/VERSION }
+            git add -A
+            git commit --no-edit
           }
           $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
-          Set-Content -Encoding utf8 frontend/CORE_VERSION '${{ needs.discover.outputs.version }}'
-          Set-Content -Encoding utf8 backend/cmd/server/VERSION '${{ needs.discover.outputs.version }}'
-          Set-Content -Encoding utf8 frontend/UPSTREAM_SUB2API_COMMIT $commit
-          git add backend/cmd/server/VERSION frontend/CORE_VERSION frontend/UPSTREAM_SUB2API_COMMIT
-          git commit --amend --no-edit
-          "conflict=false" >> $env:GITHUB_OUTPUT
+          if ($commit -ne '${{ needs.discover.outputs.upstream_commit }}') { throw 'Fetched upstream tag moved after discovery' }
+          $utf8NoBom = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Resolve-Path frontend/CORE_VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path backend/cmd/server/VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path frontend/UPSTREAM_SUB2API_COMMIT), $commit, $utf8NoBom)
+          "blocked=false" >> $env:GITHUB_OUTPUT
 
-      - name: Report merge conflict
-        if: steps.merge.outputs.conflict == 'true'
+      - name: Stop only for an unknown conflict
+        if: steps.merge.outputs.blocked == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $title = "Compatible core sync blocked: ${{ needs.discover.outputs.tag }}"
+          $title = "Compatible core auto-update blocked: ${{ needs.discover.outputs.tag }}"
           $count = gh issue list --repo '${{ github.repository }}' --state open --search "`"$title`" in:title" --json number --jq length
           if ($count -eq '0') {
-            gh issue create --repo '${{ github.repository }}' --title $title --body "Automatic merge conflicted in: ${{ steps.merge.outputs.conflict_files }}. No core artifact was published; the current compatible core remains active."
+            gh issue create --repo '${{ github.repository }}' --title $title --body "Unknown merge conflicts require source review: ${{ steps.merge.outputs.conflict_files }}. Existing core-stable was not changed."
           }
           throw $title
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - run: corepack enable
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: corepack pnpm@9 install --frozen-lockfile
-
-      - name: Verify merged backend
+      - name: Run backend contract
         working-directory: backend
         run: go test ./...
-
-      - name: Verify desktop compatibility contract
+      - name: Run desktop activation, identity and rollback contract
         working-directory: frontend/src-tauri
         run: cargo test --features custom-protocol
-
-      - name: Verify automatic desktop core updates
+      - name: Run frontend and updater contract
         working-directory: frontend
-        run: corepack pnpm@9 exec vitest run src/features/desktop/__tests__/DesktopUpdateCenter.spec.ts
-
-      - name: Build embedded UI and compatible core
+        run: |
+          corepack pnpm@9 test:run
+          corepack pnpm@9 lint:check
+      - name: Build and authenticate the stable core
         working-directory: frontend
+        env:
+          CORE_RELEASE_TAG: core-stable
+          CORE_RELEASE_CHANNEL: stable
         run: |
           corepack pnpm@9 build
           node scripts/prepare-desktop-sidecar.mjs
           node scripts/prepare-core-release.mjs
-
-      - name: Push verified upstream merge
+      - name: Recheck stable immediately before publishing
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh auth setup-git
-          git fetch origin main
-          git merge-base --is-ancestor origin/main HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'main changed during core sync; retry on the next run' }
-          git push origin HEAD:main
-
-      - name: Publish compatible core channel
+          New-Item -ItemType Directory -Force stable-check | Out-Null
+          gh release download core-stable --dir stable-check --pattern core-latest.json 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $stable = Get-Content -Raw stable-check/core-latest.json | ConvertFrom-Json
+            if ([version]$stable.version -gt [version]'${{ needs.discover.outputs.version }}') {
+              throw "core-stable advanced to $($stable.version); refusing to overwrite it with ${{ needs.discover.outputs.version }}"
+            }
+            $targetExtension = (Get-Content -Raw frontend/CORE_EXTENSION_VERSION).Trim()
+            if ([version]$stable.version -eq [version]'${{ needs.discover.outputs.version }}' -and [version]$stable.extension_version -gt [version]$targetExtension) {
+              throw "core-stable extension advanced to $($stable.extension_version); refusing to overwrite it with $targetExtension"
+            }
+          }
+      - name: Publish the verified core directly to the client stable channel
         shell: pwsh
         working-directory: frontend
         env:
@@ -166,9 +191,14 @@ jobs:
         run: |
           gh release view core-stable 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create core-stable --title "Sub2API compatible core channel" --notes "Automatically published extension-compatible Sub2API core builds." --prerelease
+            gh release create core-stable --title 'Sub2API compatible core stable channel' --notes 'Automatically tested compatible core releases.' --prerelease
           }
           gh release upload core-stable `
-            (Resolve-Path release-assets/core-latest.json) `
+            (Resolve-Path 'release-assets/sub2api-core_*.zip') `
             (Resolve-Path release-assets/CORE_SHA256SUMS.txt) `
-            (Resolve-Path "release-assets/sub2api-core_*.zip") --clobber
+            (Resolve-Path release-assets/core-latest.json) --clobber
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compatible-core-stable-${{ needs.discover.outputs.version }}
+          if-no-files-found: error
+          path: frontend/release-assets/*

@@ -247,6 +247,13 @@ describe('DesktopUpdateCenter', () => {
 
     expect(mocks.invoke).toHaveBeenCalledWith('install_core_update')
     expect(mocks.relaunch).not.toHaveBeenCalled()
+    expect(wrapper.get('button.desktop-update__trigger').classes()).toContain('available')
+    await wrapper.get('button.desktop-update__trigger').trigger('click')
+    expect(wrapper.text()).toContain('立即重启并启用最新内核')
+    await wrapper.get('.desktop-update__progress button').trigger('click')
+    await flushPromises()
+    expect(mocks.invoke).toHaveBeenCalledWith('desktop_backend_prepare_relaunch')
+    expect(mocks.relaunch).toHaveBeenCalled()
     wrapper.unmount()
   })
 

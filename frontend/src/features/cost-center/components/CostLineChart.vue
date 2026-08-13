@@ -98,7 +98,10 @@ const chartData = computed<ChartData<'line'>>(() => ({
 const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
-  animation: { duration: 180 },
+  // Auto refresh is a data replacement, not a page transition. Disabling the
+  // replay animation prevents the WebView chart from visibly flashing every
+  // refresh cycle while preserving hover interaction.
+  animation: false,
   interaction: { mode: 'index', intersect: false },
   plugins: {
     legend: {
