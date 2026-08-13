@@ -41,6 +41,14 @@ export interface AccountCostLossState {
   reversal_amount: number
   net_loss: number
   recognized_cost: number
+  cost_profile: {
+    amount: number
+    currency: 'USD' | 'CNY'
+    billing_cycle: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
+    started_at: string
+    source: 'default' | 'custom'
+    algorithm_version: string
+  }
   active: boolean
   account_deleted: boolean
 }
@@ -70,6 +78,14 @@ export interface AccountEconomicsSnapshot {
     procurement_accrued_cny: number
     impairment_loss_cny: number
     economic_cost_cny: number
+    window_procurement_cny: number
+    window_impairment_loss_cny: number
+    window_economic_cost_cny: number
+    month_one_time_procurement_cny: number
+    month_one_time_purchase_count: number
+    month_deleted_one_time_purchase_count: number
+    month_deleted_recurring_procurement_cny: number
+    month_deleted_recurring_purchase_count: number
     contribution_margin_cny: number
     cny_per_billed_usd: number | null
     payback_ratio: number | null

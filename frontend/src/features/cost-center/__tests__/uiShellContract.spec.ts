@@ -63,4 +63,19 @@ describe('cost center UI shell contract', () => {
     expect(source).toMatch(/\.cost-workspaces button\s*\{[\s\S]*?width:\s*142px;[\s\S]*?flex:\s*0 0 142px;/)
     expect(source).toMatch(/\.cost-toolbar\s*\{[\s\S]*?min-height:\s*74px;/)
   })
+
+  it('keeps historical losses out of the selected observation-window headline', () => {
+    expect(source).toContain(':label="`${rangeLabel}新增封禁损失`"')
+    expect(source).toContain('window_impairment_loss_cny ?? windowImpairmentCny')
+    expect(source).toContain(':label="`${rangeLabel}新增经济成本`"')
+    expect(source).not.toContain('label="生命周期已确认封禁损失"')
+  })
+
+  it('includes deleted one-time purchase snapshots in the monthly purchase total', () => {
+    expect(source).toContain('archivedMonthlyOneTimeProcurementCny')
+    expect(source).toContain('state.cost_profile.billing_cycle === \'one_time\'')
+    expect(source).toContain('month_one_time_procurement_cny')
+    expect(source).toContain('month_deleted_recurring_procurement_cny')
+    expect(source).toContain('含 ${monthlyDeletedPurchaseCount} 个已删除账号快照')
+  })
 })

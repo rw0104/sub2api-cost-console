@@ -134,6 +134,7 @@ func (r *accountCostLossRepository) ListStates(ctx context.Context) ([]service.A
 			COALESCE(-SUM(adjustment.amount) FILTER (WHERE adjustment.event_type = 'reversal'), 0) AS reversal_amount,
 			GREATEST(0, t.amount + COALESCE(SUM(adjustment.amount), 0)) AS net_loss,
 			t.accrued_cost + GREATEST(0, t.amount + COALESCE(SUM(adjustment.amount), 0)) AS recognized_cost,
+			t.cost_profile,
 			(COUNT(adjustment.id) FILTER (WHERE adjustment.event_type = 'reversal') = 0) AS active,
 			(t.account_id IS NULL OR a.id IS NULL OR a.deleted_at IS NOT NULL) AS account_deleted
 		FROM account_cost_loss_events t
@@ -151,13 +152,17 @@ func (r *accountCostLossRepository) ListStates(ctx context.Context) ([]service.A
 	states := make([]service.AccountCostLossState, 0)
 	for rows.Next() {
 		var state service.AccountCostLossState
+		var profileJSON []byte
 		if err := rows.Scan(
 			&state.AccountIDSnapshot, &state.AccountName, &state.Platform, &state.AccountType,
 			&state.TerminalEventID, &state.OccurredAt, &state.Currency, &state.AccruedCost,
 			&state.GrossLoss, &state.RefundAmount, &state.ReversalAmount, &state.NetLoss,
-			&state.RecognizedCost, &state.Active, &state.AccountDeleted,
+			&state.RecognizedCost, &profileJSON, &state.Active, &state.AccountDeleted,
 		); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(profileJSON, &state.CostProfile); err != nil {
+			return nil, fmt.Errorf("unmarshal account cost profile state: %w", err)
 		}
 		states = append(states, state)
 	}

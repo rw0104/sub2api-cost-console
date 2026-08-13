@@ -27,6 +27,28 @@ func TestAccountEconomicsRepositoryReadsFactualUserAndAccountCostColumns(t *test
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAccountEconomicsRepositoryReadsDeletedOneTimeProcurementProfiles(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery(`(?s)SELECT id, platform, deleted_at IS NOT NULL, extra->'cost_profile'.*WHERE extra \? 'cost_profile'`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "deleted", "cost_profile"}).AddRow(
+			42, "openai", true,
+			[]byte(`{"amount":2.5,"currency":"CNY","billing_cycle":"one_time","started_at":"2026-08-10T15:06:51+08:00","source":"custom","algorithm_version":"1.6.0"}`),
+		))
+
+	repo := NewAccountEconomicsRepository(db)
+	profiles, err := repo.ListProcurementProfiles(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	require.True(t, profiles[0].Deleted)
+	require.Equal(t, "one_time", profiles[0].CostProfile.BillingCycle)
+	require.Equal(t, 2.5, profiles[0].CostProfile.Amount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAccountEconomicsSampleBucketPreservesFiveSecondEvidence(t *testing.T) {
 	sampledAt := time.Date(2026, 8, 11, 12, 34, 58, 700_000_000, time.FixedZone("offset", 8*60*60))
 

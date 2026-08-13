@@ -161,11 +161,11 @@
               <MetricCell label="平滑产出速率（USD）" :value="formatUsd(rollingOutputUsd, 2)" :note="`${rollingTrendLabel} · actual_cost / 小时`" :state="sourceStates.dashboard.status" accent="gold" />
               <MetricCell label="固定采购成本（CNY，配置推算）" :value="procurementHourlyCny == null ? '无数据' : `${formatCny(procurementHourlyCny, 4)}/h`" note="独立成本档案；绝不作为 Token/API 美元成本" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" accent="blue" />
               <MetricCell label="一小时综合成本" :value="formatCny(combinedHourlyCny, 4)" :note="`采购 + ${apiCostBasisLabel}`" :state="combineSourceAvailability(sourceStates.dashboard, sourceStates.accounts, sourceStates.costLoss)" accent="blue" />
-              <MetricCell label="生命周期已确认封禁损失" :value="formatCny(totalImpairmentCny, 2)" note="不可变损失账本；不随 6h / 24h 等观察窗口清零" :state="sourceStates.costLoss.status" accent="gold" />
-              <MetricCell label="生命周期经济总成本" :value="formatCny(totalEconomicCostCny, 2)" :note="`采购累计 + 封禁净损失 · 含 ${archivedLossAccountCount} 个已删除账号；不受观察窗口影响`" :state="assetLedgerState" accent="gold" />
+              <MetricCell :label="`${rangeLabel}新增封禁损失`" :value="formatCny(accountEconomics?.actual.window_impairment_loss_cny ?? windowImpairmentCny, 2)" :note="`仅统计 ${rangeLabel} 内确认的终局损失；历史账本 ¥${formatPlainNumber(totalImpairmentCny, 2)}`" :state="accountEconomics ? sourceStates.economics.status : sourceStates.costLoss.status" accent="gold" />
+              <MetricCell :label="`${rangeLabel}新增经济成本`" :value="formatCny(accountEconomics?.actual.window_economic_cost_cny ?? windowEconomicCostCny, 2)" :note="`窗口内新增采购 + 新增封禁损失；生命周期累计 ¥${formatPlainNumber(totalEconomicCostCny, 2)}`" :state="accountEconomics ? sourceStates.economics.status : assetLedgerState" accent="gold" />
               <MetricCell label="今日上游账号成本（USD）" :value="formatUsd(todayAccountCostUsd, 3)" note="本机自然日 · usage_logs 价格快照 × 账号倍率" :state="sourceStates.todayStats.status" />
               <MetricCell label="最近窗口用户计费（USD）" :value="formatUsd(windowActualOutputUsd, 3)" note="usage_logs actual_cost" :state="sourceStates.dashboard.status" />
-              <MetricCell label="本月采购投入" :value="formatCny(monthlyProcurementForecastCny, 2)" note="经常性费率 × 730h + 本月启用的一次性采购；配置推算，不是 API 调用成本" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" />
+              <MetricCell label="本月采购投入" :value="formatCny(monthlyProcurementForecastCny, 2)" :note="`当前经常性费率 × 730h + 本月采购（含 ${monthlyDeletedPurchaseCount} 个已删除账号快照）；配置推算，不是 API 调用成本`" :state="assetLedgerState === 'measured' ? 'estimated' : assetLedgerState" />
               <MetricCell label="可用账号" :value="hasMeasuredData(sourceStates.accounts) ? `${activeAccounts.length} / ${accounts.length}` : unavailableValueLabel(sourceStates.accounts)" :note="usageSyncedCount ? `窗口平均余量 ${formatPercent(quotaRemainingAverage)}` : sourceStates.accountUsage.reason" :state="combineSourceAvailability(sourceStates.accounts, sourceStates.accountUsage)" />
             </div>
           </div>
@@ -663,6 +663,8 @@ import {
   inferPlan,
   isDefaultSubscriptionCostProfile,
   isStartedInLocalMonth,
+  isTimestampInWindow,
+  procurementCostInWindow,
   resolveAccountBillingMode,
   resolveCostProfile,
   type CostProfile,
@@ -672,7 +674,7 @@ import {
   useCostCenterData,
   type CostCenterRange,
 } from '@/features/cost-center/useCostCenterData'
-import { costTrendBucketHours as resolveCostTrendBucketHours } from '@/features/cost-center/usageWindow'
+import { costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
 import { selectFinancialTrend } from '@/features/cost-center/financialTrend'
 import { hasMeasuredData, unavailableValueLabel, type DataAvailability, type DataSourceState } from '@/features/cost-center/dataState'
 import type { ModelRouteRow } from '@/features/cost-center/modelRouteAnalysis'
@@ -878,19 +880,65 @@ const archivedEconomicCostCny = computed(() => archivedLatestCostLossStates.valu
 const archivedImpairmentCny = computed(() => archivedLatestCostLossStates.value.reduce(
   (sum, state) => sum + convertCurrency(state.net_loss, state.currency, 'CNY', exchangeRate.value.rate), 0,
 ))
-const archivedLossAccountCount = computed(() => archivedLatestCostLossStates.value.length)
 const currentImpairmentCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.impairmentCny, 0))
 const assetLedgerState = computed<DataAvailability>(() => combineSourceAvailability(sourceStates.value.accounts, sourceStates.value.costLoss))
 const totalImpairmentCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.costLoss) ? currentImpairmentCny.value + archivedImpairmentCny.value : null)
 const totalEconomicCostCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss) ? totalAccruedCny.value + archivedEconomicCostCny.value : null)
+const observationBounds = computed(() => usageWindowBounds(range.value, now.value))
+const windowLatestCostLossStates = computed(() => [...latestCostLossByAccount.value.values()].filter((state) => (
+  state.active && isTimestampInWindow(state.occurred_at, observationBounds.value.start, observationBounds.value.end)
+)))
+const windowImpairmentCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.costLoss)
+  ? windowLatestCostLossStates.value.reduce(
+      (sum, state) => sum + convertCurrency(state.net_loss, state.currency, 'CNY', exchangeRate.value.rate), 0,
+    )
+  : null)
+const windowCurrentProcurementCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + convertCurrency(
+  procurementCostInWindow(
+    row.profile,
+    observationBounds.value.start,
+    observationBounds.value.end,
+    row.lossState?.active ? row.lossState.occurred_at : null,
+  ),
+  row.profile.currency,
+  'CNY',
+  exchangeRate.value.rate,
+), 0))
+const windowArchivedProcurementCny = computed(() => archivedLatestCostLossStates.value.reduce((sum, state) => sum + convertCurrency(
+  procurementCostInWindow(
+    state.cost_profile,
+    observationBounds.value.start,
+    observationBounds.value.end,
+    state.active ? state.occurred_at : null,
+  ),
+  state.cost_profile.currency,
+  'CNY',
+  exchangeRate.value.rate,
+), 0))
+const windowEconomicCostCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss)
+  ? windowCurrentProcurementCny.value + windowArchivedProcurementCny.value + (windowImpairmentCny.value ?? 0)
+  : null)
 const procurementHourlyCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss) ? accountLedgers.value.reduce((sum, row) => sum + row.hourlyCny, 0) : null)
-const currentMonthOneTimeProcurementCny = computed(() => accountLedgers.value.reduce((sum, row) => {
+const currentMonthActiveOneTimeProcurementCny = computed(() => accountLedgers.value.reduce((sum, row) => {
   if (row.profile.billing_cycle !== 'one_time' || !isStartedInLocalMonth(row.profile.started_at, now.value)) return sum
   return sum + convertCurrency(row.profile.amount, row.profile.currency, 'CNY', exchangeRate.value.rate)
 }, 0))
+const archivedMonthlyOneTimeStates = computed(() => archivedLatestCostLossStates.value.filter((state) => (
+  state.cost_profile.billing_cycle === 'one_time' && isStartedInLocalMonth(state.cost_profile.started_at, now.value)
+)))
+const archivedMonthlyOneTimeCount = computed(() => archivedMonthlyOneTimeStates.value.length)
+const archivedMonthlyOneTimeProcurementCny = computed(() => archivedMonthlyOneTimeStates.value.reduce((sum, state) => (
+  sum + convertCurrency(state.cost_profile.amount, state.cost_profile.currency, 'CNY', exchangeRate.value.rate)
+), 0))
+const currentMonthOneTimeProcurementCny = computed(() => currentMonthActiveOneTimeProcurementCny.value + archivedMonthlyOneTimeProcurementCny.value)
+const factualMonthOneTimeProcurementCny = computed(() => accountEconomics.value?.actual.month_one_time_procurement_cny)
+const monthlyDeletedOneTimeCount = computed(() => accountEconomics.value?.actual.month_deleted_one_time_purchase_count ?? archivedMonthlyOneTimeCount.value)
+const monthlyDeletedRecurringProcurementCny = computed(() => accountEconomics.value?.actual.month_deleted_recurring_procurement_cny ?? 0)
+const monthlyDeletedRecurringCount = computed(() => accountEconomics.value?.actual.month_deleted_recurring_purchase_count ?? 0)
+const monthlyDeletedPurchaseCount = computed(() => monthlyDeletedOneTimeCount.value + monthlyDeletedRecurringCount.value)
 const monthlyProcurementForecastCny = computed<number | null>(() => procurementHourlyCny.value == null
   ? null
-  : procurementHourlyCny.value * 730 + currentMonthOneTimeProcurementCny.value)
+  : procurementHourlyCny.value * 730 + (factualMonthOneTimeProcurementCny.value ?? currentMonthOneTimeProcurementCny.value) + monthlyDeletedRecurringProcurementCny.value)
 const defaultCostProfileCount = computed(() => accountLedgers.value.filter((row) => isDefaultSubscriptionCostProfile(row.account)).length)
 const todayAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? accountLedgers.value.reduce((sum, row) => sum + Number(row.today?.cost || 0), 0) : null)
 const dayElapsedHours = computed(() => Math.max(1 / 60, now.value.getHours() + now.value.getMinutes() / 60))
@@ -1178,6 +1226,7 @@ function sumFiniteTrendValues(values: unknown[]): number | null { const numbers 
 function movingAverage(values: Array<number | null>, windowSize: number): Array<number | null> { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1).filter((value): value is number => value != null && Number.isFinite(value)); return slice.length ? slice.reduce((sum, value) => sum + value, 0) / slice.length : null }) }
 function formatInteger(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Math.round(Number(value)).toLocaleString() }
 function formatPercent(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : `${(Number(value) * 100).toFixed(1)}%` }
+function formatPlainNumber(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Number(value).toFixed(digits) }
 function formatCny(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : formatMoney(Number(value), 'CNY', digits) }
 function formatUsd(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : formatMoney(Number(value), 'USD', digits) }
 function formatOptionalUsd(value: number | null | undefined, digits = 2): string { return value == null || !Number.isFinite(Number(value)) ? '待采样' : formatUsd(Number(value), digits) }

@@ -132,10 +132,12 @@ func TestAccountCostLossRepositoryListsNetStateIncludingDeletedAccounts(t *testi
 		WillReturnRows(sqlmock.NewRows([]string{
 			"account_id_snapshot", "account_name", "platform", "account_type", "terminal_event_id",
 			"occurred_at", "currency", "accrued_cost", "gross_loss", "refund_amount",
-			"reversal_amount", "net_loss", "recognized_cost", "active", "account_deleted",
+			"reversal_amount", "net_loss", "recognized_cost", "cost_profile", "active", "account_deleted",
 		}).AddRow(
 			42, "deleted-plus", service.PlatformOpenAI, service.AccountTypeOAuth, 7,
-			occurredAt, "USD", 8.0, 12.0, 2.0, 0.0, 10.0, 18.0, true, true,
+			occurredAt, "USD", 8.0, 12.0, 2.0, 0.0, 10.0, 18.0,
+			[]byte(`{"amount":20,"currency":"USD","billing_cycle":"monthly","started_at":"2026-08-01T00:00:00Z","source":"custom","algorithm_version":"1.6.0"}`),
+			true, true,
 		))
 
 	repo := NewAccountCostLossRepository(db)
@@ -147,5 +149,7 @@ func TestAccountCostLossRepositoryListsNetStateIncludingDeletedAccounts(t *testi
 	require.True(t, states[0].AccountDeleted)
 	require.Equal(t, 10.0, states[0].NetLoss)
 	require.Equal(t, 18.0, states[0].RecognizedCost)
+	require.Equal(t, "monthly", states[0].CostProfile.BillingCycle)
+	require.Equal(t, 20.0, states[0].CostProfile.Amount)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -38,6 +39,39 @@ func (r *accountEconomicsRepository) SumUsageTotals(ctx context.Context, account
 		return service.AccountEconomicsUsageTotals{}, fmt.Errorf("query account economics usage totals: %w", err)
 	}
 	return totals, nil
+}
+
+func (r *accountEconomicsRepository) ListProcurementProfiles(ctx context.Context) ([]service.AccountProcurementProfile, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("account economics repository is unavailable")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, platform, deleted_at IS NOT NULL, extra->'cost_profile'
+		FROM accounts
+		WHERE extra ? 'cost_profile'
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query account procurement profiles: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	profiles := make([]service.AccountProcurementProfile, 0)
+	for rows.Next() {
+		var profile service.AccountProcurementProfile
+		var profileJSON []byte
+		if err := rows.Scan(&profile.AccountID, &profile.Platform, &profile.Deleted, &profileJSON); err != nil {
+			return nil, fmt.Errorf("scan account procurement profile: %w", err)
+		}
+		if err := json.Unmarshal(profileJSON, &profile.CostProfile); err != nil {
+			return nil, fmt.Errorf("unmarshal account procurement profile: %w", err)
+		}
+		profiles = append(profiles, profile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate account procurement profiles: %w", err)
+	}
+	return profiles, nil
 }
 
 func (r *accountEconomicsRepository) UpsertSample(ctx context.Context, sample service.AccountEconomicsSample) error {

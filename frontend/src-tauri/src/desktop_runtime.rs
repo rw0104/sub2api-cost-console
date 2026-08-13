@@ -445,21 +445,32 @@ fn required_core_action(
     integrity_valid: bool,
     required_capabilities: &[String],
 ) -> CoreCompatibilityAction {
-    if integrity_valid
-        && required_capabilities
-            .iter()
-            .all(|required| current.capabilities.iter().any(|value| value == required))
-    {
-        CoreCompatibilityAction::None
-    } else {
-        let current_version = Version::parse(current.version.trim_start_matches('v'));
-        let bundled_version = Version::parse(bundled.version.trim_start_matches('v'));
-        if matches!((current_version, bundled_version), (Ok(current), Ok(bundled)) if bundled >= current)
-        {
+    let current_version = Version::parse(current.version.trim_start_matches('v'));
+    let bundled_version = Version::parse(bundled.version.trim_start_matches('v'));
+    let current_extension = Version::parse(&current.extension_version);
+    let bundled_extension = Version::parse(&bundled.extension_version);
+    let capabilities_valid = required_capabilities
+        .iter()
+        .all(|required| current.capabilities.iter().any(|value| value == required));
+
+    match (&current_version, &bundled_version) {
+        (Ok(current_version), Ok(bundled_version)) if bundled_version > current_version => {
             CoreCompatibilityAction::InstallBundled
-        } else {
-            CoreCompatibilityAction::WaitForCompatibleUpdate
         }
+        (Ok(current_version), Ok(bundled_version)) if bundled_version == current_version => {
+            let bundled_extension_is_newer = match (&current_extension, &bundled_extension) {
+                (Ok(current), Ok(bundled)) => bundled > current,
+                (Err(_), Ok(_)) => true,
+                _ => false,
+            };
+            if bundled_extension_is_newer || !integrity_valid || !capabilities_valid {
+                CoreCompatibilityAction::InstallBundled
+            } else {
+                CoreCompatibilityAction::None
+            }
+        }
+        (Ok(_), Ok(_)) if integrity_valid && capabilities_valid => CoreCompatibilityAction::None,
+        _ => CoreCompatibilityAction::WaitForCompatibleUpdate,
     }
 }
 
@@ -1878,6 +1889,27 @@ mod tests {
                 &["account_cost_loss_ledger.v1".into()]
             ),
             CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
+    fn compatible_but_older_active_core_is_replaced_by_newer_bundled_core() {
+        let current = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.1".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.1.176", "upstream176", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
         );
     }
 

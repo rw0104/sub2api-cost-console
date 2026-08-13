@@ -15,8 +15,9 @@ func (s *economicsAccountReaderStub) ListAllWithFilters(context.Context, string,
 }
 
 type economicsRepositoryStub struct {
-	totals  AccountEconomicsUsageTotals
-	samples []AccountEconomicsSample
+	totals   AccountEconomicsUsageTotals
+	samples  []AccountEconomicsSample
+	profiles []AccountProcurementProfile
 }
 
 type economicsCostLossRepositoryStub struct {
@@ -37,6 +38,10 @@ func (s *economicsCostLossRepositoryStub) RecordAdjustment(context.Context, Acco
 
 func (s *economicsRepositoryStub) SumUsageTotals(context.Context, []int64) (AccountEconomicsUsageTotals, error) {
 	return s.totals, nil
+}
+
+func (s *economicsRepositoryStub) ListProcurementProfiles(context.Context) ([]AccountProcurementProfile, error) {
+	return append([]AccountProcurementProfile(nil), s.profiles...), nil
 }
 
 func (s *economicsRepositoryStub) UpsertSample(_ context.Context, sample AccountEconomicsSample) error {
@@ -254,6 +259,55 @@ func TestAccountEconomicsServiceBuildsVersionedSnapshotFromExistingLedgers(t *te
 	require.InDelta(t, 2.5, snapshot.Actual.EconomicCostCNY, 1e-9)
 	require.InDelta(t, 10, *snapshot.Projection.CapacityAdjustedBilledUSDPerHour, 1e-9)
 	require.Equal(t, "complete", snapshot.DataQuality.Status)
+}
+
+func TestSummarizeMonthlyProcurementIncludesDeletedAccountProfiles(t *testing.T) {
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, location)
+	profiles := []AccountProcurementProfile{
+		{AccountID: 17, Platform: PlatformOpenAI, Deleted: true, CostProfile: AccountCostProfileSnapshot{
+			Amount: 2.5, Currency: "CNY", BillingCycle: "one_time", StartedAt: now.Add(-48 * time.Hour),
+		}},
+		{AccountID: 422, Platform: PlatformOpenAI, Deleted: true, CostProfile: AccountCostProfileSnapshot{
+			Amount: 1.5, Currency: "CNY", BillingCycle: "one_time", StartedAt: now.Add(-24 * time.Hour),
+		}},
+		{AccountID: 500, Platform: PlatformOpenAI, Deleted: true, CostProfile: AccountCostProfileSnapshot{
+			Amount: 20, Currency: "USD", BillingCycle: "monthly", StartedAt: now.Add(-24 * time.Hour),
+		}},
+		{AccountID: 501, Platform: PlatformAnthropic, CostProfile: AccountCostProfileSnapshot{
+			Amount: 3, Currency: "CNY", BillingCycle: "one_time", StartedAt: now.Add(-24 * time.Hour),
+		}},
+	}
+
+	oneTime, oneTimeCount, deletedOneTime, deletedRecurring, deletedRecurringCount := summarizeMonthlyProcurementProfiles(profiles, PlatformOpenAI, nil, 7.2, now, true)
+
+	require.Equal(t, 4.0, oneTime)
+	require.Equal(t, 2, oneTimeCount)
+	require.Equal(t, 2, deletedOneTime)
+	require.Equal(t, 144.0, deletedRecurring)
+	require.Equal(t, 1, deletedRecurringCount)
+}
+
+func TestSummarizeWindowEconomicsExcludesHistoricalLossAndCountsWindowPurchases(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-6 * time.Hour)
+	profiles := []AccountProcurementProfile{
+		{AccountID: 17, Platform: PlatformOpenAI, Deleted: true, CostProfile: AccountCostProfileSnapshot{
+			Amount: 2.5, Currency: "CNY", BillingCycle: "one_time", StartedAt: now.Add(-48 * time.Hour),
+		}},
+		{AccountID: 422, Platform: PlatformOpenAI, Deleted: true, CostProfile: AccountCostProfileSnapshot{
+			Amount: 1.5, Currency: "CNY", BillingCycle: "one_time", StartedAt: now.Add(-2 * time.Hour),
+		}},
+	}
+	states := []AccountCostLossState{
+		{AccountIDSnapshot: 17, Platform: PlatformOpenAI, AccountDeleted: true, Active: true, OccurredAt: now.Add(-24 * time.Hour), Currency: "CNY", NetLoss: 20},
+		{AccountIDSnapshot: 422, Platform: PlatformOpenAI, AccountDeleted: true, Active: true, OccurredAt: now.Add(-time.Hour), Currency: "CNY", NetLoss: 3},
+	}
+
+	procurement, impairment := summarizeWindowEconomics(nil, profiles, states, PlatformOpenAI, nil, 7.2, windowStart, now, true)
+
+	require.Equal(t, 1.5, procurement)
+	require.Equal(t, 3.0, impairment)
 }
 
 func TestBuildAccountEconomicsSeriesKeepsStableRatesAndResetEvents(t *testing.T) {
