@@ -8,6 +8,7 @@ import {
   formatMoney,
   hourlyRate,
   inferPlan,
+  isStartedInLocalMonth,
   isDefaultSubscriptionCostProfile,
   resolveAccountBillingMode,
   resolveCostProfile,
@@ -44,6 +45,14 @@ function profile(overrides: Partial<CostProfile> = {}): CostProfile {
 }
 
 describe('cost center model', () => {
+  it('recognizes one-time purchases started in the current local month', () => {
+    const now = new Date(2026, 7, 12, 10, 0, 0)
+
+    expect(isStartedInLocalMonth(new Date(2026, 7, 1, 0, 0, 0), now)).toBe(true)
+    expect(isStartedInLocalMonth(new Date(2026, 6, 31, 23, 59, 59), now)).toBe(false)
+    expect(isStartedInLocalMonth(new Date(2026, 7, 13, 0, 0, 0), now)).toBe(false)
+  })
+
   it('starts recurring cost at zero when the account joins', () => {
     const resolved = resolveCostProfile(account({ extra: { plan_type: 'plus' } }))
     expect(accruedCost(resolved, JOINED_AT)).toBe(0)

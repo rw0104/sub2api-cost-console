@@ -44,8 +44,14 @@ func (s *economicsRepositoryStub) UpsertSample(_ context.Context, sample Account
 	return nil
 }
 
-func (s *economicsRepositoryStub) ListSamples(context.Context, string, time.Time) ([]AccountEconomicsSample, error) {
-	return append([]AccountEconomicsSample(nil), s.samples...), nil
+func (s *economicsRepositoryStub) ListSamples(_ context.Context, _ string, since, until time.Time) ([]AccountEconomicsSample, error) {
+	result := make([]AccountEconomicsSample, 0, len(s.samples))
+	for _, sample := range s.samples {
+		if !sample.SampledAt.Before(since) && !sample.SampledAt.After(until) {
+			result = append(result, sample)
+		}
+	}
+	return result, nil
 }
 
 func (s *economicsRepositoryStub) PruneSamples(context.Context, time.Time) error { return nil }
@@ -273,4 +279,31 @@ func TestEconomicsSeriesBucketUsesEventScaleDensityForOneMinute(t *testing.T) {
 	require.Equal(t, 5*time.Second, economicsSeriesBucket(time.Minute))
 	require.Equal(t, 15*time.Second, economicsSeriesBucket(5*time.Minute))
 	require.Equal(t, time.Minute, economicsSeriesBucket(30*time.Minute))
+}
+
+func TestAccountEconomicsSnapshotExcludesSamplesOutsideRequestedWindow(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	account := Account{ID: 7, Status: StatusActive, Schedulable: true}
+	repo := &economicsRepositoryStub{
+		totals: AccountEconomicsUsageTotals{BilledUSD: 10, AccountCostUSD: 2},
+		samples: []AccountEconomicsSample{
+			{SampledAt: now.Add(-7 * time.Hour), ScopeKey: "account-pool:all", MembershipHash: economicsMembershipHash([]int64{7}), AccountCount: 1, NormalCount: 1, BilledUSDTotal: 1},
+			{SampledAt: now.Add(-5 * time.Hour), ScopeKey: "account-pool:all", MembershipHash: economicsMembershipHash([]int64{7}), AccountCount: 1, NormalCount: 1, BilledUSDTotal: 2},
+		},
+	}
+	service := NewAccountEconomicsService(
+		&economicsAccountReaderStub{accounts: []Account{account}}, repo,
+		NewAccountCostLossService(&economicsCostLossRepositoryStub{}),
+	)
+
+	snapshot, err := service.GetSnapshot(context.Background(), AccountEconomicsQuery{
+		Scope: "all", CNYPerUSD: 7, Window: 6 * time.Hour, Now: now,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, snapshot.DataQuality.SampleCount, "one in-window history sample plus the current sample")
+	for _, point := range snapshot.Series {
+		require.False(t, point.SampledAt.Before(now.Add(-6*time.Hour)))
+		require.False(t, point.SampledAt.After(now))
+	}
 }

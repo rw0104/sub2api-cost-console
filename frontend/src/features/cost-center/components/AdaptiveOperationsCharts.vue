@@ -20,9 +20,9 @@
           </select>
         </header>
         <CostLineChart
-          :labels="opsLabels"
+          :labels="economyLabels"
           :series="economySeries"
-          :events="opsEvents"
+          :events="economyEvents"
           :value-prefix="economyMode === 'return' ? '' : '¥'"
           :value-suffix="economyMode === 'unit' ? '/USD' : economyMode === 'return' ? '%' : ''"
           :state="opsState"
@@ -85,10 +85,12 @@ import { computed, ref } from 'vue'
 import type { AccountEconomicsSnapshot } from '@/api/admin/accounts'
 import type { OpsErrorTrendPoint, OpsThroughputTrendPoint } from '@/api/admin/ops'
 import type { DataAvailability } from '../dataState'
+import type { FinancialTrendPoint } from '../financialTrend'
 import CostLineChart, { type CostChartEvent, type CostChartSeries } from './CostLineChart.vue'
 
 const props = defineProps<{
   opsTrend: OpsThroughputTrendPoint[]
+  financialTrend: FinancialTrendPoint[]
   errorTrend: OpsErrorTrendPoint[]
   economics: AccountEconomicsSnapshot | null
   cnyPerUsd: number
@@ -110,40 +112,29 @@ function timeLabel(value: string): string {
   return date.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function rateFactor(points: OpsThroughputTrendPoint[], index: number): number {
-  const current = new Date(points[index]?.bucket_start || '').getTime()
-  const neighbor = new Date(points[index > 0 ? index - 1 : index + 1]?.bucket_start || '').getTime()
-  const seconds = Math.abs(current - neighbor) / 1000
-  if (Number.isFinite(seconds) && seconds > 0) return 3600 / seconds
-  return Number.isFinite(props.opsBucketHours) && props.opsBucketHours > 0 ? 1 / props.opsBucketHours : 1
-}
-
 function finiteValue(value: unknown): number | null {
   if (value == null || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
-function hourlyValue(points: OpsThroughputTrendPoint[], index: number, value: unknown): number | null {
-  const number = finiteValue(value)
-  return number == null ? null : number * rateFactor(points, index)
-}
-
 const opsLabels = computed(() => props.opsTrend.map((point) => timeLabel(point.bucket_start)))
+const economyLabels = computed(() => props.financialTrend.map((point) => timeLabel(point.timestamp)))
 const healthLabels = computed(() => (props.economics?.series ?? []).map((point) => timeLabel(point.sampled_at)))
-const pointSummary = computed(() => `${props.opsTrend.length || 0} 个运行点 · ${props.economics?.series?.length || 0} 个健康点`)
+const pointSummary = computed(() => `${props.financialTrend.length || 0} 个经济点 · ${props.opsTrend.length || 0} 个运行点 · ${props.economics?.series?.length || 0} 个健康点`)
 const economyTitle = computed(() => economyMode.value === 'flow' ? '收入、成本与贡献' : economyMode.value === 'unit' ? '每 1 USD 产出的采购成本' : '回本与毛利率')
 const economySubtitle = computed(() => economyMode.value === 'flow' ? '统一换算为 CNY / 小时' : economyMode.value === 'unit' ? '固定采购费率 ÷ 实际用户计费产出' : '固定采购回本率与扣除采购后的贡献毛利率')
 
 const economySeries = computed<CostChartSeries[]>(() => {
   const procurement = props.procurementHourlyCny == null ? null : Math.max(0, props.procurementHourlyCny)
+  const financial = props.financialTrend
   if (economyMode.value === 'unit') {
     return [{
       label: '采购成本 / 产出',
       color: '#7eb6d8',
       fill: true,
-      data: props.opsTrend.map((point, index) => {
-        const billedPerHour = hourlyValue(props.opsTrend, index, point.user_billed_usd)
+      data: financial.map((point) => {
+        const billedPerHour = point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours : null
         return billedPerHour != null && billedPerHour > 0 && procurement != null ? procurement / billedPerHour : null
       }),
     }]
@@ -153,8 +144,8 @@ const economySeries = computed<CostChartSeries[]>(() => {
       {
         label: '固定采购回本率',
         color: '#e0bd4e',
-        data: props.opsTrend.map((point, index) => {
-          const billedPerHour = hourlyValue(props.opsTrend, index, point.user_billed_usd)
+        data: financial.map((point) => {
+          const billedPerHour = point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours : null
           return billedPerHour != null && procurement != null && procurement > 0 ? billedPerHour * props.cnyPerUsd / procurement * 100 : null
         }),
       },
@@ -162,9 +153,9 @@ const economySeries = computed<CostChartSeries[]>(() => {
         label: '贡献毛利率',
         color: '#b9e55a',
         fill: true,
-        data: props.opsTrend.map((point, index) => {
-          const billedPerHour = hourlyValue(props.opsTrend, index, point.user_billed_usd)
-          const contributionPerHour = hourlyValue(props.opsTrend, index, point.contribution_usd)
+        data: financial.map((point) => {
+          const billedPerHour = point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours : null
+          const contributionPerHour = point.bucketHours > 0 && point.contributionUsd != null ? point.contributionUsd / point.bucketHours : null
           if (billedPerHour == null || billedPerHour <= 0 || contributionPerHour == null || procurement == null) return null
           return (contributionPerHour * props.cnyPerUsd - procurement) / (billedPerHour * props.cnyPerUsd) * 100
         }),
@@ -172,9 +163,9 @@ const economySeries = computed<CostChartSeries[]>(() => {
     ]
   }
   return [
-    { label: '用户计费', color: '#e0bd4e', fill: true, data: props.opsTrend.map((point, index) => { const value = hourlyValue(props.opsTrend, index, point.user_billed_usd); return value == null ? null : value * props.cnyPerUsd }) },
-    { label: '上游账号成本', color: '#7eb6d8', data: props.opsTrend.map((point, index) => { const value = hourlyValue(props.opsTrend, index, point.account_cost_usd); return value == null ? null : value * props.cnyPerUsd }) },
-    { label: '贡献毛利', color: '#b9e55a', data: props.opsTrend.map((point, index) => { const value = hourlyValue(props.opsTrend, index, point.contribution_usd); return value == null || procurement == null ? null : value * props.cnyPerUsd - procurement }) },
+    { label: '用户计费', color: '#e0bd4e', fill: true, data: financial.map((point) => point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours * props.cnyPerUsd : null) },
+    { label: '上游账号成本', color: '#7eb6d8', data: financial.map((point) => point.bucketHours > 0 && point.accountCostUsd != null ? point.accountCostUsd / point.bucketHours * props.cnyPerUsd : null) },
+    { label: '贡献毛利', color: '#b9e55a', data: financial.map((point) => point.bucketHours > 0 && point.contributionUsd != null && procurement != null ? point.contributionUsd / point.bucketHours * props.cnyPerUsd - procurement : null) },
   ]
 })
 
@@ -249,6 +240,7 @@ function mapEvents(labels: string[], timestamps: string[]): CostChartEvent[] {
 }
 
 const opsEvents = computed(() => mapEvents(opsLabels.value, props.opsTrend.map((point) => point.bucket_start)))
+const economyEvents = computed(() => mapEvents(economyLabels.value, props.financialTrend.map((point) => point.timestamp)))
 const healthEvents = computed(() => mapEvents(healthLabels.value, (props.economics?.series ?? []).map((point) => point.sampled_at)))
 </script>
 

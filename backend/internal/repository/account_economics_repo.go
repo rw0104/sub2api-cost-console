@@ -76,7 +76,7 @@ func accountEconomicsSampleBucket(sampledAt time.Time) time.Time {
 	return sampledAt.UTC().Truncate(5 * time.Second)
 }
 
-func (r *accountEconomicsRepository) ListSamples(ctx context.Context, scopeKey string, since time.Time) ([]service.AccountEconomicsSample, error) {
+func (r *accountEconomicsRepository) ListSamples(ctx context.Context, scopeKey string, since, until time.Time) ([]service.AccountEconomicsSample, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("account economics repository is unavailable")
 	}
@@ -85,9 +85,9 @@ func (r *accountEconomicsRepository) ListSamples(ctx context.Context, scopeKey s
 			account_count, normal_count, rate_limited_count, error_count,
 			billed_usd_total, account_cost_usd_total
 		FROM account_economics_samples
-		WHERE scope_key = $1 AND sampled_at >= $2
+		WHERE scope_key = $1 AND sampled_at >= $2 AND sampled_at <= $3
 		ORDER BY sampled_at ASC
-	`, scopeKey, since.UTC())
+	`, scopeKey, since.UTC(), until.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("query account economics samples: %w", err)
 	}

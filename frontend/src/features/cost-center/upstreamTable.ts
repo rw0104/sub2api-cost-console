@@ -5,6 +5,37 @@ export interface AccountProbeState {
   message?: string
 }
 
+export type AccountRankingMetric = 'score' | 'output' | 'requests' | 'cost' | 'latency' | 'reliability'
+
+export interface AccountRankingEvidenceInput {
+  today?: {
+    requests?: number | null
+    cost?: number | null
+    user_cost?: number | null
+  } | null
+  probe?: AccountProbeState
+  state: CurrentAccountState['state']
+}
+
+// A scheduler score by itself is not proof that an account produced traffic or
+// was successfully tested. Keep unobserved accounts out of numbered rankings so
+// a newly-added, idle provider cannot outrank accounts with factual evidence.
+export function hasAccountRankingEvidence(
+  metric: AccountRankingMetric,
+  input: AccountRankingEvidenceInput,
+): boolean {
+  const requests = Number(input.today?.requests || 0)
+  const accountCost = Number(input.today?.cost || 0)
+  const billed = Number(input.today?.user_cost || 0)
+  const probeCompleted = input.probe?.success != null
+
+  if (metric === 'output') return billed > 0
+  if (metric === 'requests') return requests > 0
+  if (metric === 'cost') return accountCost > 0
+  if (metric === 'latency') return probeCompleted && Number.isFinite(input.probe?.latency_ms)
+  return requests > 0 || probeCompleted || input.state !== 'normal'
+}
+
 export interface CurrentAccountStateInput {
   status: 'active' | 'inactive' | 'error'
   schedulable?: boolean

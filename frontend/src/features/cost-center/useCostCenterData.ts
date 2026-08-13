@@ -269,12 +269,18 @@ export function useCostCenterData() {
     }
   }
 
-  async function reload(range: CostCenterRange = DEFAULT_COST_CENTER_RANGE) {
+  async function reload(
+    range: CostCenterRange = DEFAULT_COST_CENTER_RANGE,
+    options: { background?: boolean } = {},
+  ) {
     const sequence = ++requestSequence
+    const keepVisibleSnapshot = options.background === true && lastUpdated.value != null
     loading.value = true
     error.value = ''
-    for (const key of COST_CENTER_SOURCE_KEYS) {
-      if (key !== 'economics') sourceStates.value[key] = sourceState(key, 'loading', '正在刷新')
+    if (!keepVisibleSnapshot) {
+      for (const key of COST_CENTER_SOURCE_KEYS) {
+        if (key !== 'economics') sourceStates.value[key] = sourceState(key, 'loading', '正在刷新')
+      }
     }
     const queries = buildCostCenterDataQueries(range, modelCostRange.value)
     const { start: observationStart, end: requestedObservationEnd } = usageWindowBounds(range)
@@ -511,7 +517,7 @@ export function useCostCenterData() {
       setSourceState('exchangeRate', 'estimated', rejectedReason(exchangeRateResult, '汇率读取失败，使用离线回退值'))
     }
 
-    await loadAccountEconomics('all', range)
+    await loadAccountEconomics('all', range, [], { background: keepVisibleSnapshot })
 
     if (
       accountResult.status === 'rejected' &&
@@ -527,10 +533,18 @@ export function useCostCenterData() {
     loading.value = false
   }
 
-  async function loadAccountEconomics(platform: string, range: CostCenterRange = DEFAULT_COST_CENTER_RANGE, accountIds: number[] = []) {
+  async function loadAccountEconomics(
+    platform: string,
+    range: CostCenterRange = DEFAULT_COST_CENTER_RANGE,
+    accountIds: number[] = [],
+    options: { background?: boolean } = {},
+  ) {
     const sequence = ++economicsRequestSequence
-    accountEconomics.value = null
-    setSourceState('economics', 'loading', '正在采集并读取经济样本')
+    const previous = accountEconomics.value
+    if (!options.background || !previous) {
+      accountEconomics.value = null
+      setSourceState('economics', 'loading', '正在采集并读取经济样本')
+    }
     try {
       const snapshot = await adminAPI.accounts.getEconomicsSnapshot({
         scope: platform,
@@ -553,8 +567,13 @@ export function useCostCenterData() {
     } catch (economicsError) {
       console.warn('[cost-center] persistent economics snapshot unavailable', economicsError)
       if (sequence === economicsRequestSequence) {
-        accountEconomics.value = null
-        setSourceState('economics', 'unavailable', economicsError instanceof Error ? economicsError.message : '经济采样接口读取失败')
+        if (options.background && previous) {
+          accountEconomics.value = previous
+          setSourceState('economics', 'stale', economicsError instanceof Error ? economicsError.message : '经济采样后台刷新失败，保留上次成功快照')
+        } else {
+          accountEconomics.value = null
+          setSourceState('economics', 'unavailable', economicsError instanceof Error ? economicsError.message : '经济采样接口读取失败')
+        }
       }
       return null
     }

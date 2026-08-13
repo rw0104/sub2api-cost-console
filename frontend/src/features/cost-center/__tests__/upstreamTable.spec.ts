@@ -1,9 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import {
   describeCurrentAccountState,
+  hasAccountRankingEvidence,
   normalizeSchedulerScore,
   resolveSchedulerBaseScoreMax,
 } from '../upstreamTable'
+
+describe('upstream account ranking evidence', () => {
+  it('does not rank an idle untested account from its scheduler score alone', () => {
+    expect(hasAccountRankingEvidence('score', {
+      today: { requests: 0, cost: 0, user_cost: 0 },
+      state: 'normal',
+    })).toBe(false)
+  })
+
+  it('admits factual traffic, a completed probe, or a current failure state', () => {
+    expect(hasAccountRankingEvidence('score', {
+      today: { requests: 3, cost: 0.2, user_cost: 0.4 },
+      state: 'normal',
+    })).toBe(true)
+    expect(hasAccountRankingEvidence('reliability', {
+      today: { requests: 0 },
+      probe: { loading: false, success: true, latency_ms: 80 },
+      state: 'normal',
+    })).toBe(true)
+    expect(hasAccountRankingEvidence('score', {
+      today: { requests: 0 },
+      state: 'limited',
+    })).toBe(true)
+  })
+})
 
 describe('upstream asset table scheduler score', () => {
   it('normalizes the default upstream 4 point score onto a percentage scale', () => {

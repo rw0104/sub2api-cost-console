@@ -32,6 +32,14 @@ function mountChart(opsTrend: OpsThroughputTrendPoint[]) {
   return shallowMount(AdaptiveOperationsCharts, {
     props: {
       opsTrend,
+      financialTrend: opsTrend.map((item) => ({
+        timestamp: item.bucket_start,
+        billedUsd: item.user_billed_usd,
+        accountCostUsd: item.account_cost_usd,
+        contributionUsd: item.contribution_usd,
+        bucketHours: 5 / 3600,
+        source: 'ops' as const,
+      })),
       errorTrend: [],
       economics: null,
       cnyPerUsd: 7,

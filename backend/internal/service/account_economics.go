@@ -84,7 +84,7 @@ type AccountEconomicsUsageTotals struct {
 type AccountEconomicsRepository interface {
 	SumUsageTotals(ctx context.Context, accountIDs []int64) (AccountEconomicsUsageTotals, error)
 	UpsertSample(ctx context.Context, sample AccountEconomicsSample) error
-	ListSamples(ctx context.Context, scopeKey string, since time.Time) ([]AccountEconomicsSample, error)
+	ListSamples(ctx context.Context, scopeKey string, since, until time.Time) ([]AccountEconomicsSample, error)
 	PruneSamples(ctx context.Context, before time.Time) error
 }
 
@@ -223,7 +223,7 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	if err != nil {
 		return nil, err
 	}
-	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, now.Add(-window))
+	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, now.Add(-window), now)
 	if err != nil {
 		return nil, fmt.Errorf("list economics samples: %w", err)
 	}

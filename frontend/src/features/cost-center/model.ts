@@ -233,6 +233,15 @@ export function elapsedHours(startedAt: DateInput, now: DateInput = Date.now()):
   return (nowMs - startedAtMs) / MILLISECONDS_PER_HOUR
 }
 
+export function isStartedInLocalMonth(startedAt: DateInput, now: DateInput = Date.now()): boolean {
+  const startedAtMs = timestamp(startedAt)
+  const nowMs = timestamp(now)
+  if (startedAtMs === null || nowMs === null || startedAtMs > nowMs) return false
+  const started = new Date(startedAtMs)
+  const current = new Date(nowMs)
+  return started.getFullYear() === current.getFullYear() && started.getMonth() === current.getMonth()
+}
+
 export function accruedCost(profile: CostProfile, now: DateInput = Date.now()): number {
   if (!Number.isFinite(profile.amount) || profile.amount < 0) return 0
 
