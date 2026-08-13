@@ -149,6 +149,11 @@ jobs:
       - name: Run backend contract
         working-directory: backend
         run: go test ./...
+      - name: Build the managed core required by the desktop contract
+        working-directory: frontend
+        run: |
+          corepack pnpm@9 build
+          node scripts/prepare-desktop-sidecar.mjs
       - name: Run desktop activation, identity and rollback contract
         working-directory: frontend/src-tauri
         run: cargo test --features custom-protocol
@@ -162,10 +167,7 @@ jobs:
         env:
           CORE_RELEASE_TAG: core-stable
           CORE_RELEASE_CHANNEL: stable
-        run: |
-          corepack pnpm@9 build
-          node scripts/prepare-desktop-sidecar.mjs
-          node scripts/prepare-core-release.mjs
+        run: node scripts/prepare-core-release.mjs
       - name: Recheck stable immediately before publishing
         shell: pwsh
         env:
