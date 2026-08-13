@@ -149,11 +149,12 @@ jobs:
       - name: Run backend contract
         working-directory: backend
         run: go test ./...
-      - name: Build the managed core required by the desktop contract
+      - name: Build the web assets and managed core required by the desktop contract
         working-directory: frontend
         run: |
           corepack pnpm@9 build
           node scripts/prepare-desktop-sidecar.mjs
+          corepack pnpm@9 build:desktop
       - name: Run desktop activation, identity and rollback contract
         working-directory: frontend/src-tauri
         run: cargo test --features custom-protocol
