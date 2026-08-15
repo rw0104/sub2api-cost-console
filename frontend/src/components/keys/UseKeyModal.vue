@@ -211,6 +211,8 @@
                 <div class="mt-1 flex items-stretch gap-2">
                   <input
                     v-model="nativeWorkingDirectory"
+                    @change="persistNativeWorkingDirectory"
+                    data-testid="native-working-directory"
                     type="text"
                     class="block min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800 dark:text-white"
                     :placeholder="t('keys.useKeyModal.nativeLauncher.workingDirectoryPlaceholder')"
@@ -300,6 +302,8 @@ import {
   launchNativeClient,
   pickNativeWorkingDirectory,
   previewNativeClientLaunch,
+  getStoredNativeWorkingDirectory,
+  storeNativeWorkingDirectory,
   type NativeClientId,
   type NativeGatewayProfile,
   type NativeClientLaunchPreview
@@ -387,6 +391,7 @@ watch(activeClientTab, () => {
   nativePreview.value = null
   nativeLaunchError.value = ''
   nativeLaunchMessage.value = ''
+  void loadNativeWorkingDirectory()
 })
 
 const nativeClientId = computed<NativeClientId | null>(() => {
@@ -399,6 +404,7 @@ const nativeClientId = computed<NativeClientId | null>(() => {
 })
 
 const showNativeLauncher = computed(() => isDesktopRuntime() && nativeClientId.value !== null)
+let nativeDirectoryLoadVersion = 0
 
 function buildNativeLaunchRequest() {
   const clientId = nativeClientId.value
@@ -450,39 +456,37 @@ function nativeErrorMessage(error: unknown): string {
 }
 
 async function loadNativeWorkingDirectory() {
-  if (!isDesktopRuntime()) return
+  const clientId = nativeClientId.value
+  if (!isDesktopRuntime() || !clientId) return
+  const loadVersion = ++nativeDirectoryLoadVersion
   nativeDirectoryLoading.value = true
-  let stored = ''
   try {
+    const stored = getStoredNativeWorkingDirectory(clientId)
+    let detected = ''
     try {
-      stored = localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''
+      detected = await getNativeWorkingDirectory()
     } catch {
-      stored = ''
+      detected = ''
     }
-    try {
-      nativeDetectedWorkingDirectory.value = await getNativeWorkingDirectory()
-    } catch {
-      nativeDetectedWorkingDirectory.value = ''
-    }
-    nativeWorkingDirectory.value = stored || nativeDetectedWorkingDirectory.value
+    if (loadVersion !== nativeDirectoryLoadVersion || clientId !== nativeClientId.value) return
+    nativeDetectedWorkingDirectory.value = detected
+    nativeWorkingDirectory.value = stored || detected
   } finally {
-    nativeDirectoryLoading.value = false
+    if (loadVersion === nativeDirectoryLoadVersion) nativeDirectoryLoading.value = false
   }
 }
 
 async function selectNativeWorkingDirectory() {
+  const clientId = nativeClientId.value
+  if (!clientId) return
+  ++nativeDirectoryLoadVersion
   nativeDirectoryLoading.value = true
   nativeLaunchError.value = ''
   try {
     const selected = await pickNativeWorkingDirectory()
-    if (selected) {
+    if (selected && clientId === nativeClientId.value) {
       nativeWorkingDirectory.value = selected
-      nativeDetectedWorkingDirectory.value = selected
-      try {
-        localStorage.setItem('sub2api.nativeClient.workingDirectory', selected)
-      } catch {
-        // Local preference storage is optional.
-      }
+      storeNativeWorkingDirectory(clientId, selected)
     }
   } catch (error) {
     nativeLaunchError.value = nativeErrorMessage(error)
@@ -492,7 +496,16 @@ async function selectNativeWorkingDirectory() {
 }
 
 function useNativeDetectedDirectory() {
-  if (nativeDetectedWorkingDirectory.value) nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+  const clientId = nativeClientId.value
+  if (clientId && nativeDetectedWorkingDirectory.value) {
+    nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+    storeNativeWorkingDirectory(clientId, nativeDetectedWorkingDirectory.value)
+  }
+}
+
+function persistNativeWorkingDirectory() {
+  const clientId = nativeClientId.value
+  if (clientId) storeNativeWorkingDirectory(clientId, nativeWorkingDirectory.value)
 }
 
 onMounted(() => {
@@ -508,7 +521,6 @@ const previewNativeClient = async () => {
   try {
     nativePreview.value = await previewNativeClientLaunch(request)
     if (nativePreview.value.working_directory) {
-      nativeDetectedWorkingDirectory.value = nativePreview.value.working_directory
       if (!nativeWorkingDirectory.value.trim() || nativeWorkingDirectory.value.trim() === '.') {
         nativeWorkingDirectory.value = nativePreview.value.working_directory
       }
@@ -531,11 +543,7 @@ const launchNativeClientFromModal = async () => {
     const receipt = await launchNativeClient(request)
     nativeLaunchMessage.value = receipt.message
     nativePreview.value = null
-    try {
-      localStorage.setItem('sub2api.nativeClient.workingDirectory', request.working_directory || '.')
-    } catch {
-      // Local preference storage is optional; the launch has already succeeded.
-    }
+    persistNativeWorkingDirectory()
   } catch (error) {
     nativeLaunchError.value = nativeErrorMessage(error)
   } finally {

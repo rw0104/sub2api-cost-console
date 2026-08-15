@@ -35,4 +35,15 @@ describe('financial trend source selection', () => {
 
     expect(result).toMatchObject([{ source: 'ops', billedUsd: 3, accountCostUsd: 1, bucketHours: 0.5 }])
   })
+
+  it('keeps synthetic usage buckets as chart gaps instead of factual zero cost', () => {
+    const result = selectFinancialTrend([], [{
+      date: '2026-08-12T00:00:00Z', requests: 0, input_tokens: 0,
+      output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0,
+      total_tokens: 0, cost: 0, actual_cost: 0, account_cost: 0,
+      observed: false,
+    }], 1, 1)
+
+    expect(result[0]).toMatchObject({ source: 'usage_logs', observed: false, billedUsd: null, accountCostUsd: null, contributionUsd: null })
+  })
 })

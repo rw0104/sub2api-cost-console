@@ -113,6 +113,7 @@
             <div class="cost-api-directory-row">
               <input
                 v-model="nativeWorkingDirectory"
+                @change="persistNativeWorkingDirectory"
                 class="cost-api-input"
                 type="text"
                 placeholder="正在检测当前目录…"
@@ -217,9 +218,11 @@ import { useClipboard } from '@/composables/useClipboard'
 import { isDesktopRuntime } from '@/api/url'
 import {
   getNativeWorkingDirectory,
+  getStoredNativeWorkingDirectory,
   launchNativeClient,
   pickNativeWorkingDirectory,
   previewNativeClientLaunch,
+  storeNativeWorkingDirectory,
   type NativeClientId,
   type NativeClientLaunchPreview,
   type NativeClientLaunchRequest,
@@ -470,7 +473,6 @@ async function previewNativeClient() {
   try {
     nativePreview.value = await previewNativeClientLaunch(request)
     if (nativePreview.value.working_directory) {
-      nativeDetectedWorkingDirectory.value = nativePreview.value.working_directory
       if (!nativeWorkingDirectory.value.trim() || nativeWorkingDirectory.value.trim() === '.') {
         nativeWorkingDirectory.value = nativePreview.value.working_directory
       }
@@ -496,11 +498,7 @@ async function launchNativeClientFromPanel() {
     const receipt = await launchNativeClient(request)
     nativePreview.value = null
     nativeLaunchMessage.value = receipt.message
-    try {
-      localStorage.setItem('sub2api.nativeClient.workingDirectory', request.working_directory || '.')
-    } catch {
-      // Remembering the directory is optional; launch success is independent of local storage.
-    }
+    persistNativeWorkingDirectory()
   } catch (error) {
     nativeLaunchError.value = nativeErrorMessage(error)
   } finally {
@@ -527,43 +525,44 @@ watch(preset, () => {
   nativePreview.value = null
   nativeLaunchError.value = ''
   nativeLaunchMessage.value = ''
+  void loadNativeWorkingDirectory()
 })
 
 onMounted(loadKeys)
+let nativeDirectoryLoadVersion = 0
+
 async function loadNativeWorkingDirectory() {
-  if (!showNativeLauncher.value) return
+  const clientId = nativeClientId.value
+  if (!showNativeLauncher.value || !clientId) return
+  const loadVersion = ++nativeDirectoryLoadVersion
   nativeDirectoryLoading.value = true
-  let stored = ''
   try {
+    const stored = getStoredNativeWorkingDirectory(clientId)
+    let detected = ''
     try {
-      stored = localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''
+      detected = await getNativeWorkingDirectory()
     } catch {
-      stored = ''
+      detected = ''
     }
-    try {
-      nativeDetectedWorkingDirectory.value = await getNativeWorkingDirectory()
-    } catch {
-      nativeDetectedWorkingDirectory.value = ''
-    }
-    nativeWorkingDirectory.value = stored || nativeDetectedWorkingDirectory.value
+    if (loadVersion !== nativeDirectoryLoadVersion || clientId !== nativeClientId.value) return
+    nativeDetectedWorkingDirectory.value = detected
+    nativeWorkingDirectory.value = stored || detected
   } finally {
-    nativeDirectoryLoading.value = false
+    if (loadVersion === nativeDirectoryLoadVersion) nativeDirectoryLoading.value = false
   }
 }
 
 async function selectNativeWorkingDirectory() {
+  const clientId = nativeClientId.value
+  if (!clientId) return
+  ++nativeDirectoryLoadVersion
   nativeDirectoryLoading.value = true
   nativeLaunchError.value = ''
   try {
     const selected = await pickNativeWorkingDirectory()
-    if (selected) {
+    if (selected && clientId === nativeClientId.value) {
       nativeWorkingDirectory.value = selected
-      nativeDetectedWorkingDirectory.value = selected
-      try {
-        localStorage.setItem('sub2api.nativeClient.workingDirectory', selected)
-      } catch {
-        // Local preference storage is optional.
-      }
+      storeNativeWorkingDirectory(clientId, selected)
     }
   } catch (error) {
     nativeLaunchError.value = nativeErrorMessage(error)
@@ -573,7 +572,16 @@ async function selectNativeWorkingDirectory() {
 }
 
 function useNativeDetectedDirectory() {
-  if (nativeDetectedWorkingDirectory.value) nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+  const clientId = nativeClientId.value
+  if (clientId && nativeDetectedWorkingDirectory.value) {
+    nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+    storeNativeWorkingDirectory(clientId, nativeDetectedWorkingDirectory.value)
+  }
+}
+
+function persistNativeWorkingDirectory() {
+  const clientId = nativeClientId.value
+  if (clientId) storeNativeWorkingDirectory(clientId, nativeWorkingDirectory.value)
 }
 
 onMounted(loadNativeWorkingDirectory)

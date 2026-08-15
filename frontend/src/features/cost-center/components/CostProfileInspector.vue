@@ -35,7 +35,7 @@
         </div>
         <div>
           <span>固定附加成本</span>
-          <strong>{{ resolved.source === 'custom' ? formatMoney(currentHourly, form.currency, 5) + '/h' : '无' }}</strong>
+          <strong>{{ resolved.source === 'custom' ? currentHourlyLabel : '无' }}</strong>
           <small>可选，不替代 Token 成本</small>
         </div>
       </section>
@@ -56,8 +56,8 @@
           <strong>{{ formatMoney(currentAccrued, form.currency, 4) }}</strong>
         </div>
         <div>
-          <span>{{ isMetered ? '固定附加小时成本' : '折算小时成本（配置推算）' }}</span>
-          <strong>{{ formatMoney(currentHourly, form.currency, 5) }}</strong>
+          <span>{{ form.billing_cycle === 'one_time' ? '一次性费用' : isMetered ? '固定附加小时成本' : '折算小时成本（配置推算）' }}</span>
+          <strong>{{ currentHourlyLabel }}</strong>
         </div>
         <div>
           <span>起算时长</span>
@@ -239,6 +239,9 @@ const draftProfile = computed<CostProfile>(() => ({
 }))
 const currentAccrued = computed(() => accruedCost(draftProfile.value, props.now))
 const currentHourly = computed(() => hourlyRate(draftProfile.value))
+const currentHourlyLabel = computed(() => draftProfile.value.billing_cycle === 'one_time'
+  ? '非周期费用'
+  : `${formatMoney(currentHourly.value, form.currency, 5)}/h`)
 const currentElapsed = computed(() => elapsedHours(draftProfile.value.started_at, props.now))
 const isValid = computed(() => Number.isFinite(Number(form.amount)) && Number(form.amount) >= 0 && Boolean(form.started_at))
 

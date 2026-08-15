@@ -4,7 +4,7 @@
       <div>
         <span>DATA GOVERNANCE / TRUTHFUL HISTORY</span>
         <h2 id="governance-title">数据来源与历史控制</h2>
-        <p>明确区分自然日、滚动窗口、生命周期累计与派生采样；接口失败不会显示成 0。</p>
+        <p>明确区分自然日、滚动窗口、生命周期累计与派生采样；接口失败不会显示成 0。当前页自动刷新是 5/10/15/30 秒间隔，没有 20 小时或每天 20:00 的定时刷新规则。</p>
       </div>
       <button type="button" data-aui-component="button" data-aui-pressable :disabled="loading" @click="$emit('refresh')">
         <RefreshCcw :size="15" :class="{ spin: loading }" />
@@ -34,7 +34,7 @@
     <div class="governance__policies">
       <article>
         <CalendarDays :size="18" />
-        <div><strong>“当天”是本机自然日</strong><p>从本地时区 00:00 起算；它不是滚动 24 小时。跨日后当天统计自然归零，采购和损失账本不会归零。</p></div>
+        <div><strong>“当天”是北京时间自然日</strong><p>从 Asia/Shanghai 00:00 起算；它不是滚动 24 小时。跨北京时间 00:00 后当天统计自然归零，采购和损失账本不会归零。</p></div>
       </article>
       <article>
         <History :size="18" />

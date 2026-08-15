@@ -8,6 +8,7 @@ export interface FinancialTrendPoint {
   contributionUsd: number | null
   bucketHours: number
   source: 'ops' | 'usage_logs'
+  observed?: boolean
 }
 
 function finite(value: unknown): number | null {
@@ -53,6 +54,7 @@ export function selectFinancialTrend(
           ?? (billedUsd != null && accountCostUsd != null ? billedUsd - accountCostUsd : null),
         bucketHours: opsBucketHours,
         source: 'ops' as const,
+        observed: true,
       }
     })
   }
@@ -62,11 +64,12 @@ export function selectFinancialTrend(
     const accountCostUsd = usageAccountCost[index]
     return {
       timestamp: point.date,
-      billedUsd,
-      accountCostUsd,
-      contributionUsd: billedUsd != null && accountCostUsd != null ? billedUsd - accountCostUsd : null,
+      billedUsd: point.observed === false ? null : billedUsd,
+      accountCostUsd: point.observed === false ? null : accountCostUsd,
+      contributionUsd: point.observed === false || billedUsd == null || accountCostUsd == null ? null : billedUsd - accountCostUsd,
       bucketHours: usageBucketHours,
       source: 'usage_logs' as const,
+      observed: point.observed !== false,
     }
   })
 }

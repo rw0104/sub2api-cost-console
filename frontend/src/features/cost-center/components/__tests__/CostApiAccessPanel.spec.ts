@@ -12,6 +12,10 @@ const nativeMocks = vi.hoisted(() => ({
   isDesktopRuntime: vi.fn(),
   getWorkingDirectory: vi.fn(),
   pickWorkingDirectory: vi.fn(),
+  getStoredWorkingDirectory: vi.fn((clientId: string) => localStorage.getItem(`sub2api.nativeClient.workingDirectory.${clientId}`) || localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''),
+  storeWorkingDirectory: vi.fn((clientId: string, directory: string) => {
+    if (directory.trim() && directory.trim() !== '.') localStorage.setItem(`sub2api.nativeClient.workingDirectory.${clientId}`, directory.trim())
+  }),
   preview: vi.fn(),
   launch: vi.fn(),
 }))
@@ -27,9 +31,11 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('@/api/url', () => ({ isDesktopRuntime: nativeMocks.isDesktopRuntime }))
 vi.mock('@/api/nativeClientLauncher', () => ({
   getNativeWorkingDirectory: nativeMocks.getWorkingDirectory,
+  getStoredNativeWorkingDirectory: nativeMocks.getStoredWorkingDirectory,
   pickNativeWorkingDirectory: nativeMocks.pickWorkingDirectory,
   previewNativeClientLaunch: nativeMocks.preview,
   launchNativeClient: nativeMocks.launch,
+  storeNativeWorkingDirectory: nativeMocks.storeWorkingDirectory,
 }))
 
 const makeKey = (platform: 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'composite' = 'openai') => ({
@@ -66,11 +72,14 @@ const makeKey = (platform: 'anthropic' | 'openai' | 'gemini' | 'antigravity' | '
 
 describe('CostApiAccessPanel data truthfulness', () => {
   beforeEach(() => {
+    localStorage.clear()
     mocks.listKeys.mockReset()
     mocks.getPublicSettings.mockReset().mockResolvedValue({ api_base_url: '' })
     nativeMocks.isDesktopRuntime.mockReset().mockReturnValue(true)
     nativeMocks.getWorkingDirectory.mockReset().mockResolvedValue('C:\\Users\\reki')
     nativeMocks.pickWorkingDirectory.mockReset().mockResolvedValue(null)
+    nativeMocks.getStoredWorkingDirectory.mockClear()
+    nativeMocks.storeWorkingDirectory.mockClear()
     nativeMocks.preview.mockReset().mockResolvedValue({
       available: true,
       message: '客户端已就绪',
@@ -122,6 +131,20 @@ describe('CostApiAccessPanel data truthfulness', () => {
     await wrapper.get('.cost-api-directory-button').trigger('click')
     await flushPromises()
     expect((wrapper.get('input.cost-api-input').element as HTMLInputElement).value).toBe('D:\\Projects\\demo')
+    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.codex')).toBe('D:\\Projects\\demo')
+
+    await wrapper.get('.cost-api-presets button:nth-child(4)').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('input.cost-api-input').element as HTMLInputElement).value).toBe('C:\\Users\\reki')
+
+    await wrapper.get('.cost-api-presets button:nth-child(2)').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('input.cost-api-input').element as HTMLInputElement).value).toBe('D:\\Projects\\demo')
+
+    wrapper.unmount()
+    const reopened = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    expect((reopened.get('input.cost-api-input').element as HTMLInputElement).value).toBe('D:\\Projects\\demo')
   })
 
   it('keeps ChatGPT Desktop separate from the Codex CLI and does not require an API key', async () => {
@@ -140,6 +163,21 @@ describe('CostApiAccessPanel data truthfulness', () => {
       client_id: 'chatgpt',
       api_key: '',
     }))
+  })
+
+  it('persists a directory typed directly into the field', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+
+    const input = wrapper.get('input.cost-api-input')
+    await input.setValue('E:\\Workspaces\\sub2api')
+    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.codex')).toBe('E:\\Workspaces\\sub2api')
+
+    wrapper.unmount()
+    const reopened = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    expect((reopened.get('input.cost-api-input').element as HTMLInputElement).value).toBe('E:\\Workspaces\\sub2api')
   })
 
   it('passes the selected Grok route and normalized v1 endpoint to the native launcher', async () => {

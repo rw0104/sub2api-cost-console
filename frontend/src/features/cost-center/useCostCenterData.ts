@@ -32,8 +32,10 @@ import {
 } from './dataState'
 import {
   aggregateUsageWindow,
+  beijingCalendarDate,
+  beijingCalendarDayBounds,
+  COST_CENTER_TIMEZONE,
   fillCostTrendBuckets,
-  localDateParameter,
   usageWindowBounds,
   type CostTrendDataPoint,
 } from './usageWindow'
@@ -69,11 +71,7 @@ export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
   granularity: 'day' | 'hour' | 'minute'
 } {
   if (range === 'today') {
-    const now = new Date()
-    const start = new Date(now)
-    start.setHours(0, 0, 0, 0)
-    const end = new Date(start)
-    end.setDate(end.getDate() + 1)
+    const { start, end } = beijingCalendarDayBounds()
     return { start_time: start.toISOString(), end_time: end.toISOString(), granularity: 'hour' }
   }
   return {
@@ -201,7 +199,7 @@ export function useCostCenterData() {
 
   async function loadUsageLogCompatibilityTrend(range: CostCenterRange): Promise<CostTrendDataPoint[]> {
     const { start, end } = usageWindowBounds(range)
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const timezone = COST_CENTER_TIMEZONE
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
 
@@ -209,8 +207,8 @@ export function useCostCenterData() {
       const response = await adminAPI.usage.list({
         page,
         page_size: USAGE_PAGE_SIZE,
-        start_date: localDateParameter(start),
-        end_date: localDateParameter(end),
+        start_date: beijingCalendarDate(start),
+        end_date: beijingCalendarDate(new Date(end.getTime() - 1)),
         timezone,
         sort_by: 'created_at',
         sort_order: 'desc',
@@ -234,7 +232,7 @@ export function useCostCenterData() {
 
   async function loadModelRouteLogs(range: CostCenterRange, accountId: number | null): Promise<{ logs: AdminUsageLog[]; truncated: boolean }> {
     const { start, end } = usageWindowBounds(range)
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const timezone = COST_CENTER_TIMEZONE
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
 
@@ -243,8 +241,8 @@ export function useCostCenterData() {
         page,
         page_size: USAGE_PAGE_SIZE,
         account_id: accountId ?? undefined,
-        start_date: localDateParameter(start),
-        end_date: localDateParameter(new Date(end.getTime() - 1)),
+        start_date: beijingCalendarDate(start),
+        end_date: beijingCalendarDate(new Date(end.getTime() - 1)),
         timezone,
         sort_by: 'created_at',
         sort_order: 'desc',
@@ -362,12 +360,11 @@ export function useCostCenterData() {
       const ids = accounts.value.map((account) => account.id)
       if (ids.length > 0) {
         try {
-          const localDayStart = new Date()
-          localDayStart.setHours(0, 0, 0, 0)
-          const batch = await adminAPI.accounts.getBatchTodayStats(ids, localDayStart.toISOString())
+          const { start: businessDayStart } = beijingCalendarDayBounds()
+          const batch = await adminAPI.accounts.getBatchTodayStats(ids, businessDayStart.toISOString())
           if (sequence === requestSequence) {
             todayStats.value = batch.stats ?? {}
-            setSourceState('todayStats', Object.keys(todayStats.value).length ? 'measured' : 'empty', Object.keys(todayStats.value).length ? '本地自然日账号统计已读取' : '本地自然日内没有账号用量记录')
+            setSourceState('todayStats', Object.keys(todayStats.value).length ? 'measured' : 'empty', Object.keys(todayStats.value).length ? '北京时间自然日账号统计已读取' : '北京时间自然日内没有账号用量记录')
           }
         } catch (batchError) {
           console.warn('[cost-center] account today stats unavailable', batchError)

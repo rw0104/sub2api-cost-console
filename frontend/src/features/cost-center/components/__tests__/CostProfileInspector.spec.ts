@@ -75,6 +75,24 @@ describe('CostProfileInspector billing modes', () => {
     expect(wrapper.text()).toContain('保存成本档案')
   })
 
+  it('does not present a one-time purchase as a zero hourly rate', () => {
+    const wrapper = mountInspector(makeAccount({
+      type: 'oauth',
+      extra: {
+        cost_profile: {
+          amount: 12,
+          currency: 'CNY',
+          billing_cycle: 'one_time',
+          started_at: JOINED_AT,
+        },
+      },
+    }))
+
+    expect(wrapper.text()).toContain('一次性费用')
+    expect(wrapper.text()).toContain('非周期费用')
+    expect(wrapper.text()).not.toContain('¥0.00000/h')
+  })
+
   it('labels relays as channel-priced and only reveals optional fixed overhead on demand', async () => {
     const wrapper = mountInspector(makeAccount({
       name: 'relay',
