@@ -34,15 +34,13 @@ describe('cost center live ranges', () => {
     expect(useCostCenterData().modelCostRange.value).toBe('1h')
   })
 
-  it('requests the current local calendar day with exact bounds', () => {
-    const now = new Date(2026, 7, 6, 13, 45, 30)
+  it('requests the current Beijing calendar day with exact bounds', () => {
+    const now = new Date('2026-08-06T13:45:30+08:00')
     vi.useFakeTimers()
     vi.setSystemTime(now)
 
-    const start = new Date(now)
-    start.setHours(0, 0, 0, 0)
-    const end = new Date(start)
-    end.setDate(end.getDate() + 1)
+    const start = new Date('2026-08-05T16:00:00.000Z')
+    const end = new Date('2026-08-06T16:00:00.000Z')
 
     expect(buildCostCenterSnapshotQuery('today')).toEqual({
       start_time: start.toISOString(),

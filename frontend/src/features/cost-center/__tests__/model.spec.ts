@@ -8,6 +8,7 @@ import {
   formatMoney,
   hourlyRate,
   inferPlan,
+  isStartedInBusinessMonth,
   isStartedInLocalMonth,
   isDefaultSubscriptionCostProfile,
   isTimestampInWindow,
@@ -53,6 +54,14 @@ describe('cost center model', () => {
     expect(isStartedInLocalMonth(new Date(2026, 7, 1, 0, 0, 0), now)).toBe(true)
     expect(isStartedInLocalMonth(new Date(2026, 6, 31, 23, 59, 59), now)).toBe(false)
     expect(isStartedInLocalMonth(new Date(2026, 7, 13, 0, 0, 0), now)).toBe(false)
+  })
+
+  it('recognizes one-time purchases by the Beijing billing month', () => {
+    const now = '2026-08-01T00:30:00+08:00'
+    expect(isStartedInBusinessMonth('2026-07-31T23:30:00+08:00', now)).toBe(false)
+    expect(isStartedInBusinessMonth('2026-08-01T00:00:00+08:00', now)).toBe(true)
+    // The same instant is July 31 in Los Angeles but August 1 for billing.
+    expect(isStartedInBusinessMonth('2026-07-31T16:30:00Z', now)).toBe(true)
   })
 
   it('excludes historical loss events from the selected observation window', () => {

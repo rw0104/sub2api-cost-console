@@ -19,7 +19,8 @@ describe('DataGovernancePanel', () => {
 
     expect(wrapper.findAll('.source-card')).toHaveLength(12)
     expect(wrapper.text()).toContain('usage_logs 读取失败')
-    expect(wrapper.text()).toContain('本机自然日')
+    expect(wrapper.text()).toContain('北京时间自然日')
+    expect(wrapper.text()).toContain('没有 20 小时或每天 20:00')
     expect(wrapper.text()).toContain('90 天')
     expect(wrapper.text()).toContain('封禁损失账本不可静默清零')
 

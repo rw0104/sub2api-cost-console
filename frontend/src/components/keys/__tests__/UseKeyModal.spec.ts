@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-const { copyToClipboardMock, getNativeWorkingDirectoryMock, pickNativeWorkingDirectoryMock, previewNativeClientLaunchMock, launchNativeClientMock } = vi.hoisted(() => ({
+const { copyToClipboardMock, getNativeWorkingDirectoryMock, pickNativeWorkingDirectoryMock, previewNativeClientLaunchMock, launchNativeClientMock, getStoredNativeWorkingDirectoryMock, storeNativeWorkingDirectoryMock } = vi.hoisted(() => ({
   copyToClipboardMock: vi.fn().mockResolvedValue(true),
   getNativeWorkingDirectoryMock: vi.fn().mockResolvedValue('C:\\Users\\reki'),
   pickNativeWorkingDirectoryMock: vi.fn().mockResolvedValue(null),
+  getStoredNativeWorkingDirectoryMock: vi.fn((clientId: string) => localStorage.getItem(`sub2api.nativeClient.workingDirectory.${clientId}`) || localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''),
+  storeNativeWorkingDirectoryMock: vi.fn((clientId: string, directory: string) => {
+    if (directory.trim() && directory.trim() !== '.') localStorage.setItem(`sub2api.nativeClient.workingDirectory.${clientId}`, directory.trim())
+  }),
   previewNativeClientLaunchMock: vi.fn().mockResolvedValue({
     client_id: 'opencode',
     label: 'OpenCode',
@@ -42,12 +46,22 @@ vi.mock('@/api/url', () => ({
 
 vi.mock('@/api/nativeClientLauncher', () => ({
   getNativeWorkingDirectory: getNativeWorkingDirectoryMock,
+  getStoredNativeWorkingDirectory: getStoredNativeWorkingDirectoryMock,
   pickNativeWorkingDirectory: pickNativeWorkingDirectoryMock,
   previewNativeClientLaunch: previewNativeClientLaunchMock,
-  launchNativeClient: launchNativeClientMock
+  launchNativeClient: launchNativeClientMock,
+  storeNativeWorkingDirectory: storeNativeWorkingDirectoryMock
 }))
 
 import UseKeyModal from '../UseKeyModal.vue'
+
+beforeEach(() => {
+  localStorage.clear()
+  getStoredNativeWorkingDirectoryMock.mockClear()
+  storeNativeWorkingDirectoryMock.mockClear()
+  getNativeWorkingDirectoryMock.mockReset().mockResolvedValue('C:\\Users\\reki')
+  pickNativeWorkingDirectoryMock.mockReset().mockResolvedValue(null)
+})
 
 describe('UseKeyModal', () => {
   it('renders Grok Build and OpenCode setup for Grok groups', async () => {
@@ -739,5 +753,86 @@ describe('UseKeyModal', () => {
 
     expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorEndpointNotice')
     expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorDescription')
+  })
+
+  it('shows the selected directory and restores it when the modal reopens', async () => {
+    pickNativeWorkingDirectoryMock.mockResolvedValue('D:\\Projects\\codex')
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+    await flushPromises()
+
+    const selectButton = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.nativeLauncher.selectDirectory')
+    )
+    expect(selectButton).toBeDefined()
+    await selectButton!.trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
+      .toBe('D:\\Projects\\codex')
+    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.codex')).toBe('D:\\Projects\\codex')
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
+      .toBe('D:\\Projects\\codex')
+  })
+
+  it('keeps working directories separate for each native client', async () => {
+    pickNativeWorkingDirectoryMock.mockResolvedValueOnce('D:\\Projects\\codex')
+      .mockResolvedValueOnce('D:\\Projects\\opencode')
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+    await flushPromises()
+
+    const selectButton = () => wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.nativeLauncher.selectDirectory')
+    )!
+    await selectButton().trigger('click')
+    await flushPromises()
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await flushPromises()
+    await selectButton().trigger('click')
+    await flushPromises()
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
+      .toBe('D:\\Projects\\codex')
+    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.opencode')).toBe('D:\\Projects\\opencode')
   })
 })

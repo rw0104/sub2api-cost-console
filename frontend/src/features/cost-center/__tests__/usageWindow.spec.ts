@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AdminUsageLog } from '@/types'
-import { aggregateUsageWindow, fillCostTrendBuckets, localDateParameter, usageWindowBounds } from '../usageWindow'
+import { aggregateUsageWindow, beijingCalendarDayBounds, fillCostTrendBuckets, localDateParameter, usageWindowBounds } from '../usageWindow'
 
 function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
   return {
@@ -48,12 +48,16 @@ function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
 }
 
 describe('official core usage-log compatibility aggregation', () => {
-  it('uses local calendar-day bounds for today', () => {
-    const end = new Date(2026, 7, 6, 13, 45, 30)
+  it('uses Beijing calendar-day bounds for today on an overseas machine', () => {
+    const end = new Date('2026-08-06T13:45:30+08:00')
     const bounds = usageWindowBounds('today', end)
 
-    expect(bounds.start).toEqual(new Date(2026, 7, 6, 0, 0, 0, 0))
-    expect(bounds.end).toEqual(new Date(2026, 7, 7, 0, 0, 0, 0))
+    expect(bounds).toEqual({
+      start: new Date('2026-08-05T16:00:00.000Z'),
+      end: new Date('2026-08-06T16:00:00.000Z'),
+    })
+    expect(beijingCalendarDayBounds(new Date('2026-08-05T15:59:59.999Z')).start.toISOString()).toBe('2026-08-04T16:00:00.000Z')
+    expect(beijingCalendarDayBounds(new Date('2026-08-05T16:00:00.000Z')).start.toISOString()).toBe('2026-08-05T16:00:00.000Z')
   })
 
   it('uses exact rolling bounds for one minute and one month', () => {
@@ -109,6 +113,7 @@ describe('official core usage-log compatibility aggregation', () => {
       expect(result).toHaveLength(20)
       expect(result[8].requests).toBe(1)
       expect(result[8].actual_cost).toBe(0.3)
+      expect(result[0].observed).toBe(false)
     } finally {
       if (previousTimezone == null) delete process.env.TZ
       else process.env.TZ = previousTimezone
