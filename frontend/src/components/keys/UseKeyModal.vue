@@ -179,6 +179,98 @@
             {{ platformNote }}
           </p>
         </div>
+
+        <!-- Windows native client launcher -->
+        <div
+          v-if="showNativeLauncher"
+          class="rounded-lg border border-primary-200 bg-primary-50/60 p-4 dark:border-primary-900/60 dark:bg-primary-950/20"
+        >
+          <div class="flex items-start gap-3">
+            <Icon name="terminal" size="md" class="mt-0.5 flex-shrink-0 text-primary-600 dark:text-primary-400" />
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('keys.useKeyModal.nativeLauncher.title') }}
+              </p>
+              <p class="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-400">
+                {{ t('keys.useKeyModal.nativeLauncher.description') }}
+              </p>
+              <p
+                v-if="activeClientTab === 'cursor'"
+                class="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
+              >
+                {{ t('keys.useKeyModal.nativeLauncher.cursorEndpointNotice') }}
+              </p>
+              <p
+                v-if="activeClientTab === 'claude'"
+                class="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
+              >
+                {{ t('keys.useKeyModal.nativeLauncher.claudeTrustNotice') }}
+              </p>
+              <div class="mt-3 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                {{ t('keys.useKeyModal.nativeLauncher.workingDirectory') }}
+                <div class="mt-1 flex items-stretch gap-2">
+                  <input
+                    v-model="nativeWorkingDirectory"
+                    type="text"
+                    class="block min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800 dark:text-white"
+                    :placeholder="t('keys.useKeyModal.nativeLauncher.workingDirectoryPlaceholder')"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-secondary whitespace-nowrap"
+                    :disabled="nativeLaunchLoading || nativeDirectoryLoading"
+                    @click="selectNativeWorkingDirectory"
+                  >
+                    <Icon name="folder" size="sm" />
+                    {{ t('keys.useKeyModal.nativeLauncher.selectDirectory') }}
+                  </button>
+                </div>
+                <p v-if="nativeDetectedWorkingDirectory" class="mt-1 text-[11px] font-normal leading-5 text-gray-500 dark:text-gray-400">
+                  {{ t('keys.useKeyModal.nativeLauncher.detectedDirectory') }}：{{ nativeDetectedWorkingDirectory }}
+                  <button type="button" class="ml-1 text-primary-600 hover:underline dark:text-primary-400" @click="useNativeDetectedDirectory">
+                    {{ t('keys.useKeyModal.nativeLauncher.useDetectedDirectory') }}
+                  </button>
+                </p>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="nativeLaunchLoading || nativeDirectoryLoading"
+                  @click="previewNativeClient"
+                >
+                  <Icon name="refresh" size="sm" :class="nativeLaunchLoading ? 'animate-spin' : ''" />
+                  {{ t('keys.useKeyModal.nativeLauncher.preview') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  :disabled="nativeLaunchLoading || nativeDirectoryLoading"
+                  @click="launchNativeClientFromModal"
+                >
+                  <Icon name="play" size="sm" />
+                  {{ t('keys.useKeyModal.nativeLauncher.launch') }}
+                </button>
+              </div>
+              <p
+                v-if="nativePreview"
+                class="mt-2 text-xs leading-5"
+                :class="nativePreview.available ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'"
+              >
+                {{ nativePreview.message }}
+                <span v-if="nativePreview.executable"> · {{ nativePreview.executable }}</span>
+              </p>
+              <p v-if="nativeLaunchMessage" class="mt-2 text-xs leading-5 text-green-700 dark:text-green-300">
+                {{ nativeLaunchMessage }}
+              </p>
+              <p v-if="nativeLaunchError" class="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">
+                {{ nativeLaunchError }}
+              </p>
+            </div>
+          </div>
+        </div>
       </template>
     </div>
 
@@ -196,12 +288,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, watch, type Component } from 'vue'
+import { ref, computed, h, onMounted, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import type { GroupPlatform } from '@/types'
+import { isDesktopRuntime } from '@/api/url'
+import {
+  getNativeWorkingDirectory,
+  launchNativeClient,
+  pickNativeWorkingDirectory,
+  previewNativeClientLaunch,
+  type NativeClientId,
+  type NativeGatewayProfile,
+  type NativeClientLaunchPreview
+} from '@/api/nativeClientLauncher'
 
 interface Props {
   show: boolean
@@ -239,6 +341,13 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
+const nativeWorkingDirectory = ref('')
+const nativeDetectedWorkingDirectory = ref('')
+const nativeDirectoryLoading = ref(false)
+const nativePreview = ref<NativeClientLaunchPreview | null>(null)
+const nativeLaunchLoading = ref(false)
+const nativeLaunchError = ref('')
+const nativeLaunchMessage = ref('')
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {
@@ -265,13 +374,174 @@ watch(() => props.platform, () => {
 watch(() => props.show, (show) => {
   if (show) {
     codexAuthMode.value = 'legacy'
+    nativePreview.value = null
+    nativeLaunchError.value = ''
+    nativeLaunchMessage.value = ''
+    void loadNativeWorkingDirectory()
   }
 })
 
 // Reset shell tab when client changes
 watch(activeClientTab, () => {
   activeTab.value = 'unix'
+  nativePreview.value = null
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
 })
+
+const nativeClientId = computed<NativeClientId | null>(() => {
+  if (activeClientTab.value === 'codex') return 'codex'
+  if (activeClientTab.value === 'claude') return 'claude-code'
+  if (activeClientTab.value === 'cursor') return 'cursor'
+  if (activeClientTab.value === 'opencode') return 'opencode'
+  if (activeClientTab.value === 'grok') return 'grok'
+  return null
+})
+
+const showNativeLauncher = computed(() => isDesktopRuntime() && nativeClientId.value !== null)
+
+function buildNativeLaunchRequest() {
+  const clientId = nativeClientId.value
+  if (!clientId) return null
+  const rawBaseUrl = props.baseUrl || window.location.origin
+  const gatewayProfile: NativeGatewayProfile = props.platform || 'composite'
+  const baseRoot = nativeBaseRoot(rawBaseUrl)
+  let baseUrl = rawBaseUrl.replace(/\/+$/, '')
+
+  if (clientId === 'claude-code') {
+    baseUrl = gatewayProfile === 'antigravity'
+      ? `${baseRoot}/antigravity`
+      : baseRoot
+  } else if (clientId === 'codex' || clientId === 'grok') {
+    baseUrl = ensureNativeV1BaseUrl(baseRoot)
+  } else if (clientId === 'opencode') {
+    if (gatewayProfile === 'gemini') {
+      baseUrl = `${baseRoot}/v1beta`
+    } else if (gatewayProfile === 'antigravity') {
+      baseUrl = `${baseRoot}/antigravity/v1`
+    } else {
+      baseUrl = ensureNativeV1BaseUrl(baseRoot)
+    }
+  }
+
+  return {
+    client_id: clientId,
+    gateway_profile: gatewayProfile,
+    base_url: baseUrl,
+    api_key: props.apiKey,
+    working_directory: nativeWorkingDirectory.value.trim() || nativeDetectedWorkingDirectory.value || '.'
+  }
+}
+
+function nativeBaseRoot(value: string): string {
+  return value
+    .replace(/\/+$/, '')
+    .replace(/\/v1(?:beta)?$/i, '')
+}
+
+function ensureNativeV1BaseUrl(value: string): string {
+  const trimmed = value.replace(/\/+$/, '')
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
+function nativeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+async function loadNativeWorkingDirectory() {
+  if (!isDesktopRuntime()) return
+  nativeDirectoryLoading.value = true
+  let stored = ''
+  try {
+    try {
+      stored = localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''
+    } catch {
+      stored = ''
+    }
+    try {
+      nativeDetectedWorkingDirectory.value = await getNativeWorkingDirectory()
+    } catch {
+      nativeDetectedWorkingDirectory.value = ''
+    }
+    nativeWorkingDirectory.value = stored || nativeDetectedWorkingDirectory.value
+  } finally {
+    nativeDirectoryLoading.value = false
+  }
+}
+
+async function selectNativeWorkingDirectory() {
+  nativeDirectoryLoading.value = true
+  nativeLaunchError.value = ''
+  try {
+    const selected = await pickNativeWorkingDirectory()
+    if (selected) {
+      nativeWorkingDirectory.value = selected
+      nativeDetectedWorkingDirectory.value = selected
+      try {
+        localStorage.setItem('sub2api.nativeClient.workingDirectory', selected)
+      } catch {
+        // Local preference storage is optional.
+      }
+    }
+  } catch (error) {
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeDirectoryLoading.value = false
+  }
+}
+
+function useNativeDetectedDirectory() {
+  if (nativeDetectedWorkingDirectory.value) nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+}
+
+onMounted(() => {
+  if (props.show) void loadNativeWorkingDirectory()
+})
+
+const previewNativeClient = async () => {
+  const request = buildNativeLaunchRequest()
+  if (!request) return
+  nativeLaunchLoading.value = true
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
+  try {
+    nativePreview.value = await previewNativeClientLaunch(request)
+    if (nativePreview.value.working_directory) {
+      nativeDetectedWorkingDirectory.value = nativePreview.value.working_directory
+      if (!nativeWorkingDirectory.value.trim() || nativeWorkingDirectory.value.trim() === '.') {
+        nativeWorkingDirectory.value = nativePreview.value.working_directory
+      }
+    }
+  } catch (error) {
+    nativePreview.value = null
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeLaunchLoading.value = false
+  }
+}
+
+const launchNativeClientFromModal = async () => {
+  const request = buildNativeLaunchRequest()
+  if (!request) return
+  nativeLaunchLoading.value = true
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
+  try {
+    const receipt = await launchNativeClient(request)
+    nativeLaunchMessage.value = receipt.message
+    nativePreview.value = null
+    try {
+      localStorage.setItem('sub2api.nativeClient.workingDirectory', request.working_directory || '.')
+    } catch {
+      // Local preference storage is optional; the launch has already succeeded.
+    }
+  } catch (error) {
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeLaunchLoading.value = false
+  }
+}
 
 // Icon components
 const AppleIcon = {
@@ -348,30 +618,45 @@ const clientTabs = computed((): TabConfig[] => {
         tabs.push({ id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon })
       }
       tabs.push({ id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon })
+      if (isDesktopRuntime()) {
+        tabs.push({ id: 'cursor', label: t('keys.useKeyModal.cliTabs.cursorAgent'), icon: TerminalIcon })
+      }
       return tabs
     }
     case 'gemini':
       return [
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
-        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon },
+        ...(isDesktopRuntime()
+          ? [{ id: 'cursor', label: t('keys.useKeyModal.cliTabs.cursorAgent'), icon: TerminalIcon }]
+          : [])
       ]
     case 'antigravity':
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
-        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon },
+        ...(isDesktopRuntime()
+          ? [{ id: 'cursor', label: t('keys.useKeyModal.cliTabs.cursorAgent'), icon: TerminalIcon }]
+          : [])
       ]
     case 'grok':
       return [
         { id: 'grok', label: t('keys.useKeyModal.cliTabs.grokCli'), icon: TerminalIcon },
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
-        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon },
+        ...(isDesktopRuntime()
+          ? [{ id: 'cursor', label: t('keys.useKeyModal.cliTabs.cursorAgent'), icon: TerminalIcon }]
+          : [])
       ]
     default:
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
-        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon },
+        ...(isDesktopRuntime()
+          ? [{ id: 'cursor', label: t('keys.useKeyModal.cliTabs.cursorAgent'), icon: TerminalIcon }]
+          : [])
       ]
   }
 })
@@ -389,7 +674,7 @@ const openaiTabs: TabConfig[] = [
   { id: 'windows', label: 'Windows', icon: WindowsIcon }
 ]
 
-const showShellTabs = computed(() => activeClientTab.value !== 'opencode')
+const showShellTabs = computed(() => !['opencode', 'cursor'].includes(activeClientTab.value))
 
 const showCodexAuthMode = computed(() =>
   props.platform === 'openai' &&
@@ -405,6 +690,9 @@ const currentTabs = computed(() => {
 })
 
 const platformDescription = computed(() => {
+  if (activeClientTab.value === 'cursor') {
+    return t('keys.useKeyModal.nativeLauncher.cursorDescription')
+  }
   switch (props.platform) {
     case 'openai':
       if (activeClientTab.value === 'claude') {
@@ -465,7 +753,7 @@ const platformNote = computed(() => {
   }
 })
 
-const showPlatformNote = computed(() => activeClientTab.value !== 'opencode')
+const showPlatformNote = computed(() => !['opencode', 'cursor'].includes(activeClientTab.value))
 
 const escapeHtml = (value: string) => value
   .replace(/&/g, '&amp;')
@@ -503,6 +791,8 @@ const currentFiles = computed((): FileConfig[] => {
     const trimmed = baseRoot.replace(/\/+$/, '')
     return trimmed.endsWith('/v1beta') ? trimmed : `${trimmed}/v1beta`
   })()
+
+  if (activeClientTab.value === 'cursor') return []
 
   if (activeClientTab.value === 'opencode') {
     switch (props.platform) {

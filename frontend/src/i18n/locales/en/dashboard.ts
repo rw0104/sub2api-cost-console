@@ -148,6 +148,20 @@ export default {
         note: 'Make sure the config directory exists. macOS/Linux users can run mkdir -p ~/.codex to create it.',
         noteWindows: 'Press Win+R and enter %userprofile%\\.codex to open the config directory. Create it manually if it does not exist.',
       },
+      nativeLauncher: {
+        title: 'Windows native launcher',
+        description: 'Use installed PowerShell 7 when available, and fall back to Windows PowerShell 5.1 otherwise. Start the installed client in a new window; credentials and runtime overrides are scoped to that process and do not modify third-party account or config files.',
+        claudeTrustNotice: 'On its first launch in a working directory, Claude Code may ask for a safety confirmation. Choose 1 (Yes, I trust this folder) and press Enter; this is the client security flow, not a launch failure.',
+        cursorDescription: 'Launch Cursor Agent CLI and point --endpoint at the current API address.',
+        cursorEndpointNotice: 'Cursor Agent uses Cursor\'s own agent protocol. The current API address must implement that protocol; OpenAI compatibility alone does not guarantee support.',
+        workingDirectory: 'Working directory',
+        workingDirectoryPlaceholder: 'Leave blank for the current directory, e.g. C:\\Projects\\demo',
+        selectDirectory: 'Choose directory',
+        detectedDirectory: 'Detected current directory',
+        useDetectedDirectory: 'Use detected directory',
+        preview: 'Check client',
+        launch: 'Launch client',
+      },
       cliTabs: {
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
@@ -155,6 +169,7 @@ export default {
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
         opencode: 'OpenCode',
+        cursorAgent: 'Cursor Agent',
       },
       antigravity: {
         description: 'Configure API access for Antigravity group. Select the configuration method based on your client.',

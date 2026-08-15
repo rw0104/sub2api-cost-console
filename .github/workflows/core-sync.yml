@@ -99,6 +99,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             $conflicts = @(git diff --name-only --diff-filter=U)
             $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+            if ($unknown.Count -eq 1 -and $unknown[0] -eq 'backend/internal/service/account_test_service.go') {
+              # v0.1.177 changes the same OpenAI compact-probe block as the cost
+              # extension. Resolve only the reviewed, content-checked three-way
+              # merge; any shape change remains an intentional release block.
+              & pwsh -NoLogo -NoProfile -File "$PWD/.github/resolve-core-merge.ps1" -Path 'backend/internal/service/account_test_service.go'
+              if ($LASTEXITCODE -ne 0) {
+                $files = $conflicts -join ', '
+                git merge --abort
+                "blocked=true" >> $env:GITHUB_OUTPUT
+                "conflict_files=$files" >> $env:GITHUB_OUTPUT
+                exit 0
+              }
+              $conflicts = @(git diff --name-only --diff-filter=U)
+              $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+            }
             if ($unknown.Count -gt 0) {
               $files = $conflicts -join ', '
               git merge --abort
