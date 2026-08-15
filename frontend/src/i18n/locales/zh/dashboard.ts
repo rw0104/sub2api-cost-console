@@ -149,13 +149,28 @@ export default {
         noteWindows:
           '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
       },
+      nativeLauncher: {
+        title: 'Windows 原生启动器',
+        description: '优先使用已安装的 PowerShell 7；未安装时自动回退到系统 Windows PowerShell 5.1。在新的窗口中启动客户端，凭据和运行时覆盖仅作用于本次进程，不会修改第三方账号或配置文件。',
+        claudeTrustNotice: 'Claude Code 首次进入工作目录时可能显示安全确认，请在客户端窗口选择 1（Yes, I trust this folder）并回车；这是客户端的正常安全流程，不是启动失败。',
+        cursorDescription: '启动 Cursor Agent CLI，并通过 --endpoint 指向当前 API 地址。',
+        cursorEndpointNotice: 'Cursor Agent 使用 Cursor 自有的 Agent 协议；只有当前 API 地址兼容该协议时才能正常工作。OpenAI 兼容接口本身不足以保证兼容。',
+        workingDirectory: '工作目录',
+        workingDirectoryPlaceholder: '留空使用当前目录，例如 C:\\Projects\\demo',
+        selectDirectory: '选择目录',
+        detectedDirectory: '检测到的当前目录',
+        useDetectedDirectory: '使用检测目录',
+        preview: '检查客户端',
+        launch: '启动客户端'
+      },
       cliTabs: {
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
-        opencode: 'OpenCode'
+        opencode: 'OpenCode',
+        cursorAgent: 'Cursor Agent'
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',

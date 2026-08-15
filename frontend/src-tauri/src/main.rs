@@ -1,11 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod client_launcher;
 mod desktop_proxy;
 mod desktop_runtime;
 mod desktop_shell;
 mod managed_core_process;
 mod setup_environment;
 
+use client_launcher::{
+    launch_native_client, list_native_clients, native_working_directory,
+    pick_native_working_directory, preview_native_client_launch,
+};
 use desktop_runtime::{
     check_core_update, desktop_backend_prepare_relaunch, desktop_backend_start,
     desktop_backend_status, desktop_backend_stop, initialize_backend, inspect_core_identity,
@@ -63,6 +68,11 @@ fn main() {
             install_core_update,
             restore_bundled_core,
             prepare_core_rollback,
+            list_native_clients,
+            preview_native_client_launch,
+            launch_native_client,
+            native_working_directory,
+            pick_native_working_directory,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sub2API Cost Console");

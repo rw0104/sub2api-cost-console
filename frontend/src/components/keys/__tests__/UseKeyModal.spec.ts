@@ -1,9 +1,27 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-const { copyToClipboardMock } = vi.hoisted(() => ({
-  copyToClipboardMock: vi.fn().mockResolvedValue(true)
+const { copyToClipboardMock, getNativeWorkingDirectoryMock, pickNativeWorkingDirectoryMock, previewNativeClientLaunchMock, launchNativeClientMock } = vi.hoisted(() => ({
+  copyToClipboardMock: vi.fn().mockResolvedValue(true),
+  getNativeWorkingDirectoryMock: vi.fn().mockResolvedValue('C:\\Users\\reki'),
+  pickNativeWorkingDirectoryMock: vi.fn().mockResolvedValue(null),
+  previewNativeClientLaunchMock: vi.fn().mockResolvedValue({
+    client_id: 'opencode',
+    label: 'OpenCode',
+    executable: 'C:\\tools\\opencode.cmd',
+    working_directory: 'C:\\Users\\reki',
+    display_command: 'opencode (Sub2API runtime config)',
+    environment_keys: ['SUB2API_OPENCODE_API_KEY', 'OPENCODE_CONFIG_CONTENT'],
+    available: true,
+    message: '客户端已就绪'
+  }),
+  launchNativeClientMock: vi.fn().mockResolvedValue({
+    client_id: 'grok',
+    pid: 1234,
+    executable: 'C:\\tools\\grok.exe',
+    message: '客户端已启动'
+  })
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -16,6 +34,17 @@ vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
     copyToClipboard: copyToClipboardMock
   })
+}))
+
+vi.mock('@/api/url', () => ({
+  isDesktopRuntime: () => true
+}))
+
+vi.mock('@/api/nativeClientLauncher', () => ({
+  getNativeWorkingDirectory: getNativeWorkingDirectoryMock,
+  pickNativeWorkingDirectory: pickNativeWorkingDirectoryMock,
+  previewNativeClientLaunch: previewNativeClientLaunchMock,
+  launchNativeClient: launchNativeClientMock
 }))
 
 import UseKeyModal from '../UseKeyModal.vue'
@@ -90,6 +119,8 @@ describe('UseKeyModal', () => {
     await windowsTab!.trigger('click')
     await nextTick()
     expect(wrapper.text().toLowerCase()).toContain('%userprofile%\\.grok\\config.toml')
+
+    await flushPromises()
 
     const opencodeTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.opencode')
@@ -501,6 +532,7 @@ describe('UseKeyModal', () => {
         }
       }
     })
+    await flushPromises()
 
     const opencodeTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.opencode')
@@ -535,6 +567,8 @@ describe('UseKeyModal', () => {
         }
       }
     })
+
+    await flushPromises()
 
     const opencodeTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.opencode')
@@ -593,5 +627,117 @@ describe('UseKeyModal', () => {
     expect(fable.limit).toEqual({ context: 1048576, output: 128000 })
     expect(fable.options.thinking).toEqual({ type: 'adaptive' })
     expect(fable.options.thinking).not.toHaveProperty('budgetTokens')
+  })
+
+  it('previews an OpenCode launch with the selected gateway profile', async () => {
+    previewNativeClientLaunchMock.mockClear()
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-open-code-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'gemini'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+    await flushPromises()
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await nextTick()
+
+    const previewButton = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.nativeLauncher.preview')
+    )
+    expect(previewButton).toBeDefined()
+    await previewButton!.trigger('click')
+
+    expect(previewNativeClientLaunchMock).toHaveBeenCalledWith({
+      client_id: 'opencode',
+      gateway_profile: 'gemini',
+      base_url: 'https://example.com/v1beta',
+      api_key: 'sk-open-code-test',
+      working_directory: 'C:\\Users\\reki'
+    })
+  })
+
+  it('launches Grok with the normalized models endpoint', async () => {
+    launchNativeClientMock.mockClear()
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-launch-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+    await flushPromises()
+
+    const launchButton = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.nativeLauncher.launch')
+    )
+    expect(launchButton).toBeDefined()
+    await launchButton!.trigger('click')
+
+    expect(launchNativeClientMock).toHaveBeenCalledWith({
+      client_id: 'grok',
+      gateway_profile: 'grok',
+      base_url: 'https://example.com/v1',
+      api_key: 'sk-grok-launch-test',
+      working_directory: 'C:\\Users\\reki'
+    })
+  })
+
+  it('shows Cursor protocol compatibility guidance', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-cursor-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const cursorTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.cursorAgent')
+    )
+    expect(cursorTab).toBeDefined()
+    await cursorTab!.trigger('click')
+    await nextTick()
+
+    expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorEndpointNotice')
+    expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorDescription')
   })
 })

@@ -19,10 +19,11 @@
 1. 读取最新官方 Sub2API Release。
 2. 读取 `core-stable` 清单；版本和上游提交均一致则成功结束，不重复构建。
 3. 在临时工作树上执行非快进合并，不写 `main`。
-4. 只允许两个已审核的机械冲突策略：
+4. 只允许已审核的确定性冲突策略：
    - `README.md` 保留成本控制台版本；
-   - `backend/cmd/server/VERSION` 使用新上游版本。
-5. 任意其他冲突立即停止，创建或复用阻断 Issue，稳定通道保持不变。
+   - `backend/cmd/server/VERSION` 使用新上游版本；
+   - 上游 `v0.1.177` 的 `backend/internal/service/account_test_service.go` 使用 `.github/resolve-core-merge.ps1` 做三方合并，仅在预期的 OpenAI compact 探测注释冲突和内容指纹完全匹配时收敛，保留成本限流逻辑与 remote compaction v2 代码。
+5. 任意其他冲突，或已审核文件的内容形状发生变化，立即停止，创建或复用阻断 Issue，稳定通道保持不变。
 6. 写入 `CORE_VERSION`、`UPSTREAM_SUB2API_COMMIT`，运行：
    - 后端全量 Go 测试；
    - Tauri/Rust 激活、身份校验和回滚测试；
@@ -35,7 +36,7 @@
 
 ## 何时才需要人工
 
-- 出现 `README.md` 和版本文件之外的未知代码冲突；
+- 出现已审核规则之外的未知代码冲突，或 `account_test_service.go` 的三方合并指纹不匹配；
 - 任一后端、前端、Rust、身份、能力或哈希测试失败；
 - 上游发行标签移动、版本倒退或稳定通道出现并发发布。
 

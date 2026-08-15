@@ -4,7 +4,7 @@
       <div>
         <span class="cost-api-access__eyebrow">LOCAL GATEWAY / AGENT ACCESS</span>
         <h2 id="api-access-title">API 接入中心</h2>
-        <p>为 Codex、OpenCode、Cursor、Cline 与自定义 Agent 提供可复制的本地接口配置。</p>
+        <p>为 ChatGPT Desktop、Codex、OpenCode、Cursor、Cline 与自定义 Agent 提供本地接口配置和启动入口。</p>
       </div>
       <div class="cost-api-access__heading-actions">
         <button type="button" class="cost-api-button cost-api-button--quiet" :disabled="loadingKeys" @click="loadKeys">
@@ -92,6 +92,87 @@
           </button>
         </div>
 
+        <div v-if="showNativeLauncher" class="cost-api-native-launcher">
+          <div class="cost-api-card__title">
+            <div><span>03 / WINDOWS NATIVE LAUNCH</span><strong>启动本机客户端</strong></div>
+            <Terminal :size="18" />
+          </div>
+          <p class="cost-api-native-launcher__description">
+            <template v-if="nativeClientId === 'chatgpt'">
+              仅启动已安装的官方 ChatGPT Desktop；该客户端不读取 Sub2API API Key。
+            </template>
+            <template v-else>
+              优先使用已安装的 PowerShell 7；未安装时自动回退到系统 Windows PowerShell 5.1。在新的窗口中、当前工作目录启动已安装的 {{ nativeClientLabel || '客户端' }}，密钥只注入该进程，不写入账号文件。
+            </template>
+          </p>
+          <p v-if="nativeClientId === 'claude-code'" class="cost-api-native-launcher__hint cost-api-native-launcher__hint--notice">
+            Claude Code 首次进入工作目录时可能要求确认目录信任，请在客户端窗口选择 1（Yes, I trust this folder）并回车；这是正常安全流程。
+          </p>
+          <div class="cost-api-field">
+            <span>工作目录</span>
+            <div class="cost-api-directory-row">
+              <input
+                v-model="nativeWorkingDirectory"
+                class="cost-api-input"
+                type="text"
+                placeholder="正在检测当前目录…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                type="button"
+                class="cost-api-button cost-api-button--quiet cost-api-directory-button"
+                :disabled="nativeLaunchLoading || nativeDirectoryLoading"
+                @click="selectNativeWorkingDirectory"
+              >
+                <FolderOpen :size="15" /> 选择目录
+              </button>
+            </div>
+            <small v-if="nativeDetectedWorkingDirectory" class="cost-api-directory-hint">
+              检测到的当前目录：{{ nativeDetectedWorkingDirectory }}
+              <button type="button" class="cost-api-directory-reset" @click="useNativeDetectedDirectory">使用检测目录</button>
+            </small>
+          </div>
+          <div class="cost-api-actions cost-api-native-launcher__actions">
+            <button
+              type="button"
+              class="cost-api-button cost-api-button--quiet"
+              data-test="native-preview"
+              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId"
+              @click="previewNativeClient"
+            >
+              <RefreshCcw :size="15" :class="{ 'cost-api-spin': nativeLaunchLoading }" /> 检查客户端
+            </button>
+            <button
+              type="button"
+              class="cost-api-button cost-api-button--primary"
+              data-test="native-launch"
+              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId"
+              @click="launchNativeClientFromPanel"
+            >
+              <LoaderCircle v-if="nativeLaunchLoading" :size="15" class="cost-api-spin" />
+              <Play v-else :size="15" /> 启动 {{ nativeClientLabel || '客户端' }}
+            </button>
+          </div>
+          <p v-if="!nativeClientId" class="cost-api-native-launcher__hint">
+            当前模板没有原生启动适配器，请使用右侧复制配置。
+          </p>
+          <p
+            v-else-if="nativePreview"
+            class="cost-api-native-launcher__hint"
+            :class="nativePreview.available ? 'is-ok' : 'is-error'"
+            role="status"
+          >
+            {{ nativePreview.message }}<span v-if="nativePreview.executable"> · {{ nativePreview.executable }}</span>
+          </p>
+          <p v-if="nativeLaunchMessage" class="cost-api-native-launcher__hint is-ok" role="status">
+            {{ nativeLaunchMessage }}
+          </p>
+          <p v-if="nativeLaunchError" class="cost-api-native-launcher__hint is-error" role="alert">
+            {{ nativeLaunchError }}
+          </p>
+        </div>
+
         <div v-if="testMessage" class="cost-api-test-result" :class="testOk ? 'is-ok' : 'is-error'" role="status">
           <CheckCircle2 v-if="testOk" :size="16" />
           <TriangleAlert v-else :size="16" />
@@ -105,7 +186,8 @@
           <button type="button" class="cost-api-copy" @click="copyToClipboard(configText, '配置已复制')"><Copy :size="14" /> 复制配置</button>
         </div>
         <pre class="cost-api-code"><code>{{ configText }}</code></pre>
-        <p class="cost-api-code-note">配置不包含明文密钥。复制右侧“密钥命令”后，在当前用户环境中设置 <code>OPENAI_API_KEY</code>，然后重启 Agent。</p>
+        <p v-if="preset === 'chatgpt'" class="cost-api-code-note">ChatGPT Desktop 是独立的官方客户端，不读取这里的 API Key；点击左侧启动按钮即可打开本机程序。</p>
+        <p v-else class="cost-api-code-note">配置不包含明文密钥。复制左侧“密钥命令”后，在当前用户环境中设置对应的客户端环境变量，然后重启 Agent。</p>
       </div>
     </div>
 
@@ -127,15 +209,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, Copy, ExternalLink, KeyRound, LoaderCircle, RefreshCcw, ShieldCheck, Terminal, TriangleAlert, Wifi } from '@lucide/vue'
+import { CheckCircle2, Copy, ExternalLink, FolderOpen, KeyRound, LoaderCircle, Play, RefreshCcw, ShieldCheck, Terminal, TriangleAlert, Wifi } from '@lucide/vue'
 import { authAPI, keysAPI } from '@/api'
 import type { ApiKey } from '@/types'
 import type { OpsDashboardOverview } from '@/api/admin/ops'
 import { useClipboard } from '@/composables/useClipboard'
+import { isDesktopRuntime } from '@/api/url'
+import {
+  getNativeWorkingDirectory,
+  launchNativeClient,
+  pickNativeWorkingDirectory,
+  previewNativeClientLaunch,
+  type NativeClientId,
+  type NativeClientLaunchPreview,
+  type NativeClientLaunchRequest,
+  type NativeGatewayProfile,
+} from '@/api/nativeClientLauncher'
 
 const LOCAL_GATEWAY_BASE = 'http://127.0.0.1:18765/v1'
 
-type PresetId = 'codex' | 'opencode' | 'cursor' | 'cline' | 'python' | 'node' | 'curl'
+type PresetId = 'chatgpt' | 'codex' | 'claude-code' | 'opencode' | 'cursor' | 'grok' | 'cline' | 'python' | 'node' | 'curl'
 
 const props = defineProps<{
   desktopMode: boolean
@@ -157,11 +250,21 @@ const lastProbeMs = ref<number | null>(null)
 const testMessage = ref('')
 const testOk = ref(false)
 const publicBaseUrl = ref('')
+const nativeWorkingDirectory = ref('')
+const nativeDetectedWorkingDirectory = ref('')
+const nativeDirectoryLoading = ref(false)
+const nativePreview = ref<NativeClientLaunchPreview | null>(null)
+const nativeLaunchLoading = ref(false)
+const nativeLaunchError = ref('')
+const nativeLaunchMessage = ref('')
 
 const presets = [
+  { id: 'chatgpt' as const, label: 'ChatGPT Desktop', icon: ExternalLink },
   { id: 'codex' as const, label: 'Codex CLI', icon: Terminal },
+  { id: 'claude-code' as const, label: 'Claude Code', icon: Terminal },
   { id: 'opencode' as const, label: 'OpenCode', icon: KeyRound },
   { id: 'cursor' as const, label: 'Cursor', icon: KeyRound },
+  { id: 'grok' as const, label: 'Grok CLI', icon: KeyRound },
   { id: 'cline' as const, label: 'Cline', icon: KeyRound },
   { id: 'python' as const, label: 'Python', icon: Terminal },
   { id: 'node' as const, label: 'Node.js', icon: Terminal },
@@ -179,10 +282,30 @@ const activeKeys = computed(() => keys.value.filter((key) => key.status === 'act
 const selectedKey = computed(() => keys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
 const connectionLabel = computed(() => testing.value ? '正在测试' : testOk.value ? '接口正常' : lastProbeMs.value !== null ? '接口异常' : '未测试')
 const connectionClass = computed(() => testOk.value ? 'is-ok' : lastProbeMs.value !== null ? 'is-error' : '')
+const nativeGatewayProfile = computed<NativeGatewayProfile>(() => (selectedKey.value?.group?.platform || 'composite') as NativeGatewayProfile)
+const nativeBaseRoot = computed(() => gatewayBase.value.replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, ''))
+const nativeV1BaseUrl = computed(() => `${nativeBaseRoot.value}/v1`)
+const nativeClaudeBaseUrl = computed(() => nativeGatewayProfile.value === 'antigravity'
+  ? `${nativeBaseRoot.value}/antigravity`
+  : nativeBaseRoot.value)
+const nativeClientId = computed<NativeClientId | null>(() => {
+  if (preset.value === 'chatgpt') return 'chatgpt'
+  if (preset.value === 'codex') return 'codex'
+  if (preset.value === 'claude-code') return 'claude-code'
+  if (preset.value === 'cursor') return 'cursor'
+  if (preset.value === 'opencode') return 'opencode'
+  if (preset.value === 'grok') return 'grok'
+  return null
+})
+const nativeClientLabel = computed(() => presets.find((item) => item.id === preset.value)?.label || '')
+const showNativeLauncher = computed(() => props.desktopMode && isDesktopRuntime())
 const configTitle = computed(() => {
+  if (preset.value === 'chatgpt') return 'ChatGPT Desktop · 官方客户端'
   if (preset.value === 'codex') return 'Codex CLI · config.toml'
+  if (preset.value === 'claude-code') return 'Claude Code · 环境变量'
   if (preset.value === 'opencode') return 'OpenCode · opencode.json'
   if (preset.value === 'cursor') return 'Cursor · OpenAI-compatible provider'
+  if (preset.value === 'grok') return 'Grok CLI · 环境变量'
   if (preset.value === 'cline') return 'Cline · OpenAI-compatible provider'
   if (preset.value === 'python') return 'Python · OpenAI SDK'
   if (preset.value === 'node') return 'Node.js · OpenAI SDK'
@@ -190,6 +313,12 @@ const configTitle = computed(() => {
 })
 const configText = computed(() => {
   const model = selectedModel.value || '从 /v1/models 选择模型'
+  if (preset.value === 'chatgpt') {
+    return 'ChatGPT Desktop 是独立的官方客户端，不支持通过 Sub2API 注入 Base URL 或 API Key。此处仅提供本机启动。'
+  }
+  if (preset.value === 'claude-code') {
+    return `$env:ANTHROPIC_BASE_URL = "${nativeClaudeBaseUrl.value}"\n$env:ANTHROPIC_AUTH_TOKEN = "<从 API Key 管理页复制>"\n\nclaude`
+  }
   if (preset.value === 'opencode') {
     return JSON.stringify({
       '$schema': 'https://opencode.ai/config.json',
@@ -214,6 +343,9 @@ const configText = computed(() => {
   }
   if (preset.value === 'cursor' || preset.value === 'cline') {
     return `Provider: OpenAI-compatible\nBase URL: ${gatewayBase.value}\nModel: ${model}\nAPI Key: 使用环境变量 OPENAI_API_KEY\n\n说明：在 ${preset.value === 'cursor' ? 'Cursor' : 'Cline'} 的 OpenAI-compatible / 自定义 Provider 设置中填入以上地址；不要把 tauri.localhost 填入外部 Agent。`
+  }
+  if (preset.value === 'grok') {
+    return `$env:GROK_MODELS_BASE_URL = "${nativeV1BaseUrl.value}"\n$env:XAI_API_KEY = "<从 API Key 管理页复制>"\n\ngrok --model "${model}"`
   }
   return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
 })
@@ -295,6 +427,87 @@ async function copyKeyCommand() {
   await copyToClipboard(`$env:OPENAI_API_KEY = "${selectedKey.value.key}"`, 'PowerShell 密钥命令已复制')
 }
 
+function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
+  if (!nativeClientId.value || (nativeClientId.value !== 'chatgpt' && !selectedKey.value)) return null
+
+  let baseUrl = gatewayBase.value
+  if (nativeClientId.value === 'claude-code') {
+    baseUrl = nativeClaudeBaseUrl.value
+  } else if (nativeClientId.value === 'codex' || nativeClientId.value === 'grok') {
+    baseUrl = nativeV1BaseUrl.value
+  } else if (nativeClientId.value === 'opencode') {
+    if (nativeGatewayProfile.value === 'gemini') {
+      baseUrl = `${nativeBaseRoot.value}/v1beta`
+    } else if (nativeGatewayProfile.value === 'antigravity') {
+      baseUrl = `${nativeBaseRoot.value}/antigravity/v1`
+    } else {
+      baseUrl = nativeV1BaseUrl.value
+    }
+  }
+
+  return {
+    client_id: nativeClientId.value,
+    gateway_profile: nativeGatewayProfile.value,
+    base_url: baseUrl,
+    api_key: selectedKey.value?.key || '',
+    working_directory: nativeWorkingDirectory.value.trim() || nativeDetectedWorkingDirectory.value || '.',
+  }
+}
+
+function nativeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function previewNativeClient() {
+  const request = buildNativeLaunchRequest()
+  if (!request) {
+    nativeLaunchError.value = nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动'
+    return
+  }
+  nativeLaunchLoading.value = true
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
+  try {
+    nativePreview.value = await previewNativeClientLaunch(request)
+    if (nativePreview.value.working_directory) {
+      nativeDetectedWorkingDirectory.value = nativePreview.value.working_directory
+      if (!nativeWorkingDirectory.value.trim() || nativeWorkingDirectory.value.trim() === '.') {
+        nativeWorkingDirectory.value = nativePreview.value.working_directory
+      }
+    }
+  } catch (error) {
+    nativePreview.value = null
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeLaunchLoading.value = false
+  }
+}
+
+async function launchNativeClientFromPanel() {
+  const request = buildNativeLaunchRequest()
+  if (!request) {
+    nativeLaunchError.value = nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动'
+    return
+  }
+  nativeLaunchLoading.value = true
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
+  try {
+    const receipt = await launchNativeClient(request)
+    nativePreview.value = null
+    nativeLaunchMessage.value = receipt.message
+    try {
+      localStorage.setItem('sub2api.nativeClient.workingDirectory', request.working_directory || '.')
+    } catch {
+      // Remembering the directory is optional; launch success is independent of local storage.
+    }
+  } catch (error) {
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeLaunchLoading.value = false
+  }
+}
+
 function openKeyManagement() {
   router.push('/keys')
 }
@@ -305,9 +518,65 @@ watch(selectedKeyId, () => {
   testMessage.value = ''
   testOk.value = false
   lastProbeMs.value = null
+  nativePreview.value = null
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
+})
+
+watch(preset, () => {
+  nativePreview.value = null
+  nativeLaunchError.value = ''
+  nativeLaunchMessage.value = ''
 })
 
 onMounted(loadKeys)
+async function loadNativeWorkingDirectory() {
+  if (!showNativeLauncher.value) return
+  nativeDirectoryLoading.value = true
+  let stored = ''
+  try {
+    try {
+      stored = localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''
+    } catch {
+      stored = ''
+    }
+    try {
+      nativeDetectedWorkingDirectory.value = await getNativeWorkingDirectory()
+    } catch {
+      nativeDetectedWorkingDirectory.value = ''
+    }
+    nativeWorkingDirectory.value = stored || nativeDetectedWorkingDirectory.value
+  } finally {
+    nativeDirectoryLoading.value = false
+  }
+}
+
+async function selectNativeWorkingDirectory() {
+  nativeDirectoryLoading.value = true
+  nativeLaunchError.value = ''
+  try {
+    const selected = await pickNativeWorkingDirectory()
+    if (selected) {
+      nativeWorkingDirectory.value = selected
+      nativeDetectedWorkingDirectory.value = selected
+      try {
+        localStorage.setItem('sub2api.nativeClient.workingDirectory', selected)
+      } catch {
+        // Local preference storage is optional.
+      }
+    }
+  } catch (error) {
+    nativeLaunchError.value = nativeErrorMessage(error)
+  } finally {
+    nativeDirectoryLoading.value = false
+  }
+}
+
+function useNativeDetectedDirectory() {
+  if (nativeDetectedWorkingDirectory.value) nativeWorkingDirectory.value = nativeDetectedWorkingDirectory.value
+}
+
+onMounted(loadNativeWorkingDirectory)
 </script>
 
 <style scoped>
@@ -345,6 +614,8 @@ onMounted(loadKeys)
 .cost-api-field > span { display: block; margin-bottom: 7px; color: var(--cost-muted, #7f8b81); font-size: 12px; }
 .cost-api-field select { width: 100%; min-height: 38px; border: 1px solid var(--cost-line-strong, #424d43); border-radius: 9px; padding: 0 11px; color: var(--cost-text, #e9ede6); background: #0e130f; outline: none; }
 .cost-api-field select:focus { border-color: var(--cost-lime, #b9e55a); }
+.cost-api-input { width: 100%; min-height: 38px; border: 1px solid var(--cost-line-strong, #424d43); border-radius: 9px; padding: 0 11px; color: var(--cost-text, #e9ede6); background: #0e130f; outline: none; }
+.cost-api-input:focus { border-color: var(--cost-lime, #b9e55a); }
 .cost-api-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .cost-api-presets button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid var(--cost-line, #303830); border-radius: 8px; padding: 0 10px; color: var(--cost-muted, #7f8b81); background: #171d18; cursor: pointer; }
 .cost-api-presets button.active { border-color: var(--cost-lime, #b9e55a); color: #11160f; background: var(--cost-lime, #b9e55a); font-weight: 700; }
@@ -352,6 +623,18 @@ onMounted(loadKeys)
 .cost-api-empty { color: #e0bd4e; }
 .cost-api-empty.is-error { border-left: 2px solid #d58473; padding-left: 9px; color: #e3a092; }
 .cost-api-actions { margin-top: 20px; }
+.cost-api-native-launcher { margin-top: 18px; border: 1px solid #3a4935; border-radius: 11px; padding: 14px; background: rgb(185 229 90 / 5%); }
+.cost-api-native-launcher .cost-api-card__title { margin-bottom: 10px; }
+.cost-api-native-launcher__description, .cost-api-native-launcher__hint { margin: 0; color: var(--cost-muted, #7f8b81); font-size: 11px; line-height: 1.55; }
+.cost-api-directory-row { display: flex; align-items: stretch; gap: 8px; }
+.cost-api-directory-row .cost-api-input { min-width: 0; flex: 1; }
+.cost-api-directory-button { flex: 0 0 auto; white-space: nowrap; }
+.cost-api-directory-hint { display: block; margin-top: 7px; color: var(--cost-muted, #7f8b81); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.cost-api-directory-reset { margin-left: 7px; border: 0; padding: 0; color: var(--cost-lime, #b9e55a); background: transparent; cursor: pointer; font: inherit; }
+.cost-api-native-launcher__actions { margin-top: 13px; }
+.cost-api-native-launcher__hint { margin-top: 9px; }
+.cost-api-native-launcher__hint.is-ok { color: #a4e7b6; }
+.cost-api-native-launcher__hint.is-error { color: #efa18d; }
 .cost-api-test-result { display: flex; align-items: flex-start; gap: 7px; margin-top: 14px; border-radius: 9px; padding: 10px 11px; font-size: 12px; line-height: 1.45; }
 .cost-api-test-result.is-ok { color: #a4e7b6; background: rgb(85 177 109 / 12%); }
 .cost-api-test-result.is-error { color: #efa18d; background: rgb(213 132 115 / 12%); }
