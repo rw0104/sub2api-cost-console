@@ -32,10 +32,8 @@ import {
 } from './dataState'
 import {
   aggregateUsageWindow,
-  beijingCalendarDate,
-  beijingCalendarDayBounds,
-  COST_CENTER_TIMEZONE,
   fillCostTrendBuckets,
+  localDateParameter,
   usageWindowBounds,
   type CostTrendDataPoint,
 } from './usageWindow'
@@ -71,7 +69,7 @@ export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
   granularity: 'day' | 'hour' | 'minute'
 } {
   if (range === 'today') {
-    const { start, end } = beijingCalendarDayBounds()
+    const { start, end } = usageWindowBounds('today')
     return { start_time: start.toISOString(), end_time: end.toISOString(), granularity: 'hour' }
   }
   return {
@@ -98,6 +96,10 @@ export function snapshotMatchesRequestedWindow(
   const toleranceMs = 60_000
   return Math.abs(actualStart - requestedStart.getTime()) <= toleranceMs
     && Math.abs(actualEnd - requestedEnd.getTime()) <= toleranceMs
+}
+
+export function trendHasAccountCost(points: CostTrendDataPoint[]): boolean {
+  return points.length === 0 || points.every((point) => point.account_cost != null)
 }
 
 export function selectExactWindowModelStats(
@@ -199,7 +201,7 @@ export function useCostCenterData() {
 
   async function loadUsageLogCompatibilityTrend(range: CostCenterRange): Promise<CostTrendDataPoint[]> {
     const { start, end } = usageWindowBounds(range)
-    const timezone = COST_CENTER_TIMEZONE
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
 
@@ -207,8 +209,8 @@ export function useCostCenterData() {
       const response = await adminAPI.usage.list({
         page,
         page_size: USAGE_PAGE_SIZE,
-        start_date: beijingCalendarDate(start),
-        end_date: beijingCalendarDate(new Date(end.getTime() - 1)),
+        start_date: localDateParameter(start),
+        end_date: localDateParameter(new Date(end.getTime() - 1)),
         timezone,
         sort_by: 'created_at',
         sort_order: 'desc',
@@ -232,7 +234,7 @@ export function useCostCenterData() {
 
   async function loadModelRouteLogs(range: CostCenterRange, accountId: number | null): Promise<{ logs: AdminUsageLog[]; truncated: boolean }> {
     const { start, end } = usageWindowBounds(range)
-    const timezone = COST_CENTER_TIMEZONE
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
 
@@ -241,8 +243,8 @@ export function useCostCenterData() {
         page,
         page_size: USAGE_PAGE_SIZE,
         account_id: accountId ?? undefined,
-        start_date: beijingCalendarDate(start),
-        end_date: beijingCalendarDate(new Date(end.getTime() - 1)),
+        start_date: localDateParameter(start),
+        end_date: localDateParameter(new Date(end.getTime() - 1)),
         timezone,
         sort_by: 'created_at',
         sort_order: 'desc',
@@ -353,18 +355,25 @@ export function useCostCenterData() {
 
     const dashboardWindowIsExact = dashboardResult.status === 'fulfilled'
       && snapshotMatchesRequestedWindow(dashboardResult.value, observationStart, requestedObservationEnd)
-    const compatibilityTrend = dashboardWindowIsExact ? null : loadUsageLogCompatibilityTrend(range)
+    const dashboardTrend = dashboardResult.status === 'fulfilled' ? dashboardResult.value.trend ?? [] : []
+    // Older dashboard responses expose only standard model cost. The cost
+    // center promises upstream account call cost, so non-empty trends without
+    // account_cost must be rebuilt from the request pricing snapshots.
+    const dashboardHasAccountCost = trendHasAccountCost(dashboardTrend)
+    const compatibilityTrend = dashboardWindowIsExact && dashboardHasAccountCost
+      ? null
+      : loadUsageLogCompatibilityTrend(range)
 
     if (accountResult.status === 'fulfilled') {
       accounts.value = accountResult.value.items ?? []
       const ids = accounts.value.map((account) => account.id)
       if (ids.length > 0) {
         try {
-          const { start: businessDayStart } = beijingCalendarDayBounds()
-          const batch = await adminAPI.accounts.getBatchTodayStats(ids, businessDayStart.toISOString())
+          const { start: userDayStart } = usageWindowBounds('today')
+          const batch = await adminAPI.accounts.getBatchTodayStats(ids, userDayStart.toISOString())
           if (sequence === requestSequence) {
             todayStats.value = batch.stats ?? {}
-            setSourceState('todayStats', Object.keys(todayStats.value).length ? 'measured' : 'empty', Object.keys(todayStats.value).length ? '北京时间自然日账号统计已读取' : '北京时间自然日内没有账号用量记录')
+            setSourceState('todayStats', Object.keys(todayStats.value).length ? 'measured' : 'empty', Object.keys(todayStats.value).length ? '当天账号统计已读取' : '当天没有账号用量记录')
           }
         } catch (batchError) {
           console.warn('[cost-center] account today stats unavailable', batchError)
@@ -436,7 +445,7 @@ export function useCostCenterData() {
       trend.value = range === '30m' || range === '1h'
         ? fillCostTrendBuckets(dashboardResult.value.trend ?? [], range, observationStart, observationEnd)
         : (dashboardResult.value.trend ?? [])
-      trendUsesAccountCost.value = false
+      trendUsesAccountCost.value = dashboardHasAccountCost
     } else {
       trend.value = []
       trendUsesAccountCost.value = false

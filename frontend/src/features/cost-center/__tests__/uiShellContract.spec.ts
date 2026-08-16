@@ -64,10 +64,15 @@ describe('cost center UI shell contract', () => {
     expect(source).toMatch(/\.cost-toolbar\s*\{[\s\S]*?min-height:\s*74px;/)
   })
 
-  it('keeps historical losses out of the selected observation-window headline', () => {
-    expect(source).toContain(':label="`${rangeLabel}新增封禁损失`"')
+  it('separates API call economics from account procurement and impairment', () => {
+    expect(source).toContain(':label="`${rangeLabel}用户 API 计费产出（USD）`"')
+    expect(source).toContain(':label="`${rangeLabel}上游账号调用成本（USD）`"')
+    expect(source).toContain(':label="`${rangeLabel}API 调用毛利（USD）`"')
+    expect(source).toContain('windowActualOutputUsd.value - windowAccountCostUsd.value')
+    expect(source).toContain(':label="`${rangeLabel}账号资产损失（CNY）`"')
     expect(source).toContain('window_impairment_loss_cny ?? windowImpairmentCny')
-    expect(source).toContain(':label="`${rangeLabel}新增经济成本`"')
+    expect(source).toContain(':label="`${rangeLabel}新增账号采购（CNY）`"')
+    expect(source).toContain('window_procurement_cny ?? windowProcurementCny')
     expect(source).not.toContain('label="生命周期已确认封禁损失"')
   })
 

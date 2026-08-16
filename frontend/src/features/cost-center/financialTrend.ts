@@ -64,9 +64,9 @@ export function selectFinancialTrend(
     const accountCostUsd = usageAccountCost[index]
     return {
       timestamp: point.date,
-      billedUsd: point.observed === false ? null : billedUsd,
-      accountCostUsd: point.observed === false ? null : accountCostUsd,
-      contributionUsd: point.observed === false || billedUsd == null || accountCostUsd == null ? null : billedUsd - accountCostUsd,
+      billedUsd,
+      accountCostUsd,
+      contributionUsd: billedUsd == null || accountCostUsd == null ? null : billedUsd - accountCostUsd,
       bucketHours: usageBucketHours,
       source: 'usage_logs' as const,
       observed: point.observed !== false,

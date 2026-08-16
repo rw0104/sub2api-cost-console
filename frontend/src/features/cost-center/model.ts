@@ -242,23 +242,6 @@ export function isStartedInLocalMonth(startedAt: DateInput, now: DateInput = Dat
   return started.getFullYear() === current.getFullYear() && started.getMonth() === current.getMonth()
 }
 
-/** Cost-center monthly procurement uses the configured business timezone. */
-export function isStartedInBusinessMonth(startedAt: DateInput, now: DateInput = Date.now()): boolean {
-  const startedAtMs = timestamp(startedAt)
-  const nowMs = timestamp(now)
-  if (startedAtMs === null || nowMs === null || startedAtMs > nowMs) return false
-
-  // Asia/Shanghai is a fixed UTC+08:00 zone, so this conversion is stable on
-  // Windows machines configured for any local timezone and across DST changes.
-  const businessParts = (value: number) => {
-    const shifted = new Date(value + 8 * 60 * 60 * 1000)
-    return [shifted.getUTCFullYear(), shifted.getUTCMonth()]
-  }
-  const started = businessParts(startedAtMs)
-  const current = businessParts(nowMs)
-  return started[0] === current[0] && started[1] === current[1]
-}
-
 export function isTimestampInWindow(value: DateInput, start: DateInput, end: DateInput): boolean {
   const valueMs = timestamp(value)
   const startMs = timestamp(start)

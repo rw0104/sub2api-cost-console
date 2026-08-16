@@ -8,14 +8,15 @@
 | --- | --- | --- | --- |
 | 请求数、Token | PostgreSQL `usage_logs` | 实测 | 由 Sub2API 完成请求后写入；观察窗口按真实时间范围聚合 |
 | 请求/发往上游/响应声明模型 | `requested_model`、`upstream_model`、`upstream_response_model` | 实测 | 区分客户端意图、本站映射结果和上游自报模型；`upstream_model_mismatch` 为三态审计结果 |
-| API 账号实算成本 | `COALESCE(account_stats_cost, total_cost) × account_rate_multiplier` / 账号今日统计 | 实测 | 日志含账号定价快照时使用实算值；旧快照缺失时回退标准成本 |
-| API 产出 | `usage_logs.actual_cost` / `user_cost` | 实测 | 用户实际计费金额；值为 `0` 时不会再回退成标准成本 |
+| 上游账号调用成本 | `COALESCE(account_stats_cost, total_cost) × account_rate_multiplier` / 账号当天统计 | 实测 | 日志含账号定价快照时使用实算值；旧快照缺失时回退标准成本；单位为 USD |
+| 用户 API 计费产出 | `usage_logs.actual_cost` / `user_cost` | 实测 | 用户实际计费金额；值为 `0` 时不会再回退成标准成本；单位为 USD |
+| API 调用毛利 | 用户 API 计费产出 − 上游账号调用成本 | 确定性计算 | 只衡量 API 调用收支，不扣账号采购与封禁减值 |
 | TTFT、成功、失败、切号 | Ops 监控 | 实测 | Ops 未启用时显示不可用，不再用账号状态冒充请求事件 |
 | 单账号探测耗时 | `/admin/accounts/:id/test` SSE | 实测 | 会发送一次真实最小上游请求，展示端到端完成耗时，并可能产生少量调用成本 |
 | 采购小时费率 | `account.extra.cost_profile` | 确定性计算 | 按用户填写金额与计费周期折算 |
 | 累计采购成本 | 成本档案、起算时间与当前时间 | 确定性计算 | `hourly_rate × elapsed_hours`；账号加入即起算 |
 | 账号封禁净损失 | `account_cost_loss_events` | 后端确认事件 + 确定性计算 | 仅接受终局原因；当前预付周期未摊销余额减退款与恢复冲销 |
-| 经济总成本 | 累计采购成本 + 账号封禁净损失 | 确定性计算 | 终局时停止该账号继续累计；已删除账号仍按快照保留 |
+| 账号资产经济成本 | 累计采购成本 + 账号封禁净损失 | 确定性计算 | 与 API 调用成本分账；终局时停止该账号继续累计，已删除账号仍按快照保留 |
 | 预计月采购 | 当前筛选号池的小时采购费率 × 730 | 确定性预测 | 是当前现存账号合计，不是单账号值 |
 | 经济运行样本 | `account_economics_samples` | 累计观察 | 每分钟保存累计 USD 产出、账号成本、成员版本和健康数量；不是第二套账本 |
 | API 产出速率 | 相邻稳定样本累计差值 ÷ 区间小时数 | 预测输入 | 成员变化、累计倒退或样本不足时返回不可用，不以当天已过小时代替采样窗口 |
@@ -43,7 +44,7 @@
 - 最近 1、5、30 分钟：按分钟聚合。
 - 最近 1、6、24 小时：按小时聚合。
 - 最近 7 天、1 个月：按天聚合。
-- 当天：成本中心使用 `Asia/Shanghai`（北京时间）自然日边界，不等同于滚动 24 小时。
+- 当天：使用用户设备当前日历日，从本地 `00:00` 到次日 `00:00`；不等同于滚动 24 小时。
 
 短窗口优先通过 `time_range` 传入精确范围，不再用“当天日期范围”近似一小时数据。官方上游内核若尚未支持 `start_time/end_time` 与分钟桶，桌面前端会按日期分页读取真实 `usage_logs`，再按记录时间过滤并聚合；最多读取 25,000 条，超过上限会停止并提示，不会把部分结果冒充完整窗口。Dashboard snapshot 缓存仍为 30 秒。
 
@@ -59,12 +60,14 @@ metered_model_cost = input_tokens × input_price
                    + cache_read_tokens × cache_read_price
                    + cache_creation_tokens × cache_creation_price
                    + output_tokens × output_price
-metered_account_cost = metered_model_cost × account_rate_multiplier
-combined_cost = fixed_accrued_cost + metered_account_cost
+upstream_call_cost_usd = metered_model_cost × account_rate_multiplier
+user_api_billed_output_usd = SUM(usage_logs.actual_cost)
+api_call_gross_margin_usd = user_api_billed_output_usd - upstream_call_cost_usd
+account_asset_cost_cny = fixed_accrued_cost_cny + impairment_loss_cny
 
 terminal_unamortized = current_prepaid_cycle_price - accrued_in_current_cycle
 terminal_net_loss = max(0, terminal_unamortized - refund - reversal)
-economic_total = fixed_accrued_cost_at_terminal + terminal_net_loss + metered_account_cost
+account_asset_cost_at_terminal = fixed_accrued_cost_at_terminal + terminal_net_loss
 
 stable_output_rate = Σ(stable_sample_output_delta) / Σ(stable_interval_hours)
 stable_account_cost_rate = Σ(stable_sample_account_cost_delta) / Σ(stable_interval_hours)
