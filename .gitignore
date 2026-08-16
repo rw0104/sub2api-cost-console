@@ -148,6 +148,7 @@ docs/*
 !docs/COST_DATA_PROVENANCE.md
 !docs/2026-08-11_technical-cost-center-monitoring-repair-report.md
 !docs/2026-08-11_cost-economics-1.6-development.md
+!docs/2026-08-16_development-native-launcher-account-operations-report.md
 !docs/legal/
 !docs/legal/*.md
 .serena/
