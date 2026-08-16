@@ -93,7 +93,7 @@ Windows PATH 探测优先选择 `.exe`、`.cmd`、`.bat`，跳过 npm 生成的�
 
 ### 升级前后桌面壳内存对比
 
-对比对象：旧安装副本 `D:\Sub2API Cost Console\sub2api-cost-console.exe`（SHA-256 `642DE9BCE55E6298835CF3B77DAFC78E6CDF6644AD9B64E5DF7AD61D1D94016A`）与本次升级 Release 二进制（SHA-256 `B78B7E164315453F29E8AD440D73F4245470F655031CC011FB90BFD75AE52BCF`）。两者文件版本元数据均为 `0.2.22`，因此以文件哈希和代码内容区分版本。
+对比对象：旧安装副本 `D:\Sub2API Cost Console\sub2api-cost-console.exe`（SHA-256 `642DE9BCE55E6298835CF3B77DAFC78E6CDF6644AD9B64E5DF7AD61D1D94016A`）与当时的本地开发二进制（SHA-256 `B78B7E164315453F29E8AD440D73F4245470F655031CC011FB90BFD75AE52BCF`）。两者文件版本元数据均为 `0.2.22`，因此该对比只用于评估开发代码的内存增量，不代表启动器已经随官方 `v0.2.22` 发布。Windows 原生启动器首次进入官方 Release 的版本是 `v0.2.23`。
 
 两者在同一台 Windows 机器上顺序启动，复用已经运行的后端端口；只统计 `sub2api-cost-console.exe`，每 500 ms 采样一次，共 40 次，取启动约 10 秒后的 20 个样本中位数：
 
@@ -202,4 +202,4 @@ Codex 使用结构化 `-c` 参数和进程级环境覆盖，不修改用户默�
 - 2026-08-15：OpenCode 改用官方 `OPENCODE_CONFIG_CONTENT` 运行时配置，不生成临时配置文件。
 - 2026-08-15：扩展 Rust 行为测试覆盖五种客户端和 OpenCode profile；Rust 49 项测试全部通过，前端 API 接入中心与使用密钥弹窗定向测试 24 项全部通过，TypeScript、全量 ESLint、格式检查和 `git diff --check` 通过。
 - 2026-08-15：PowerShell 启动器改为优先探测稳定版 PowerShell 7，未安装时回退 Windows PowerShell 5.1；Claude Code 首次目录信任提示增加界面说明。
-- 2026-08-15：扩展 ChatGPT Desktop 探测，覆盖 OpenAI Codex/ChatGPT MSIX 安装包的 `WindowsApps\\...\\app\\ChatGPT.exe`，并增加 `Get-AppxPackageManifest` 主查询与 `Get-StartApps` 兼容回退；探测会在 PowerShell 7 和 Windows PowerShell 5.1 之间自动回退，AUMID 通过白名单校验后使用 `explorer.exe shell:AppsFolder\\<AUMID>` 启动，避免 `WindowsApps` 权限、版本目录和 PowerShell 模块差异导致误报未安装。最终构建 `Sub2API Cost Console_0.2.22_x64-setup.exe`（29,219,465 bytes，SHA-256 `EF778023484129AB567DA846437AEA667BEA4992A62D345C8B39ADF7B7D84FCC`）和 release `.exe`（19,943,424 bytes，SHA-256 `CB2F27E09287F170221E3DFDDC19E31BAE0AC8C3046E812835F6333AE803ED73`）。NSIS 文件已生成，可用于本地安装测试；由于本机未配置 `TAURI_SIGNING_PRIVATE_KEY`，签名步骤使构建命令最终返回 1，本地产物不作为正式更新源。
+- 2026-08-15：扩展 ChatGPT Desktop 探测，覆盖 OpenAI Codex/ChatGPT MSIX 安装包的 `WindowsApps\\...\\app\\ChatGPT.exe`，并增加 `Get-AppxPackageManifest` 主查询与 `Get-StartApps` 兼容回退；探测会在 PowerShell 7 和 Windows PowerShell 5.1 之间自动回退，AUMID 通过白名单校验后使用 `explorer.exe shell:AppsFolder\\<AUMID>` 启动，避免 `WindowsApps` 权限、版本目录和 PowerShell 模块差异导致误报未安装。当时生成的 `Sub2API Cost Console_0.2.22_x64-setup.exe`（29,219,465 bytes，SHA-256 `EF778023484129AB567DA846437AEA667BEA4992A62D345C8B39ADF7B7D84FCC`）和 release `.exe`（19,943,424 bytes，SHA-256 `CB2F27E09287F170221E3DFDDC19E31BAE0AC8C3046E812835F6333AE803ED73`）均为本地未签名开发产物，不属于官方 `v0.2.22` Release；启动器随后首次通过官方 `v0.2.23` 发布。

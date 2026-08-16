@@ -72,7 +72,9 @@ const props = withDefaults(defineProps<{
 
 const hasPlottableValue = computed(() => props.labels.length > 0 && props.series.some((item) => item.data.some((value) => value != null && Number.isFinite(value))))
 const effectiveState = computed<DataAvailability>(() => !['loading', 'unavailable', 'empty'].includes(props.state) && !hasPlottableValue.value ? 'empty' : props.state)
-const showChart = computed(() => !['loading', 'unavailable', 'empty'].includes(effectiveState.value))
+// A successful empty query is a factual zero series. Only failed/loading
+// sources and series whose values are genuinely unavailable suppress the plot.
+const showChart = computed(() => !['loading', 'unavailable'].includes(effectiveState.value) && hasPlottableValue.value)
 const stateLabel = computed(() => dataAvailabilityLabel(effectiveState.value))
 const effectiveReason = computed(() => effectiveState.value === 'empty' && !hasPlottableValue.value ? props.stateReason || '所选窗口没有可绘制的有效数据' : props.stateReason)
 

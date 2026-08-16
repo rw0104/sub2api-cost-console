@@ -4,7 +4,7 @@
       <div>
         <span>DATA GOVERNANCE / TRUTHFUL HISTORY</span>
         <h2 id="governance-title">数据来源与历史控制</h2>
-        <p>明确区分自然日、滚动窗口、生命周期累计与派生采样；接口失败不会显示成 0。当前页自动刷新是 5/10/15/30 秒间隔，没有 20 小时或每天 20:00 的定时刷新规则。</p>
+        <p>明确区分当天、滚动窗口、API 调用收支、账号采购与生命周期损失；成功查询的空金额/次数桶显示 0，接口失败显示“无数据”。当前页自动刷新是 5/10/15/30 秒间隔。</p>
       </div>
       <button type="button" data-aui-component="button" data-aui-pressable :disabled="loading" @click="$emit('refresh')">
         <RefreshCcw :size="15" :class="{ spin: loading }" />
@@ -34,7 +34,7 @@
     <div class="governance__policies">
       <article>
         <CalendarDays :size="18" />
-        <div><strong>“当天”是北京时间自然日</strong><p>从 Asia/Shanghai 00:00 起算；它不是滚动 24 小时。跨北京时间 00:00 后当天统计自然归零，采购和损失账本不会归零。</p></div>
+        <div><strong>当天统计每天归零</strong><p>按用户设备的自然日展示当天请求、调用成本与计费产出；它不是滚动 24 小时。账号采购和损失账本不会随当天归零。</p></div>
       </article>
       <article>
         <History :size="18" />
