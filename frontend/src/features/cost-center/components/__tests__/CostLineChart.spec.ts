@@ -1,5 +1,6 @@
 import { shallowMount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
+import { Line } from 'vue-chartjs'
 import CostLineChart from '../CostLineChart.vue'
 
 describe('CostLineChart truthful states', () => {
@@ -26,5 +27,19 @@ describe('CostLineChart truthful states', () => {
     })
 
     expect(wrapper.find('.cost-chart__state').text()).toContain('无记录')
+  })
+
+  it('plots a successful empty bucket as a factual zero', () => {
+    const wrapper = shallowMount(CostLineChart, {
+      props: {
+        labels: ['12:00'],
+        series: [{ label: '用户 API 计费产出', color: '#fff', data: [0] }],
+        state: 'empty',
+      },
+    })
+
+    expect(wrapper.findComponent(Line).exists()).toBe(true)
+    expect(wrapper.find('.cost-chart__state').exists()).toBe(false)
+    expect(wrapper.attributes('data-data-state')).toBe('empty')
   })
 })

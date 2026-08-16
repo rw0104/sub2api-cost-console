@@ -20,6 +20,7 @@ import {
   filterModelAuditLogs,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
+  trendHasAccountCost,
   useCostCenterData,
 } from '../useCostCenterData'
 
@@ -34,13 +35,15 @@ describe('cost center live ranges', () => {
     expect(useCostCenterData().modelCostRange.value).toBe('1h')
   })
 
-  it('requests the current Beijing calendar day with exact bounds', () => {
+  it('requests the current device calendar day with exact bounds', () => {
     const now = new Date('2026-08-06T13:45:30+08:00')
     vi.useFakeTimers()
     vi.setSystemTime(now)
 
-    const start = new Date('2026-08-05T16:00:00.000Z')
-    const end = new Date('2026-08-06T16:00:00.000Z')
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 1)
 
     expect(buildCostCenterSnapshotQuery('today')).toEqual({
       start_time: start.toISOString(),
@@ -113,6 +116,12 @@ describe('cost center live ranges', () => {
       start_time: start.toISOString(),
       end_time: end.toISOString(),
     }, start, end)).toBe(true)
+  })
+
+  it('requires upstream account-cost evidence for a non-empty dashboard trend', () => {
+    expect(trendHasAccountCost([])).toBe(true)
+    expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2 }] as any)).toBe(false)
+    expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2, account_cost: 0.75 }] as any)).toBe(true)
   })
 
   it('does not present a truncated compatibility sample as complete model cost', () => {

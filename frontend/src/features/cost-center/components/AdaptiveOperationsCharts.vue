@@ -4,7 +4,7 @@
       <div>
         <span>ADAPTIVE TIME SERIES</span>
         <h2 id="adaptive-charts-title">经营与运行趋势</h2>
-        <p>每个窗口自动控制采样密度；实线为事实，虚线为当前配置推算，断点表示不可确认区间。</p>
+        <p>每个窗口自动控制采样密度；成功查询的空金额/次数桶按 0 展示，接口失败仍显示无数据，延迟无样本不写成 0ms。</p>
       </div>
       <strong>{{ pointSummary }}</strong>
     </div>
@@ -126,10 +126,10 @@ const economyLabels = computed(() => props.financialTrend.map((point) => timeLab
 const healthLabels = computed(() => (props.economics?.series ?? []).map((point) => timeLabel(point.sampled_at)))
 const pointSummary = computed(() => `${props.financialTrend.length || 0} 个经济点 · ${props.opsTrend.length || 0} 个运行点 · ${props.economics?.series?.length || 0} 个健康点`)
 const economyTitle = computed(() => economyMode.value === 'flow' ? '收入、成本与贡献' : economyMode.value === 'unit' ? '每 1 USD 产出的采购成本' : '回本与毛利率')
-const economySubtitle = computed(() => economyMode.value === 'flow' ? '统一换算为 CNY / 小时' : economyMode.value === 'unit' ? '固定采购费率 ÷ 实际用户计费产出' : '固定采购回本率与扣除采购后的贡献毛利率')
-const hasFinancialEvidence = computed(() => props.financialTrend.some((point) => point.observed !== false && (point.billedUsd != null || point.accountCostUsd != null)))
+const economySubtitle = computed(() => economyMode.value === 'flow' ? '用户 API 计费产出、上游账号调用成本及两者差额，统一换算为 CNY / 小时' : economyMode.value === 'unit' ? '固定采购费率 ÷ 实际用户计费产出' : '固定采购回本率与扣除采购后的贡献毛利率')
+const hasFinancialEvidence = computed(() => props.financialTrend.some((point) => point.billedUsd != null || point.accountCostUsd != null))
 const economySourceStatus = computed<DataAvailability>(() => hasFinancialEvidence.value ? 'measured' : props.opsState === 'measured' ? 'empty' : props.opsState)
-const economySourceLabel = computed(() => hasFinancialEvidence.value ? '实测 + 配置' : dataAvailabilityLabel(economySourceStatus.value))
+const economySourceLabel = computed(() => hasFinancialEvidence.value ? economyMode.value === 'flow' ? '实测调用数据' : '实测调用 + 采购配置' : dataAvailabilityLabel(economySourceStatus.value))
 const opsSourceLabel = computed(() => props.opsState === 'measured' ? '实测 · Ops' : dataAvailabilityLabel(props.opsState))
 const healthSourceLabel = computed(() => props.healthState === 'measured' ? '实测 · 经济采样' : dataAvailabilityLabel(props.healthState))
 
@@ -171,9 +171,9 @@ const economySeries = computed<CostChartSeries[]>(() => {
     ]
   }
   return [
-    { label: '用户计费', color: '#e0bd4e', fill: true, data: financial.map((point) => point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours * props.cnyPerUsd : null) },
-    { label: '上游账号成本', color: '#7eb6d8', data: financial.map((point) => point.bucketHours > 0 && point.accountCostUsd != null ? point.accountCostUsd / point.bucketHours * props.cnyPerUsd : null) },
-    { label: '贡献毛利', color: '#b9e55a', data: financial.map((point) => point.bucketHours > 0 && point.contributionUsd != null && procurement != null ? point.contributionUsd / point.bucketHours * props.cnyPerUsd - procurement : null) },
+    { label: '用户 API 计费产出', color: '#e0bd4e', fill: true, data: financial.map((point) => point.bucketHours > 0 && point.billedUsd != null ? point.billedUsd / point.bucketHours * props.cnyPerUsd : null) },
+    { label: '上游账号调用成本', color: '#7eb6d8', data: financial.map((point) => point.bucketHours > 0 && point.accountCostUsd != null ? point.accountCostUsd / point.bucketHours * props.cnyPerUsd : null) },
+    { label: '调用毛利', color: '#b9e55a', data: financial.map((point) => point.bucketHours > 0 && point.contributionUsd != null ? point.contributionUsd / point.bucketHours * props.cnyPerUsd : null) },
   ]
 })
 

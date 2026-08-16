@@ -30,8 +30,11 @@ if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
 if (!releaseNotes.includes(`v${version}`)) {
   throw new Error(`DESKTOP_RELEASE_NOTES.md must identify desktop v${version}`)
 }
-for (const heading of ['## 内核基线', '## 技术变更', '## 升级行为', '## 验证结果', '## 回滚说明']) {
+for (const heading of ['## 主要更新', '## 内核基线', '## 技术变更', '## 升级行为', '## 验证结果', '## 回滚说明']) {
   if (!releaseNotes.includes(heading)) throw new Error(`Release notes are missing ${heading}`)
+}
+if (!releaseNotes.includes('Windows 原生一键启动')) {
+  throw new Error('Release notes must describe the Windows native one-click launcher')
 }
 if (process.argv.includes('--validate-notes-only')) {
   console.log(`Detailed release notes validated for desktop v${version}`)

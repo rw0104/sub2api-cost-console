@@ -3,12 +3,9 @@ import type { CostCenterRange } from './useCostCenterData'
 
 export interface CostTrendDataPoint extends TrendDataPoint {
   account_cost?: number
-  /** False means the bucket was added only to preserve the time axis. */
+  /** False means the successful query had no records in this zero-valued bucket. */
   observed?: boolean
 }
-
-export const COST_CENTER_TIMEZONE = 'Asia/Shanghai'
-const BEIJING_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1000
 
 const RANGE_MILLISECONDS: Record<CostCenterRange, number> = {
   today: 24 * 60 * 60 * 1000,
@@ -40,34 +37,16 @@ export function costTrendBucketHours(range: CostCenterRange): number {
 
 export function usageWindowBounds(range: CostCenterRange, end = new Date()): { start: Date; end: Date } {
   if (range === 'today') {
-    return beijingCalendarDayBounds(end)
+    const start = new Date(end)
+    start.setHours(0, 0, 0, 0)
+    const calendarEnd = new Date(start)
+    calendarEnd.setDate(calendarEnd.getDate() + 1)
+    return { start, end: calendarEnd }
   }
   return {
     start: new Date(end.getTime() - RANGE_MILLISECONDS[range]),
     end,
   }
-}
-
-/** Return the calendar day containing `end` in the fixed business timezone. */
-export function beijingCalendarDayBounds(end = new Date()): { start: Date; end: Date } {
-  const instant = end.getTime()
-  if (!Number.isFinite(instant)) return { start: new Date(Number.NaN), end: new Date(Number.NaN) }
-
-  // Asia/Shanghai has no DST. Shifting into the business timezone lets UTC
-  // calendar helpers extract the correct year/month/day even on an overseas PC.
-  const beijingLocal = new Date(instant + BEIJING_OFFSET_MILLISECONDS)
-  const start = new Date(Date.UTC(
-    beijingLocal.getUTCFullYear(),
-    beijingLocal.getUTCMonth(),
-    beijingLocal.getUTCDate(),
-  ) - BEIJING_OFFSET_MILLISECONDS)
-  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) }
-}
-
-export function beijingCalendarDate(value: Date): string {
-  const bounds = beijingCalendarDayBounds(value)
-  if (!Number.isFinite(bounds.start.getTime())) return ''
-  return bounds.start.toISOString().slice(0, 10)
 }
 
 export function localDateParameter(value: Date): string {

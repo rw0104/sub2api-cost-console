@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AdminUsageLog } from '@/types'
-import { aggregateUsageWindow, beijingCalendarDayBounds, fillCostTrendBuckets, localDateParameter, usageWindowBounds } from '../usageWindow'
+import { aggregateUsageWindow, fillCostTrendBuckets, localDateParameter, usageWindowBounds } from '../usageWindow'
 
 function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
   return {
@@ -48,16 +48,20 @@ function usage(overrides: Partial<AdminUsageLog>): AdminUsageLog {
 }
 
 describe('official core usage-log compatibility aggregation', () => {
-  it('uses Beijing calendar-day bounds for today on an overseas machine', () => {
-    const end = new Date('2026-08-06T13:45:30+08:00')
-    const bounds = usageWindowBounds('today', end)
+  it('uses the user device calendar day for today', () => {
+    const previousTimezone = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+    try {
+      const bounds = usageWindowBounds('today', new Date('2026-08-06T05:45:30.000Z'))
 
-    expect(bounds).toEqual({
-      start: new Date('2026-08-05T16:00:00.000Z'),
-      end: new Date('2026-08-06T16:00:00.000Z'),
-    })
-    expect(beijingCalendarDayBounds(new Date('2026-08-05T15:59:59.999Z')).start.toISOString()).toBe('2026-08-04T16:00:00.000Z')
-    expect(beijingCalendarDayBounds(new Date('2026-08-05T16:00:00.000Z')).start.toISOString()).toBe('2026-08-05T16:00:00.000Z')
+      expect(bounds).toEqual({
+        start: new Date('2026-08-05T07:00:00.000Z'),
+        end: new Date('2026-08-06T07:00:00.000Z'),
+      })
+    } finally {
+      if (previousTimezone == null) delete process.env.TZ
+      else process.env.TZ = previousTimezone
+    }
   })
 
   it('uses exact rolling bounds for one minute and one month', () => {
@@ -113,7 +117,7 @@ describe('official core usage-log compatibility aggregation', () => {
       expect(result).toHaveLength(20)
       expect(result[8].requests).toBe(1)
       expect(result[8].actual_cost).toBe(0.3)
-      expect(result[0].observed).toBe(false)
+      expect(result[0]).toMatchObject({ requests: 0, actual_cost: 0, account_cost: 0 })
     } finally {
       if (previousTimezone == null) delete process.env.TZ
       else process.env.TZ = previousTimezone

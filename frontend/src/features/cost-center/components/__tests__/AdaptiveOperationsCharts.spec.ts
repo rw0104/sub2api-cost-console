@@ -28,7 +28,7 @@ function point(overrides: Partial<OpsThroughputTrendPoint> = {}): OpsThroughputT
   }
 }
 
-function mountChart(opsTrend: OpsThroughputTrendPoint[]) {
+function mountChart(opsTrend: OpsThroughputTrendPoint[], procurementHourlyCny = 0) {
   return shallowMount(AdaptiveOperationsCharts, {
     props: {
       opsTrend,
@@ -44,7 +44,7 @@ function mountChart(opsTrend: OpsThroughputTrendPoint[]) {
       economics: null,
       cnyPerUsd: 7,
       opsBucketHours: 5 / 3600,
-      procurementHourlyCny: 0,
+      procurementHourlyCny,
       opsState: 'measured',
       opsReason: '',
       healthState: 'empty',
@@ -66,5 +66,13 @@ describe('AdaptiveOperationsCharts truthful rates', () => {
     const series = economyChart.props('series') as Array<{ data: Array<number | null> }>
 
     expect(series[0].data[0]).toBeNull()
+  })
+
+  it('keeps API contribution separate from configured procurement cost', () => {
+    const economyChart = mountChart([point()], 100).findAllComponents(CostLineChart)[0]
+    const series = economyChart.props('series') as Array<{ label: string; data: Array<number | null> }>
+
+    expect(series[2].label).toBe('调用毛利')
+    expect(series[2].data[0]).toBeCloseTo(3780)
   })
 })
