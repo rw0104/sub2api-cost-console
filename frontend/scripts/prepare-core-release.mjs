@@ -49,7 +49,7 @@ const releaseNotes = desktopReleaseNotes.includes(`\`v${coreVersion}\``)
   : [
       `# 兼容内核 v${coreVersion}+costconsole.${extensionVersion}`,
       '',
-      '## 内核基线',
+      '## 当前兼容内核',
       '',
       `- Sub2API 上游基线：v${coreVersion}`,
       `- 上游提交：${upstreamCommit}`,
