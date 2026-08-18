@@ -410,7 +410,7 @@ function buildNativeLaunchRequest() {
   const clientId = nativeClientId.value
   if (!clientId) return null
   const rawBaseUrl = props.baseUrl || window.location.origin
-  const gatewayProfile: NativeGatewayProfile = props.platform || 'composite'
+  const gatewayProfile = nativeGatewayProfileForPlatform(props.platform)
   const baseRoot = nativeBaseRoot(rawBaseUrl)
   let baseUrl = rawBaseUrl.replace(/\/+$/, '')
 
@@ -436,6 +436,23 @@ function buildNativeLaunchRequest() {
     base_url: baseUrl,
     api_key: props.apiKey,
     working_directory: nativeWorkingDirectory.value.trim() || nativeDetectedWorkingDirectory.value || '.'
+  }
+}
+
+function nativeGatewayProfileForPlatform(platform: GroupPlatform | null): NativeGatewayProfile {
+  switch (platform) {
+    case 'anthropic':
+    case 'openai':
+    case 'gemini':
+    case 'antigravity':
+    case 'grok':
+    case 'composite':
+      return platform
+    default:
+      // New provider-specific group platforms (for example CN providers) do
+      // not have a dedicated native launcher profile yet. Use the generic
+      // gateway route instead of passing an unsupported profile to Tauri.
+      return 'composite'
   }
 }
 
