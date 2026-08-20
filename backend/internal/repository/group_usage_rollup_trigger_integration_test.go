@@ -193,7 +193,9 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 		pq.QuoteIdentifier(schema),
 	)).Scan(&closedBefore)
 	require.NoError(t, err)
-	require.Equal(t, "2026-08-21", closedBefore)
+	// The pre-midnight insert commits after the watermark publish, so the
+	// trigger must reopen that historical bucket instead of losing the write.
+	require.Equal(t, "2026-08-20", closedBefore)
 }
 
 func TestGroupUsageRollupTriggerKeepsWatermarkForTodayInsert(t *testing.T) {
