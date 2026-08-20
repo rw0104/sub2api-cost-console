@@ -66,7 +66,9 @@ try {
         $match = $conflictMatches[0]
         $oursBlock = $match.Groups['ours'].Value
         $theirsBlock = $match.Groups['theirs'].Value
-        if ($oursBlock -notmatch 'compact-only mapping on top' -or $theirsBlock -notmatch 'remote compaction v2') {
+        if ($oursBlock -notmatch 'account model mapping' -or
+            $oursBlock -notmatch 'compact-only mapping' -or
+            $theirsBlock -notmatch 'remote compaction v2') {
             throw "The reviewed account-test merge content changed; leaving the conflict blocked"
         }
 

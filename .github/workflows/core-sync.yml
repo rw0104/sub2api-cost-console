@@ -103,8 +103,15 @@ jobs:
           git fetch upstream-sync "refs/tags/${{ needs.discover.outputs.tag }}:refs/tags/automation-${{ needs.discover.outputs.tag }}"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
-          if ($LASTEXITCODE -ne 0) {
+          $pinnedVersion = (Get-Content -Raw frontend/CORE_VERSION).Trim()
+          $pinnedCommit = (Get-Content -Raw frontend/UPSTREAM_SUB2API_COMMIT).Trim()
+          $alreadyIntegrated = $pinnedVersion -eq '${{ needs.discover.outputs.version }}' -and
+            $pinnedCommit -eq '${{ needs.discover.outputs.upstream_commit }}'
+          if ($alreadyIntegrated) {
+            Write-Host "Current tree already contains verified upstream ${{ needs.discover.outputs.tag }} ($pinnedCommit); skipping duplicate merge."
+          } else {
+            git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
+            if ($LASTEXITCODE -ne 0) {
             $conflicts = @(git diff --name-only --diff-filter=U)
             $reviewedPaths = @(
               'backend/internal/service/account_test_service.go',
@@ -152,6 +159,7 @@ jobs:
             if ($conflicts -contains 'backend/cmd/server/VERSION') { git checkout --theirs -- backend/cmd/server/VERSION }
             git add -A
             git commit --no-edit
+            }
           }
           $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
           if ($commit -ne '${{ needs.discover.outputs.upstream_commit }}') { throw 'Fetched upstream tag moved after discovery' }
