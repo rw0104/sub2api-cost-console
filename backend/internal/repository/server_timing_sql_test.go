@@ -176,8 +176,9 @@ func TestServerTimingConnectorRecordsDriverCallsWithoutRowLifetime(t *testing.T)
 		t.Fatal(err)
 	}
 
-	// Application work between row reads must remain app time.
-	time.Sleep(30 * time.Millisecond)
+	// Application work between row reads must remain app time. Keep the gap
+	// comfortably above the fake driver's per-call delay on loaded CI runners.
+	time.Sleep(100 * time.Millisecond)
 	if err := rows.Next(values); err != io.EOF {
 		t.Fatalf("rows.Next() = %v, want EOF", err)
 	}
