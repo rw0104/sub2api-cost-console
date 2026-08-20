@@ -112,7 +112,13 @@ jobs:
               'backend/internal/service/openai_gateway_upstream_errors.go',
               'backend/internal/service/openai_ws_http_bridge.go'
             )
-            $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+            $localOverlayPaths = @(
+              'README.md',
+              'backend/internal/repository/group_usage_rollup_trigger_integration_test.go',
+              'backend/internal/service/cn_provider_balance_check_service_test.go'
+            )
+            $nonSourcePaths = @($localOverlayPaths) + @('backend/cmd/server/VERSION')
+            $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
             $unreviewed = @($unknown | Where-Object { $_ -notin $reviewedPaths })
             if ($unreviewed.Count -eq 0) {
               # These files have content-checked three-way merge rules. Resolve
@@ -131,7 +137,7 @@ jobs:
                 }
               }
               $conflicts = @(git diff --name-only --diff-filter=U)
-              $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+              $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
             }
             if ($unknown.Count -gt 0) {
               $files = $conflicts -join ', '
@@ -140,7 +146,9 @@ jobs:
               "conflict_files=$files" >> $env:GITHUB_OUTPUT
               exit 0
             }
-            if ($conflicts -contains 'README.md') { git checkout --ours -- README.md }
+            foreach ($path in $localOverlayPaths) {
+              if ($conflicts -contains $path) { git checkout --ours -- $path }
+            }
             if ($conflicts -contains 'backend/cmd/server/VERSION') { git checkout --theirs -- backend/cmd/server/VERSION }
             git add -A
             git commit --no-edit
