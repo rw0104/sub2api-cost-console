@@ -2,11 +2,12 @@ name: Compatible Core Auto Update
 
 on:
   schedule:
-    - cron: '2-59/5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: compatible-core-auto-update
@@ -58,6 +59,13 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "upstream_commit=$commit" >> "$GITHUB_OUTPUT"
+          blocked_title="Compatible core auto-update blocked: $tag"
+          blocked_count="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$blocked_title\" in:title" --json number --jq 'length')"
+          if [[ "$blocked_count" != "0" ]]; then
+            echo "An open review issue already blocks $tag; waiting for manual resolution."
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$stable_version" == "$version" && "$stable_commit" == "$commit" && "$stable_extension" == "$extension" && "$stable_algorithm" == "$algorithm" ]]; then
             echo "needs_update=false" >> "$GITHUB_OUTPUT"
           elif [[ "$stable_version" == "$version" && -n "$stable_commit" && "$stable_commit" != "$commit" ]]; then
@@ -100,7 +108,9 @@ jobs:
             $conflicts = @(git diff --name-only --diff-filter=U)
             $reviewedPaths = @(
               'backend/internal/service/account_test_service.go',
-              'backend/internal/service/ratelimit_service.go'
+              'backend/internal/service/ratelimit_service.go',
+              'backend/internal/service/openai_gateway_upstream_errors.go',
+              'backend/internal/service/openai_ws_http_bridge.go'
             )
             $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
             $unreviewed = @($unknown | Where-Object { $_ -notin $reviewedPaths })

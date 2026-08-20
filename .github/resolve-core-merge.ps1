@@ -6,7 +6,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $reviewedPaths = @(
     'backend/internal/service/account_test_service.go',
-    'backend/internal/service/ratelimit_service.go'
+    'backend/internal/service/ratelimit_service.go',
+    'backend/internal/service/openai_gateway_upstream_errors.go',
+    'backend/internal/service/openai_ws_http_bridge.go'
 )
 if ($Path -notin $reviewedPaths) {
     throw "Unsupported compatible-core merge path: $Path"
@@ -55,13 +57,13 @@ try {
 
     $merged = [IO.File]::ReadAllText($oursPath)
     $pattern = '(?ms)^<<<<<<<[^\r\n]*\r?\n(?<ours>.*?)^\|\|\|\|\|\|\|[^\r\n]*\r?\n(?<base>.*?)^=======\r?\n(?<theirs>.*?)^>>>>>>>[^\r\n]*\r?\n'
-    $matches = @([Text.RegularExpressions.Regex]::Matches($merged, $pattern))
+    $conflictMatches = @([Text.RegularExpressions.Regex]::Matches($merged, $pattern))
 
     if ($Path -eq 'backend/internal/service/account_test_service.go') {
-        if ($matches.Count -ne 1) {
+        if ($conflictMatches.Count -ne 1) {
             throw "The reviewed account-test merge shape changed; leaving the conflict blocked"
         }
-        $match = $matches[0]
+        $match = $conflictMatches[0]
         $oursBlock = $match.Groups['ours'].Value
         $theirsBlock = $match.Groups['theirs'].Value
         if ($oursBlock -notmatch 'compact-only mapping on top' -or $theirsBlock -notmatch 'remote compaction v2') {
@@ -74,12 +76,12 @@ try {
             "`ttestModelID = account.GetMappedModel(testModelID)"
         )) + "`n"
         $merged = $merged.Remove($match.Index, $match.Length).Insert($match.Index, $replacement)
-    } else {
-        if ($matches.Count -ne 2) {
+    } elseif ($Path -eq 'backend/internal/service/ratelimit_service.go') {
+        if ($conflictMatches.Count -ne 2) {
             throw "The reviewed rate-limit merge shape changed; leaving the conflict blocked"
         }
-        $first = $matches[0]
-        $second = $matches[1]
+        $first = $conflictMatches[0]
+        $second = $conflictMatches[1]
         if ($first.Groups['ours'].Value -notmatch 'confirmed terminal failure' -or
             $first.Groups['theirs'].Value -notmatch 'Team.*联动熔断') {
             throw "The reviewed rate-limit scheduling merge content changed; leaving the conflict blocked"
@@ -127,6 +129,56 @@ try {
         # Replace from the end so the first match's original index stays valid.
         $merged = $merged.Remove($second.Index, $second.Length).Insert($second.Index, $secondReplacement)
         $merged = $merged.Remove($first.Index, $first.Length).Insert($first.Index, $firstReplacement)
+    } elseif ($Path -eq 'backend/internal/service/openai_gateway_upstream_errors.go') {
+        $merged = [Text.Encoding]::UTF8.GetString((Get-GitBlobBytes ":3:$Path"))
+        $nl = if ($merged.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $merged = $merged.Replace(
+            "func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string, upstreamBody []byte) bool {" + $nl + "`tif upstreamStatusCode < http.StatusBadRequest {",
+            "func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string, upstreamBody []byte) bool {" + $nl + "`tif isOpenAIModelCapacityError(upstreamMsg, upstreamBody) {" + $nl + "`t`treturn true" + $nl + "`t}" + $nl + "`tif upstreamStatusCode < http.StatusBadRequest {")
+        $marker = "func isOpenAICapacityShedMessage(text string) bool {"
+        $capacity = @"
+const openAIModelCapacityReason = GatewayFailureReason("openai_model_capacity")
+
+func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
+	match := func(value string) bool {
+		return strings.Contains(strings.ToLower(strings.TrimSpace(value)), "selected model is at capacity")
+	}
+	if match(upstreamMsg) { return true }
+	if len(upstreamBody) == 0 { return false }
+	for _, path := range []string{"error.message", "response.error.message", "message"} {
+		if match(gjson.GetBytes(upstreamBody, path).String()) { return true }
+	}
+	return match(string(upstreamBody))
+}
+
+"@
+        if ($merged -notmatch 'openAIModelCapacityReason') {
+            $merged = $merged.Replace($marker, $capacity + $marker)
+        }
+        $signaturePattern = 'retryableOnSameAccount bool,\r?\n\) \*UpstreamFailoverError \{'
+        $merged = [Text.RegularExpressions.Regex]::Replace($merged, $signaturePattern, "retryableOnSameAccount bool${nl}`tforceNextAccount ...bool,${nl}) *UpstreamFailoverError {")
+        $initPattern = 'requestScopedCapacity := isOpenAIRequestScopedCapacityShed\(upstreamMsg, responseBody\)'
+        $merged = [Text.RegularExpressions.Regex]::Replace($merged, $initPattern, "forceSwitch := len(forceNextAccount) > 0 && forceNextAccount[0]${nl}`trequestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)${nl}`tmodelCapacity := isOpenAIModelCapacityError(upstreamMsg, responseBody)", 1)
+        $insertBefore = "`tif isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {"
+        $modelBlock = @"
+	if modelCapacity {
+		if forceSwitch || !retryableOnSameAccount { failoverErr.RetryableOnSameAccount = false }
+		failoverErr.Scope = GatewayFailureScopeAccount
+		failoverErr.Reason = openAIModelCapacityReason
+		failoverErr.NextAccountAction = NextAccountRetry
+	} else if forceSwitch {
+		failoverErr.RetryableOnSameAccount = false
+	}
+"@
+        $merged = $merged.Replace($insertBefore, $modelBlock + $insertBefore)
+    } else {
+        $merged = [Text.Encoding]::UTF8.GetString((Get-GitBlobBytes ":3:$Path"))
+        $merged = $merged.Replace(
+            "newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, false)",
+            "newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, false, account.IsK12Account())")
+        $merged = $merged.Replace(
+            "newOpenAIUpstreamFailoverError(statusCode, resp.Header, upstreamMessage, errMessage, false)",
+            "newOpenAIUpstreamFailoverError(statusCode, resp.Header, upstreamMessage, errMessage, false, account.IsK12Account())")
     }
 
     if ($merged -match '(?m)^<<<<<<<|^\|\|\|\|\|\|\||^=======|^>>>>>>>') {
@@ -140,6 +192,15 @@ try {
         ($merged -notmatch 'maybeHandleOpenAITeamLinkedError' -or
          $merged -notmatch 'handleCNProviderInsufficientBalance')) {
         throw "Reviewed rate-limit merge dropped a required upstream branch"
+    }
+    if ($Path -eq 'backend/internal/service/openai_gateway_upstream_errors.go' -and
+        ($merged -notmatch 'openAIModelCapacityReason' -or
+         $merged -notmatch 'isOpenAICapacityShedMessage')) {
+        throw "Reviewed OpenAI upstream-error merge dropped capacity handling"
+    }
+    if ($Path -eq 'backend/internal/service/openai_ws_http_bridge.go' -and
+        $merged -notmatch 'account\.IsK12Account\(\)') {
+        throw "Reviewed OpenAI WS bridge merge dropped K12 failover routing"
     }
 
     $utf8NoBom = [Text.UTF8Encoding]::new($false)
