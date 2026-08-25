@@ -110,7 +110,30 @@ jobs:
           if ($alreadyIntegrated) {
             Write-Host "Current tree already contains verified upstream ${{ needs.discover.outputs.tag }} ($pinnedCommit); skipping duplicate merge."
           } else {
-            git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
+            $officialTarget = "automation-${{ needs.discover.outputs.tag }}"
+            $pinnedTree = (git show -s --format='%T' $pinnedCommit).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $pinnedTree) {
+              throw "Unable to resolve the pinned upstream tree for $pinnedCommit"
+            }
+            $syntheticBase = $null
+            foreach ($candidate in @(git log --all --format='%H' --fixed-strings "--grep=synthetic upstream v$pinnedVersion")) {
+              $candidateTree = (git show -s --format='%T' $candidate).Trim()
+              git merge-base --is-ancestor $candidate HEAD
+              if ($LASTEXITCODE -eq 0 -and $candidateTree -eq $pinnedTree) {
+                $syntheticBase = $candidate
+                break
+              }
+            }
+            if (-not $syntheticBase) {
+              throw "Unable to find the integrated synthetic upstream v$pinnedVersion base"
+            }
+            $targetTree = (git show -s --format='%T' "$officialTarget^{commit}").Trim()
+            $mergeTarget = (git commit-tree $targetTree -p $syntheticBase -m "synthetic upstream v${{ needs.discover.outputs.version }}").Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $mergeTarget) {
+              throw "Unable to create the synthetic upstream merge target"
+            }
+            Write-Host "Merging the real upstream delta through synthetic base $syntheticBase"
+            git merge --no-ff --no-edit $mergeTarget
             if ($LASTEXITCODE -ne 0) {
             $conflicts = @(git diff --name-only --diff-filter=U)
             $reviewedPaths = @(
