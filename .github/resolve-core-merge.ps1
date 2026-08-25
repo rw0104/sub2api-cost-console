@@ -150,7 +150,7 @@ func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
 	for _, path := range []string{"error.message", "response.error.message", "message"} {
 		if match(gjson.GetBytes(upstreamBody, path).String()) { return true }
 	}
-	return match(string(upstreamBody))
+	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
 }
 
 "@
