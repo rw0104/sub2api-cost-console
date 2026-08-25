@@ -79,7 +79,7 @@ flowchart LR
 
 ### 3.2 后端
 
-- Go 1.26.5，与 `backend/go.mod` 保持一致。
+- Go 1.26.6，与 `backend/go.mod` 保持一致。
 - PostgreSQL 15+，开发环境推荐 PostgreSQL 16。
 - Redis 7+。
 - 可访问需要接入的上游 API。
@@ -1169,7 +1169,7 @@ frontend/src-tauri/target/release/bundle/nsis/
 
 `.github/workflows/desktop-release.yml` 在推送与桌面版本一致的 `v*` 标签或手动触发时生成 GitHub Release。流水线会：
 
-1. 固定 pnpm、Go 1.26.5 和 Rust 工具链。
+1. 固定 pnpm、Go 1.26.6 和 Rust 工具链。
 2. 构建后端嵌入 Web UI。
 3. 编译 Windows x86_64 Go sidecar。
 4. 构建 NSIS 安装包并生成安装包 SHA-256。

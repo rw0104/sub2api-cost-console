@@ -2,11 +2,12 @@ name: Compatible Core Auto Update
 
 on:
   schedule:
-    - cron: '2-59/5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: compatible-core-auto-update
@@ -58,6 +59,13 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "upstream_commit=$commit" >> "$GITHUB_OUTPUT"
+          blocked_title="Compatible core auto-update blocked: $tag"
+          blocked_count="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$blocked_title\" in:title" --json number --jq 'length')"
+          if [[ "$blocked_count" != "0" ]]; then
+            echo "An open review issue already blocks $tag; waiting for manual resolution."
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$stable_version" == "$version" && "$stable_commit" == "$commit" && "$stable_extension" == "$extension" && "$stable_algorithm" == "$algorithm" ]]; then
             echo "needs_update=false" >> "$GITHUB_OUTPUT"
           elif [[ "$stable_version" == "$version" && -n "$stable_commit" && "$stable_commit" != "$commit" ]]; then
@@ -95,14 +103,29 @@ jobs:
           git fetch upstream-sync "refs/tags/${{ needs.discover.outputs.tag }}:refs/tags/automation-${{ needs.discover.outputs.tag }}"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
-          if ($LASTEXITCODE -ne 0) {
+          $pinnedVersion = (Get-Content -Raw frontend/CORE_VERSION).Trim()
+          $pinnedCommit = (Get-Content -Raw frontend/UPSTREAM_SUB2API_COMMIT).Trim()
+          $alreadyIntegrated = $pinnedVersion -eq '${{ needs.discover.outputs.version }}' -and
+            $pinnedCommit -eq '${{ needs.discover.outputs.upstream_commit }}'
+          if ($alreadyIntegrated) {
+            Write-Host "Current tree already contains verified upstream ${{ needs.discover.outputs.tag }} ($pinnedCommit); skipping duplicate merge."
+          } else {
+            git merge --no-ff --no-edit "automation-${{ needs.discover.outputs.tag }}"
+            if ($LASTEXITCODE -ne 0) {
             $conflicts = @(git diff --name-only --diff-filter=U)
             $reviewedPaths = @(
               'backend/internal/service/account_test_service.go',
-              'backend/internal/service/ratelimit_service.go'
+              'backend/internal/service/ratelimit_service.go',
+              'backend/internal/service/openai_gateway_upstream_errors.go',
+              'backend/internal/service/openai_ws_http_bridge.go'
             )
-            $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+            $localOverlayPaths = @(
+              'README.md',
+              'backend/internal/repository/group_usage_rollup_trigger_integration_test.go',
+              'backend/internal/service/cn_provider_balance_check_service_test.go'
+            )
+            $nonSourcePaths = @($localOverlayPaths) + @('backend/cmd/server/VERSION')
+            $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
             $unreviewed = @($unknown | Where-Object { $_ -notin $reviewedPaths })
             if ($unreviewed.Count -eq 0) {
               # These files have content-checked three-way merge rules. Resolve
@@ -121,7 +144,7 @@ jobs:
                 }
               }
               $conflicts = @(git diff --name-only --diff-filter=U)
-              $unknown = @($conflicts | Where-Object { $_ -notin @('README.md', 'backend/cmd/server/VERSION') })
+              $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
             }
             if ($unknown.Count -gt 0) {
               $files = $conflicts -join ', '
@@ -130,10 +153,13 @@ jobs:
               "conflict_files=$files" >> $env:GITHUB_OUTPUT
               exit 0
             }
-            if ($conflicts -contains 'README.md') { git checkout --ours -- README.md }
+            foreach ($path in $localOverlayPaths) {
+              if ($conflicts -contains $path) { git checkout --ours -- $path }
+            }
             if ($conflicts -contains 'backend/cmd/server/VERSION') { git checkout --theirs -- backend/cmd/server/VERSION }
             git add -A
             git commit --no-edit
+            }
           }
           $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
           if ($commit -ne '${{ needs.discover.outputs.upstream_commit }}') { throw 'Fetched upstream tag moved after discovery' }
