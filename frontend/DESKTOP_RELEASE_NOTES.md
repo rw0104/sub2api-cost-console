@@ -1,12 +1,13 @@
-# Sub2API Cost Console v0.2.26
+# Sub2API Cost Console v0.2.27
 
 ## 主要更新
 
 ### 兼容内核升级
 
-- 兼容内核从上游 `v0.1.181` 升级到 `v0.1.182`，统一 OAuth、API Key、HTTP 和 WebSocket 的 OpenAI Responses Lite 处理，并保留数值精度。
-- 修复 Anthropic 缓存创建明细重复计费、OAuth 图片提示词丢失、OpenCode Go 重置时长、Antigravity Sonnet 4.5 映射与 Kimi Code K3 路由。
-- 修复渠道监控 V2 的 Composite 平台归属，并在余额充值完成后刷新用户余额。
+- 兼容内核从上游 `v0.1.182` 升级到 `v0.1.183`，保留 OAuth、API Key、HTTP 和 WebSocket 的 OpenAI Responses 兼容处理。
+- 修复 OpenAI OAuth 5 小时/7 天配额耗尽识别、`session-id` 粘性会话和模型容量溢出时的账号切换策略。
+- 修复 Kimi 并发限制 403 的临时冷却与故障转移、OpenAI custom tool/tool search 的项目 ID 前缀恢复，以及 Antigravity 兼容模式 token 上限。
+- 修复邮箱换绑别名并发占用检测和渠道监控 V2 Composite 聚合条件，提升账号状态判断准确性。
 - 保留成本损失账本、经济采样、精确时间窗口和 Windows 原生客户端启动能力。
 
 ### Windows 原生一键启动
@@ -30,8 +31,8 @@
 
 ## 当前兼容内核
 
-- 上游 Sub2API：`v0.1.182`
-- 上游提交：`5a7d469622911a6b1291a692376df5fa03f9ac2e`
+- 上游 Sub2API：`v0.1.183`
+- 上游提交：`e8cb019fabf8b55199436229044cbf9aa7a82564`
 - 成本扩展：`v1.1.1`
 - 成本算法：`v1.6.0`
 - 经济预测与时间序列：`v1.1.1`
@@ -47,7 +48,7 @@
 
 ## 升级行为
 
-- `v0.2.22` 至 `v0.2.25` 可通过桌面自动更新直接升级到 `v0.2.26`，也可运行 NSIS 安装包原位升级；本地配置与已保存启动目录保持不变。
+- `v0.2.22` 至 `v0.2.26` 可通过桌面自动更新直接升级到 `v0.2.27`，也可运行 NSIS 安装包原位升级；本地配置与已保存启动目录保持不变。
 - 桌面升级不会改写 Codex、Claude Code、Cursor、OpenCode 或 Grok 的账号配置文件。
 - 内核仍使用活动、待激活和上一版三个槽位；候选内核通过身份与能力校验后才会激活。
 
