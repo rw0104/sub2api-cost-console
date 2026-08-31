@@ -85,6 +85,7 @@ export function aggregateModelStatsFromUsageLogs(logs: AdminUsageLog[], source: 
       existing.cost += finiteNumber(log.total_cost)
       existing.actual_cost += finiteNumber(log.actual_cost)
       existing.account_cost = finiteNumber(existing.account_cost) + accountCost
+      existing.account_cost_estimated = existing.account_cost_estimated === true || log.account_stats_cost == null
       if (createdAt && (!existing.first_seen || createdAt < existing.first_seen)) existing.first_seen = createdAt
       if (createdAt && (!existing.last_seen || createdAt > existing.last_seen)) existing.last_seen = createdAt
       continue
@@ -100,6 +101,7 @@ export function aggregateModelStatsFromUsageLogs(logs: AdminUsageLog[], source: 
       cost: finiteNumber(log.total_cost),
       actual_cost: finiteNumber(log.actual_cost),
       account_cost: accountCost,
+      account_cost_estimated: log.account_stats_cost == null,
       first_seen: createdAt || undefined,
       last_seen: createdAt || undefined,
     })
@@ -191,7 +193,7 @@ export function buildModelCostRows(models: ModelStat[]): ModelCostRow[] {
         revenue,
         grossProfit,
         grossMargin: revenue > 0 ? grossProfit / revenue : null,
-        accountCostEstimated: !hasAccountCost,
+        accountCostEstimated: model.account_cost_estimated === true || !hasAccountCost,
         pricingMissing: totalTokens > 0 && standardCost === 0 && accountCost === 0 && revenue === 0,
       }
     })

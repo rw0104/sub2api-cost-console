@@ -27,7 +27,7 @@
           <em>{{ dataAvailabilityLabel(state.status) }}</em>
         </div>
         <p>{{ state.reason || stateDescription(state.status) }}</p>
-        <small>{{ state.updatedAt ? formatTime(state.updatedAt) : '尚无成功时间' }}</small>
+        <small>{{ state.lastSuccessAt ? `最近成功 ${formatTime(state.lastSuccessAt)}` : state.updatedAt ? formatTime(state.updatedAt) : '尚无成功时间' }}</small>
       </article>
     </div>
 

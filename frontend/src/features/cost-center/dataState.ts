@@ -27,6 +27,10 @@ export interface DataSourceState {
   status: DataAvailability
   reason: string
   updatedAt: string | null
+  /** Most recent successful read; survives a failed refresh. */
+  lastSuccessAt?: string | null
+  /** Window/scope used for the value, when the source exposes one. */
+  requestedWindow?: string | null
 }
 
 const SOURCE_LABELS: Record<CostCenterSourceKey, string> = {
@@ -53,6 +57,8 @@ export function createDataSourceStates(status: DataAvailability = 'loading'): Re
     status,
     reason: status === 'loading' ? '正在读取' : '',
     updatedAt: null,
+    lastSuccessAt: null,
+    requestedWindow: null,
   }])) as Record<CostCenterSourceKey, DataSourceState>
 }
 
@@ -68,6 +74,10 @@ export function sourceState(
     status,
     reason,
     updatedAt: updatedAt?.toISOString() ?? null,
+    lastSuccessAt: ['measured', 'estimated', 'empty', 'partial'].includes(status)
+      ? updatedAt?.toISOString() ?? null
+      : null,
+    requestedWindow: null,
   }
 }
 

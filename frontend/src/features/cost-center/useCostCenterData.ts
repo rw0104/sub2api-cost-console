@@ -102,6 +102,21 @@ export function trendHasAccountCost(points: CostTrendDataPoint[]): boolean {
   return points.length === 0 || points.every((point) => point.account_cost != null)
 }
 
+/** Keep successful per-account facts when a later refresh only returns a subset. */
+export function mergeRetainedAccountUsage(
+  previous: Record<string, AccountUsageInfo>,
+  current: Record<string, AccountUsageInfo>,
+  accountIds: number[],
+): Record<string, AccountUsageInfo> {
+  const next: Record<string, AccountUsageInfo> = {}
+  for (const accountId of accountIds) {
+    const key = String(accountId)
+    if (current[key]) next[key] = current[key]
+    else if (previous[key]) next[key] = previous[key]
+  }
+  return next
+}
+
 export function selectExactWindowModelStats(
   snapshot: { start_time?: string; end_time?: string; models?: ModelStat[] } | null,
   compatibility: { logs: AdminUsageLog[]; truncated: boolean } | null,
@@ -190,8 +205,21 @@ export function useCostCenterData() {
     return todayStats.value[String(account.id)] ?? emptyTodayStats()
   })
 
-  function setSourceState(key: CostCenterSourceKey, status: DataAvailability, reason = '') {
-    sourceStates.value[key] = sourceState(key, status, reason)
+  function setSourceState(
+    key: CostCenterSourceKey,
+    status: DataAvailability,
+    reason = '',
+    options: { requestedWindow?: string | null } = {},
+  ) {
+    const previous = sourceStates.value[key]
+    const next = sourceState(key, status, reason)
+    sourceStates.value[key] = {
+      ...next,
+      requestedWindow: options.requestedWindow ?? previous?.requestedWindow ?? null,
+      lastSuccessAt: ['measured', 'estimated', 'empty', 'partial'].includes(status)
+        ? next.updatedAt
+        : previous?.lastSuccessAt ?? null,
+    }
   }
 
   function rejectedReason(result: PromiseRejectedResult, fallback: string): string {
@@ -349,8 +377,9 @@ export function useCostCenterData() {
       'dashboard',
       dashboardResult.status === 'fulfilled'
         ? ((dashboardResult.value.trend ?? []).length || dashboardResult.value.stats ? 'measured' : 'empty')
-        : 'unavailable',
+        : (stats.value !== null || trend.value.length ? 'stale' : 'unavailable'),
       dashboardResult.status === 'fulfilled' ? 'usage_logs 聚合已读取' : rejectedReason(dashboardResult, '成本趋势读取失败'),
+      { requestedWindow: range },
     )
 
     const dashboardWindowIsExact = dashboardResult.status === 'fulfilled'
@@ -377,8 +406,12 @@ export function useCostCenterData() {
           }
         } catch (batchError) {
           console.warn('[cost-center] account today stats unavailable', batchError)
-          todayStats.value = {}
-          setSourceState('todayStats', 'unavailable', batchError instanceof Error ? batchError.message : '账号当日统计读取失败')
+          setSourceState(
+            'todayStats',
+            Object.keys(todayStats.value).length ? 'stale' : 'unavailable',
+            batchError instanceof Error ? batchError.message : '账号当日统计读取失败',
+            { requestedWindow: 'today' },
+          )
         }
       } else {
         todayStats.value = {}
@@ -392,20 +425,24 @@ export function useCostCenterData() {
           usageAccounts.map((account) => adminAPI.accounts.getUsage(account.id, accountUsageSource(account))),
         )
         if (sequence !== requestSequence) return
-        const nextUsage: Record<string, AccountUsageInfo> = {}
+        const refreshedUsage: Record<string, AccountUsageInfo> = {}
         usageAccounts.forEach((account, index) => {
           const result = usageResults[index]
-          if (result.status === 'fulfilled') nextUsage[String(account.id)] = result.value
-          else if (accountUsage.value[String(account.id)]) nextUsage[String(account.id)] = accountUsage.value[String(account.id)]
+          if (result.status === 'fulfilled') refreshedUsage[String(account.id)] = result.value
         })
-        accountUsage.value = nextUsage
+        accountUsage.value = mergeRetainedAccountUsage(
+          accountUsage.value,
+          refreshedUsage,
+          accounts.value.map((account) => account.id),
+        )
         lastAccountUsageSyncAt = Date.now()
         const succeeded = usageResults.filter((result) => result.status === 'fulfilled').length
         const retained = usageAccounts.filter((account) => accountUsage.value[String(account.id)]).length
         setSourceState(
           'accountUsage',
-          succeeded === usageAccounts.length ? 'measured' : retained > 0 ? 'partial' : 'unavailable',
+          succeeded === usageAccounts.length ? 'measured' : retained > 0 ? 'stale' : 'unavailable',
           succeeded === usageAccounts.length ? '上游用量窗口已同步' : `${succeeded}/${usageAccounts.length} 个用量窗口本次同步成功`,
+          { requestedWindow: range },
         )
       } else if (usageAccounts.length === 0) {
         setSourceState('accountUsage', 'empty', '当前账号类型不提供上游用量窗口')
@@ -413,27 +450,24 @@ export function useCostCenterData() {
         setSourceState('accountUsage', 'measured', '使用 5 分钟内最近一次成功同步的用量窗口')
       }
     } else {
-      accounts.value = []
-      todayStats.value = {}
-      accountUsage.value = {}
-      setSourceState('todayStats', 'unavailable', '账号清单不可用，无法读取当日统计')
-      setSourceState('accountUsage', 'unavailable', '账号清单不可用，无法读取用量窗口')
+      setSourceState('accounts', accounts.value.length ? 'stale' : 'unavailable', rejectedReason(accountResult, '账号清单读取失败'), { requestedWindow: range })
+      setSourceState('todayStats', Object.keys(todayStats.value).length ? 'stale' : 'unavailable', '账号清单不可用，无法读取当日统计', { requestedWindow: 'today' })
+      setSourceState('accountUsage', Object.keys(accountUsage.value).length ? 'stale' : 'unavailable', '账号清单不可用，无法读取用量窗口', { requestedWindow: range })
     }
 
     if (sequence !== requestSequence) return
 
-    stats.value = dashboardResult.status === 'fulfilled' ? dashboardResult.value.stats ?? null : null
+    if (dashboardResult.status === 'fulfilled') stats.value = dashboardResult.value.stats ?? null
     if (compatibilityTrend) {
       try {
         trend.value = fillCostTrendBuckets(await compatibilityTrend, range, observationStart, observationEnd)
         if (sequence !== requestSequence) return
         trendUsesAccountCost.value = true
-        setSourceState('dashboard', trend.value.some((point) => Number(point.requests || 0) > 0) ? 'partial' : 'empty', '仪表盘窗口不精确，已按 usage_logs 重新聚合')
+        setSourceState('dashboard', trend.value.some((point) => Number(point.requests || 0) > 0) ? 'partial' : 'empty', '仪表盘窗口不精确，已按 usage_logs 重新聚合', { requestedWindow: range })
       } catch (compatibilityError) {
         console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
-        trend.value = []
         trendUsesAccountCost.value = false
-        setSourceState('dashboard', 'unavailable', compatibilityError instanceof Error ? compatibilityError.message : 'usage_logs 兼容聚合失败')
+        setSourceState('dashboard', trend.value.length ? 'stale' : 'unavailable', compatibilityError instanceof Error ? compatibilityError.message : 'usage_logs 兼容聚合失败', { requestedWindow: range })
         error.value = compatibilityError instanceof Error
           ? compatibilityError.message
           : '官方上游内核无法提供精确时间窗口，usage_logs 兼容聚合失败'
@@ -447,8 +481,8 @@ export function useCostCenterData() {
         : (dashboardResult.value.trend ?? [])
       trendUsesAccountCost.value = dashboardHasAccountCost
     } else {
-      trend.value = []
       trendUsesAccountCost.value = false
+      setSourceState('dashboard', trend.value.length ? 'stale' : 'unavailable', rejectedReason(dashboardResult, '成本趋势读取失败'), { requestedWindow: range })
     }
 
     const modelCompatibility = modelRoutesResult.status === 'fulfilled'
@@ -464,7 +498,8 @@ export function useCostCenterData() {
       modelEnd,
       modelCostSource.value,
     )
-    models.value = modelStatsSelection.models
+    const modelReadSucceeded = modelResult.status === 'fulfilled' || modelStatsSelection.usedCompatibilityAggregation
+    if (modelReadSucceeded) models.value = modelStatsSelection.models
     modelStatsExactWindowFallback.value = modelStatsSelection.usedCompatibilityAggregation
     modelStatsCompatibilityTruncated.value = modelStatsSelection.compatibilityTruncated
     if (modelResult.status === 'fulfilled') {
@@ -472,7 +507,7 @@ export function useCostCenterData() {
     } else if (modelStatsSelection.usedCompatibilityAggregation) {
       setSourceState('models', 'partial', '模型快照不可用，已使用完整 usage_logs 兼容聚合')
     } else {
-      setSourceState('models', 'unavailable', rejectedReason(modelResult, '模型成本统计读取失败'))
+      setSourceState('models', models.value.length ? 'stale' : 'unavailable', rejectedReason(modelResult, '模型成本统计读取失败'), { requestedWindow: modelCostRange.value })
     }
     if (modelRoutesResult.status === 'fulfilled') {
       const channels: Channel[] = channelsResult.status === 'fulfilled' ? channelsResult.value.items ?? [] : []
@@ -488,14 +523,11 @@ export function useCostCenterData() {
       }))
       setSourceState('modelRoutes', modelRoutes.value.length ? (modelRoutesResult.value.truncated ? 'partial' : 'measured') : 'empty', modelRoutesResult.value.truncated ? '路由记录超过安全读取上限，仅显示完整可读部分' : modelRoutes.value.length ? '模型路由审计已读取' : '窗口内没有路由记录')
     } else {
-      modelAuditSummary.value = summarizeModelAudit([])
-      modelRoutes.value = []
       modelRoutesTruncated.value = false
-      modelPricing.value = {}
-      setSourceState('modelRoutes', 'unavailable', rejectedReason(modelRoutesResult, '模型路由审计读取失败'))
+      setSourceState('modelRoutes', modelRoutes.value.length ? 'stale' : 'unavailable', rejectedReason(modelRoutesResult, '模型路由审计读取失败'), { requestedWindow: modelCostRange.value })
     }
-    pricingStatus.value = pricingStatusResult.status === 'fulfilled' ? pricingStatusResult.value : null
-    setSourceState('pricing', pricingStatusResult.status === 'fulfilled' ? 'measured' : 'unavailable', pricingStatusResult.status === 'fulfilled' ? '价格目录状态已读取' : rejectedReason(pricingStatusResult, '价格目录状态读取失败'))
+    if (pricingStatusResult.status === 'fulfilled') pricingStatus.value = pricingStatusResult.value
+    setSourceState('pricing', pricingStatusResult.status === 'fulfilled' ? 'measured' : pricingStatus.value ? 'stale' : 'unavailable', pricingStatusResult.status === 'fulfilled' ? '价格目录状态已读取' : rejectedReason(pricingStatusResult, '价格目录状态读取失败'))
 
     if (opsResult.status === 'fulfilled') {
       opsOverview.value = opsResult.value.overview
@@ -508,19 +540,16 @@ export function useCostCenterData() {
       )
     } else {
       // Ops monitoring is feature-gated. The cost console remains useful without it.
-      opsOverview.value = null
-      opsTrend.value = []
-      opsErrorTrend.value = []
-      setSourceState('ops', 'unavailable', rejectedReason(opsResult, '运行质量监控未启用或读取失败'))
+      setSourceState('ops', opsOverview.value || opsTrend.value.length ? 'stale' : 'unavailable', rejectedReason(opsResult, '运行质量监控未启用或读取失败'), { requestedWindow: range })
     }
 
-    systemSettings.value = settingsResult.status === 'fulfilled' ? settingsResult.value : null
-    setSourceState('settings', settingsResult.status === 'fulfilled' ? 'measured' : 'unavailable', settingsResult.status === 'fulfilled' ? '调度设置已读取' : rejectedReason(settingsResult, '调度设置读取失败'))
+    if (settingsResult.status === 'fulfilled') systemSettings.value = settingsResult.value
+    setSourceState('settings', settingsResult.status === 'fulfilled' ? 'measured' : systemSettings.value ? 'stale' : 'unavailable', settingsResult.status === 'fulfilled' ? '调度设置已读取' : rejectedReason(settingsResult, '调度设置读取失败'))
     if (exchangeRateResult.status === 'fulfilled') {
       exchangeRate.value = exchangeRateResult.value
       setSourceState('exchangeRate', exchangeRate.value.source === 'network' ? 'measured' : 'estimated', exchangeRate.value.source === 'network' ? '网络参考汇率' : exchangeRate.value.source === 'cache' ? '使用 12 小时缓存汇率' : '使用离线回退汇率')
     } else {
-      setSourceState('exchangeRate', 'estimated', rejectedReason(exchangeRateResult, '汇率读取失败，使用离线回退值'))
+      setSourceState('exchangeRate', exchangeRate.value.source === 'fallback' ? 'estimated' : 'stale', rejectedReason(exchangeRateResult, '汇率读取失败，保留最近可用汇率'))
     }
 
     await loadAccountEconomics('all', range, [], { background: keepVisibleSnapshot })
@@ -547,9 +576,11 @@ export function useCostCenterData() {
   ) {
     const sequence = ++economicsRequestSequence
     const previous = accountEconomics.value
-    if (!options.background || !previous) {
+    if (!previous) {
       accountEconomics.value = null
       setSourceState('economics', 'loading', '正在采集并读取经济样本')
+    } else if (!options.background) {
+      setSourceState('economics', 'loading', '正在刷新；保留最近成功经济快照')
     }
     try {
       const snapshot = await adminAPI.accounts.getEconomicsSnapshot({
@@ -573,7 +604,7 @@ export function useCostCenterData() {
     } catch (economicsError) {
       console.warn('[cost-center] persistent economics snapshot unavailable', economicsError)
       if (sequence === economicsRequestSequence) {
-        if (options.background && previous) {
+        if (previous) {
           accountEconomics.value = previous
           setSourceState('economics', 'stale', economicsError instanceof Error ? economicsError.message : '经济采样后台刷新失败，保留上次成功快照')
         } else {

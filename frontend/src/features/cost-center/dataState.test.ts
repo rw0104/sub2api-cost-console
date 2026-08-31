@@ -26,6 +26,16 @@ describe('cost center data states', () => {
     expect(unavailableValueLabel(empty)).toBe('无记录')
   })
 
+  it('keeps the last successful timestamp when a source becomes stale', () => {
+    const measured = sourceState('dashboard', 'measured', 'ok', new Date('2026-08-25T10:00:00.000Z'))
+    const stale = {
+      ...sourceState('dashboard', 'stale', 'refresh failed', new Date('2026-08-25T10:01:00.000Z')),
+      lastSuccessAt: measured.lastSuccessAt,
+    }
+    expect(stale.lastSuccessAt).toBe('2026-08-25T10:00:00.000Z')
+    expect(stale.status).toBe('stale')
+  })
+
   it('initializes every source as loading instead of a fake zero state', () => {
     const states = createDataSourceStates()
     expect(states.economics.status).toBe('loading')

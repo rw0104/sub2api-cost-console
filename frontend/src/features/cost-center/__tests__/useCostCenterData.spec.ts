@@ -18,6 +18,7 @@ import {
   DEFAULT_MODEL_COST_RANGE,
   accountUsageSource,
   filterModelAuditLogs,
+  mergeRetainedAccountUsage,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
   trendHasAccountCost,
@@ -149,6 +150,21 @@ describe('cost center live ranges', () => {
 
     expect(filterModelAuditLogs(logs, true).map((log) => log.id)).toEqual([1])
     expect(filterModelAuditLogs(logs, false)).toBe(logs)
+  })
+
+  it('retains successful account usage when a later refresh is partial', () => {
+    const previous = {
+      '7': { five_hour: { utilization: 12 } },
+      '8': { seven_day: { utilization: 34 } },
+    } as any
+    const refreshed = {
+      '7': { five_hour: { utilization: 18 } },
+    } as any
+
+    expect(mergeRetainedAccountUsage(previous, refreshed, [7, 8, 9])).toEqual({
+      '7': refreshed['7'],
+      '8': previous['8'],
+    })
   })
 })
 

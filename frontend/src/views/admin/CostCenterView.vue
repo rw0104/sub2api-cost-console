@@ -172,34 +172,32 @@
           </div>
 
           <div class="cost-chart-row">
-            <ChartPanel title="API 产出速率" :caption="`${rangeLabel} · 真实 usage_logs，统一折算为 $/h`">
+            <ChartPanel title="财务事实趋势" :caption="`${rangeLabel} · 单一来源 ${trendFinancialUsesOps ? 'Ops' : 'usage_logs'}，统一折算为 USD/h`">
               <CostLineChart
                 :labels="financialTrend.map((point) => formatTrendLabel(point.timestamp))"
                 :series="[
-                  { label: '当前采样', data: trendActualCost, color: '#e0bd4e', fill: true },
-                  { label: rollingTrendLabel, data: rollingTrendActualCost, color: '#b9e55a', dashed: true },
+                  { label: '用户计费产出', data: trendActualCost, color: '#e0bd4e', fill: true },
+                  { label: '上游账号成本', data: trendAccountCost, color: '#7eb6d8' },
+                  { label: '调用贡献', data: trendContribution, color: '#b9e55a' },
                 ]"
                 value-prefix="$"
+                value-suffix="/h"
                 :state="trendFinancialState.status"
                 :state-reason="trendFinancialReason"
               />
             </ChartPanel>
-            <ChartPanel title="实时成本速率" :caption="`${rangeLabel} · ${apiCostBasisLabel} / 当前账号采购配置推算`">
-              <CostLineChart
-                :labels="financialTrend.map((point) => formatTrendLabel(point.timestamp))"
-                :series="[
-                  { label: apiCostBasisLabel, data: trendStandardCost, color: '#d8b94d' },
-                  { label: '采购基线', data: procurementBaseline, color: '#7eb6d8', dashed: true },
-                  { label: '综合成本', data: trendCombinedCost, color: '#b9e55a' },
-                ]"
-                value-prefix="¥"
-                :state="combineSourceAvailability(trendFinancialState, sourceStates.accounts, sourceStates.costLoss)"
-                :state-reason="trendFinancialReason || sourceStates.costLoss.reason"
-              />
-            </ChartPanel>
+          </div>
+
+          <div class="cost-diagnostics-toggle">
+            <button type="button" class="cost-text-button" :aria-expanded="showDiagnostics" @click="showDiagnostics = !showDiagnostics">
+              <SlidersHorizontal :size="15" />
+              {{ showDiagnostics ? '收起诊断数据' : '展开诊断数据' }}
+            </button>
+            <span>请求质量、账号健康、TTFT、Token、缓存和路由明细仅在需要时显示。</span>
           </div>
 
           <AdaptiveOperationsCharts
+            v-if="showDiagnostics"
             :ops-trend="opsTrend"
             :financial-trend="financialTrend"
             :error-trend="opsErrorTrend"
@@ -291,8 +289,15 @@
               <MetricCell label="替换请求成本" :value="hasMeasuredData(sourceStates.modelRoutes) ? formatUsd(modelAuditSummary.mismatchAccountCost, 6) : unavailableValueLabel(sourceStates.modelRoutes)" :note="`标准 ${formatUsd(modelAuditSummary.mismatchStandardCost, 6)} · 用户计费 ${formatUsd(modelAuditSummary.mismatchRevenue, 6)}`" :state="sourceStates.modelRoutes.status" accent="blue" />
             </div>
 
+            <div class="cost-model-truth-strip" role="status">
+              <div><strong>模型核对真实性</strong><span>{{ modelCostSourceLabel }} · {{ formatInteger(modelAuditSummary.observedRequests) }} 个请求有响应声明</span></div>
+              <div><span>请求模型</span><b>requested_model</b><i>客户端意图</i></div>
+              <div><span>上游模型</span><b>upstream_model</b><i>实际发送</i></div>
+              <div><span>响应模型</span><b>upstream_response_model</b><i>未声明不计入一致率</i></div>
+            </div>
+
             <p class="cost-model-note">
-              DeepSeek 官方接口会区分缓存命中 Token；API 中转站按其返回的 usage、实际上游模型及渠道/账号价格核算。价格同步只影响后续请求，历史记录保留请求发生时的价格快照；上游未返回 usage 时不会伪造精确成本。
+              DeepSeek 官方接口会区分缓存命中 Token；API 中转站按其返回的 usage、实际上游模型及渠道/账号价格核算。价格同步只影响后续请求，历史记录保留请求发生时的价格快照；上游未返回 usage 时不会伪造精确成本。`actual_cost` 是用户计费产出，不是上游成本。
             </p>
             <p class="cost-model-note">
               这里展示的是“所选时间窗口内发生过的模型调用历史”，不是当前账号池支持模型清单。因此当前池只有 DeepSeek 时，窗口内仍可能出现此前真实调用过的 GPT；一天内调用多个模型会分别统计，切换或删除账号也不会抹掉记录。可通过统计窗口、成本账号和模型审计精确筛选。
@@ -304,12 +309,12 @@
               当前内核未返回可信的精确时间边界，且所选窗口超过 25,000 条 usage_logs。为避免把最近样本冒充完整成本，模型汇总已停止；请缩小统计窗口或选择具体成本账号。
             </p>
 
-            <div class="cost-model-contribution">
+            <div v-if="showDiagnostics" class="cost-model-contribution">
               <div class="cost-panel-heading"><strong>主要模型贡献 Top 8</strong><span>用户收入 / 上游成本 / 毛利 · 单图固定 3 个指标</span></div>
               <ModelContributionChart :rows="modelCostRows" :state="sourceStates.models.status" :state-reason="sourceStates.models.reason" />
             </div>
 
-            <div class="cost-model-table-wrap" tabindex="0" aria-label="模型成本表，可横向滚动">
+            <div v-if="showDiagnostics" class="cost-model-table-wrap" tabindex="0" aria-label="模型成本表，可横向滚动">
               <table class="cost-model-table">
                 <thead>
                   <tr><th>模型</th><th>调用时间</th><th>请求</th><th>输入 Token</th><th>缓存命中</th><th>输出 Token</th><th>标准 / 渠道价</th><th>上游账号成本</th><th>用户实际计费</th><th>毛利 / 毛利率</th></tr>
@@ -332,11 +337,11 @@
               </table>
             </div>
 
-            <div class="cost-route-heading">
+            <div v-if="showDiagnostics" class="cost-route-heading">
               <div><strong>真实模型 / 渠道 / 接口明细</strong><span>只展示 usage_logs 实际记录，不从账号名称猜测</span></div>
               <small v-if="modelRoutesTruncated" class="cost-warning-text">超过 25,000 条，仅显示最近样本</small>
             </div>
-            <div class="cost-model-table-wrap" tabindex="0" aria-label="真实模型渠道接口明细，可横向滚动">
+            <div v-if="showDiagnostics" class="cost-model-table-wrap" tabindex="0" aria-label="真实模型渠道接口明细，可横向滚动">
               <table class="cost-model-table cost-route-table">
                 <thead>
                   <tr><th>请求 → 发往上游</th><th>响应声明 / 审计</th><th>调用时间</th><th>渠道</th><th>账号</th><th>分组</th><th>入站接口</th><th>上游接口</th><th>当前单价</th><th>请求</th><th>Token / 缓存</th><th>标准 / 账号成本</th></tr>
@@ -354,7 +359,7 @@
                     <td><strong>入 {{ formatUsdPerMillion(resolveRoutePricing(routeRow)?.input_price) }} · 出 {{ formatUsdPerMillion(resolveRoutePricing(routeRow)?.output_price) }}</strong><small>缓存写 {{ formatUsdPerMillion(resolveRoutePricing(routeRow)?.cache_write_price) }} · 命中 {{ formatUsdPerMillion(resolveRoutePricing(routeRow)?.cache_read_price) }} · {{ routePricingSource(routeRow) }}</small></td>
                     <td>{{ formatInteger(routeRow.requests) }}</td>
                     <td><strong>{{ formatTokens(routeRow.inputTokens + routeRow.cacheReadTokens + routeRow.outputTokens) }}</strong><small>缓存 {{ formatTokens(routeRow.cacheReadTokens) }}</small></td>
-                    <td><strong>{{ formatUsd(routeRow.standardCost, 6) }} / {{ formatUsd(routeRow.accountCost, 6) }}</strong><small>请求快照</small></td>
+                    <td><strong>{{ formatUsd(routeRow.standardCost, 6) }} / {{ formatUsd(routeRow.accountCost, 6) }}</strong><small :class="{ 'cost-warning-text': routeRow.accountCostEstimated }">{{ routeRow.accountCostEstimated ? '账号成本估算 · 标准价回退' : '请求快照' }}</small></td>
                   </tr>
                   <tr v-if="visibleModelRoutes.length === 0"><td colspan="12" class="cost-empty-row">{{ sourceStates.modelRoutes.status === 'unavailable' ? `模型路由无数据：${sourceStates.modelRoutes.reason}` : modelAuditMismatchOnly ? `${modelCostRangeLabel}没有确认的模型不一致记录` : `${modelCostRangeLabel}没有真实路由记录` }}</td></tr>
                 </tbody>
@@ -481,9 +486,10 @@
                   <td>
                     <div v-if="row.usage" class="cost-usage-windows">
                       <span v-if="row.usage.five_hour"><b>5h</b><i><em :style="{ width: `${clampUtilization(row.usage.five_hour.utilization)}%` }"></em></i><strong>{{ formatUtilization(row.usage.five_hour.utilization) }}</strong><small>{{ formatUsageReset(row.usage.five_hour.resets_at) }}</small></span>
-                      <span v-if="row.usage.seven_day"><b>7d</b><i><em :style="{ width: `${clampUtilization(row.usage.seven_day.utilization)}%` }"></em></i><strong>{{ formatUtilization(row.usage.seven_day.utilization) }}</strong><small>{{ formatUsageReset(row.usage.seven_day.resets_at) }}</small></span>
-                      <small v-if="!row.usage.five_hour && !row.usage.seven_day">暂无窗口</small>
-                    </div>
+                       <span v-if="row.usage.seven_day"><b>7d</b><i><em :style="{ width: `${clampUtilization(row.usage.seven_day.utilization)}%` }"></em></i><strong>{{ formatUtilization(row.usage.seven_day.utilization) }}</strong><small>{{ formatUsageReset(row.usage.seven_day.resets_at) }}</small></span>
+                       <small v-if="!row.usage.five_hour && !row.usage.seven_day">暂无窗口</small>
+                       <small v-if="sourceStates.accountUsage.status === 'stale'" class="cost-warning-text">旧快照 · 最近成功 {{ formatModelTime(sourceStates.accountUsage.lastSuccessAt ?? undefined) }}</small>
+                     </div>
                     <small v-else>{{ sourceStates.accountUsage.status === 'unavailable' ? `无数据：${sourceStates.accountUsage.reason}` : sourceStates.accountUsage.status === 'stale' ? '旧数据不可用' : '等待同步' }}</small>
                   </td>
                   <td><span v-if="row.scoreRaw != null" class="cost-score" :data-grade="scoreGrade(row.score)">{{ row.score.toFixed(1) }}</span><span v-else class="cost-score is-unavailable">无数据</span><small>{{ row.scoreRaw == null ? '内核未提供账号调度分' : `${row.scoreRaw.toFixed(2)} / ${row.scoreMax.toFixed(2)}` }} · {{ row.account.scheduler_score?.sticky_weighted_enabled ? 'sticky' : 'base' }}</small></td>
@@ -637,6 +643,7 @@ import {
   RefreshCcw,
   Search,
   Settings2,
+  SlidersHorizontal,
   ShoppingBag,
   TriangleAlert,
   TrendingUp,
@@ -751,6 +758,7 @@ const bulkCostEdit = ref(false)
 const now = ref(new Date())
 const autoRefresh = ref(true)
 const refreshIntervalSeconds = ref<5 | 10 | 15 | 30>(30)
+const showDiagnostics = ref(false)
 const countdown = ref(refreshIntervalSeconds.value)
 let clockTimer: number | null = null
 
@@ -987,9 +995,8 @@ const trendFinancialReason = computed(() => trendFinancialUsesOps.value
     : sourceStates.value.dashboard.reason)
 const trendActualCost = computed(() => financialTrend.value.map((point) => divideFiniteChartValue(point.billedUsd, point.bucketHours)))
 const rollingTrendActualCost = computed(() => movingAverage(trendActualCost.value, trendSmoothingPoints.value))
-const trendStandardCost = computed(() => financialTrend.value.map((point) => multiplyFiniteChartValue(divideFiniteChartValue(point.accountCostUsd, point.bucketHours), exchangeRate.value.rate)))
-const procurementBaseline = computed(() => financialTrend.value.map(() => procurementHourlyCny.value))
-const trendCombinedCost = computed(() => trendStandardCost.value.map((value, index) => procurementHourlyCny.value == null || windowAccountCostUsd.value == null || value == null ? null : value + (procurementBaseline.value[index] ?? 0)))
+const trendAccountCost = computed(() => financialTrend.value.map((point) => divideFiniteChartValue(point.accountCostUsd, point.bucketHours)))
+const trendContribution = computed(() => financialTrend.value.map((point) => divideFiniteChartValue(point.contributionUsd, point.bucketHours)))
 const qualityTrendLabels = computed(() => opsTrend.value.length ? opsTrend.value.map((point) => formatTrendLabel(point.bucket_start)) : trendLabels.value)
 const requestVolumeTrend = computed(() => opsTrend.value.length
   ? opsTrend.value.map((point) => Number(point.request_count || 0))
@@ -1232,7 +1239,6 @@ function combineSourceAvailability(...states: DataSourceState[]): DataAvailabili
 function scoreGrade(score: number): string { return score >= 82 ? 'A' : score >= 70 ? 'B' : score >= 58 ? 'C' : 'D' }
 function finiteChartValue(value: unknown): number | null { const number = Number(value); return value == null || !Number.isFinite(number) ? null : number }
 function divideFiniteChartValue(value: unknown, divisor: number): number | null { const number = finiteChartValue(value); return number == null || !Number.isFinite(divisor) || divisor <= 0 ? null : number / divisor }
-function multiplyFiniteChartValue(value: unknown, multiplier: number): number | null { const number = finiteChartValue(value); return number == null || !Number.isFinite(multiplier) ? null : number * multiplier }
 function sumFiniteTrendValues(values: unknown[]): number | null { const numbers = values.map(finiteChartValue); return numbers.some((value) => value == null) ? null : numbers.reduce<number>((sum, value) => sum + Number(value), 0) }
 function movingAverage(values: Array<number | null>, windowSize: number): Array<number | null> { return values.map((_, index) => { const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1).filter((value): value is number => value != null && Number.isFinite(value)); return slice.length ? slice.reduce((sum, value) => sum + value, 0) / slice.length : null }) }
 function formatInteger(value: number | null | undefined): string { return value == null || !Number.isFinite(Number(value)) ? '无数据' : Math.round(Number(value)).toLocaleString() }
@@ -1517,6 +1523,9 @@ button:active { transform: translateY(1px); }
 .cost-chart-row { display: grid; grid-template-columns: 1fr 1fr; margin-top: 18px; border: 1px solid var(--cost-line); }
 .cost-chart-panel { min-width: 0; padding: 14px 18px 12px; background: var(--cost-panel); border-right: 1px solid var(--cost-line); }.cost-chart-panel:last-child { border-right: 0; }
 .cost-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }.cost-panel-heading strong { font-size: 12px; }.cost-panel-heading span { color: var(--cost-muted); font: 9px 'Cascadia Mono', monospace; }
+.cost-diagnostics-toggle { display: flex; align-items: center; gap: 12px; margin-top: 10px; color: var(--cost-muted); font: 10px 'Cascadia Mono', monospace; }
+.cost-diagnostics-toggle .cost-text-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; color: var(--cost-lime); background: rgb(185 229 90 / 7%); border: 1px solid rgb(185 229 90 / 28%); }
+.cost-diagnostics-toggle .cost-text-button:hover { background: rgb(185 229 90 / 13%); }
 .cost-bottom-row { display: grid; grid-template-columns: 2.2fr 1fr; margin-top: 18px; border: 1px solid var(--cost-line); }.cost-score-panel { border-right: 1px solid var(--cost-line); }
 .cost-distribution-panel { min-width: 0; padding: 14px 18px; background: var(--cost-panel); }
 .cost-distribution-panel__body { display: grid; grid-template-columns: 145px 1fr; align-items: center; gap: 14px; margin-top: 12px; }
@@ -2283,6 +2292,12 @@ button:active { transform: translateY(1px); }
 .cost-model-note { margin: 0; padding: 10px 16px; color: #89958b; background: rgb(38 47 39 / 42%); border-bottom: 1px solid var(--cost-line); font-size: 10px; line-height: 1.55; }
 .cost-model-note--warning { color: #d7bb73; border-left: 2px solid #d7bb73; background: rgb(93 72 31 / 22%); }
 .cost-model-contribution { padding: 14px 16px 8px; border-bottom: 1px solid var(--cost-line); background: #111611; }
+.cost-model-truth-strip { display: grid; grid-template-columns: minmax(220px, 1.6fr) repeat(3, minmax(150px, 1fr)); gap: 1px; margin: 12px 16px 0; border: 1px solid var(--cost-line); background: var(--cost-line); }
+.cost-model-truth-strip > div { display: grid; align-content: center; gap: 3px; min-height: 62px; padding: 10px 12px; background: #121713; }
+.cost-model-truth-strip span, .cost-model-truth-strip i { color: var(--cost-muted); font-size: 10px; font-style: normal; }
+.cost-model-truth-strip b { color: var(--cost-blue); font: 600 10px 'Cascadia Mono', Consolas, monospace; }
+.cost-model-truth-strip > div:first-child strong { color: var(--cost-lime); font-size: 12px; }
+.cost-model-truth-strip > div:first-child span { margin-top: 2px; }
 .cost-route-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; background: #151c16; border-top: 1px solid #3a443b; border-bottom: 1px solid var(--cost-line); }
 .cost-route-heading strong, .cost-route-heading span { display: block; }
 .cost-route-heading strong { color: #dce5da; font-size: 12px; }

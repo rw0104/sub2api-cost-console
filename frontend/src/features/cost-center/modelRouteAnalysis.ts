@@ -26,6 +26,7 @@ export interface ModelRouteRow {
   outputTokens: number
   standardCost: number
   accountCost: number
+  accountCostEstimated: boolean
   revenue: number
   firstSeen: string
   lastSeen: string
@@ -82,6 +83,7 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
       existing.outputTokens += numeric(log.output_tokens)
       existing.standardCost += numeric(log.total_cost)
       existing.accountCost += accountCost
+      existing.accountCostEstimated = existing.accountCostEstimated || log.account_stats_cost == null
       existing.revenue += numeric(log.actual_cost)
       if (log.created_at < existing.firstSeen) existing.firstSeen = log.created_at
       if (log.created_at > existing.lastSeen) existing.lastSeen = log.created_at
@@ -112,6 +114,7 @@ export function buildModelRouteRows(logs: AdminUsageLog[], channels: Channel[]):
       outputTokens: numeric(log.output_tokens),
       standardCost: numeric(log.total_cost),
       accountCost,
+      accountCostEstimated: log.account_stats_cost == null,
       revenue: numeric(log.actual_cost),
       firstSeen: log.created_at,
       lastSeen: log.created_at,

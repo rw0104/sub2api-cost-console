@@ -76,6 +76,15 @@ describe('cost center UI shell contract', () => {
     expect(source).not.toContain('label="生命周期已确认封禁损失"')
   })
 
+  it('keeps diagnostics opt-in and labels model evidence explicitly', () => {
+    expect(source).toContain('v-if="showDiagnostics"')
+    expect(source).toContain('展开诊断数据')
+    expect(source).toContain('模型核对真实性')
+    expect(source).toContain('requested_model')
+    expect(source).toContain('upstream_model')
+    expect(source).toContain('upstream_response_model')
+  })
+
   it('includes deleted one-time purchase snapshots in the monthly purchase total', () => {
     expect(source).toContain('archivedMonthlyOneTimeProcurementCny')
     expect(source).toContain('state.cost_profile.billing_cycle === \'one_time\'')

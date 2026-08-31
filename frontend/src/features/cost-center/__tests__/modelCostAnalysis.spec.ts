@@ -40,6 +40,14 @@ describe('model cost analysis', () => {
     expect(rows[0].accountCostEstimated).toBe(true)
   })
 
+  it('preserves the estimated marker when usage-log aggregation falls back per request', () => {
+    const rows = buildModelCostRows(aggregateModelStatsFromUsageLogs([
+      { model: 'relay-model', total_cost: 0.2, actual_cost: 0.3, account_stats_cost: null },
+    ] as any, 'upstream'))
+
+    expect(rows[0]).toMatchObject({ accountCost: 0.2, accountCostEstimated: true })
+  })
+
   it('summarizes every visible model', () => {
     const rows = buildModelCostRows([
       { model: 'deepseek-v4-flash', cost: 0.14, account_cost: 0.1, actual_cost: 0.2 } as any,
