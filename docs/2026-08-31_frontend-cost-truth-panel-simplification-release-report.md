@@ -93,6 +93,22 @@
 - linked_workitem: n/a
 - supersedes: none
 
+### E-005
+
+- title: GitHub Actions 已完成签名桌面 Release
+- observed_at: 2026-08-31
+- source_type: command
+- source_ref: GitHub Actions run `33379760995`
+- content_hash: `4290f8a9e6cecd753b2e4e5ff4b99281e528dcd316e5388b3481c2fcdd06fe58`
+- artifact_path: GitHub Release asset `Sub2API.Cost.Console_0.2.28_x64-setup.exe`
+- repro_command: |
+    `gh run view 33379760995 --repo rw0104/sub2api-cost-console --json status,conclusion,headSha`
+    `gh release view v0.2.28 --repo rw0104/sub2api-cost-console --json tagName,isDraft,isPrerelease,assets`
+    `Invoke-RestMethod https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.28/latest.json`
+- raw_excerpt: `Run success；Release v0.2.28 为正式版；安装器 30,544,993 bytes；安装器 SHA-256=4290f8a9e6cecd753b2e4e5ff4b99281e528dcd316e5388b3481c2fcdd06fe58；latest.json version=0.2.28。`
+- linked_workitem: n/a
+- supersedes: none
+
 ### F-001
 
 - title: 临时刷新故障不应使成本事实自动消失
@@ -152,11 +168,13 @@
   2. action: 成功值写入 canonical 状态，失败值保留旧快照并标记 stale - evidence: E-001 - finding: F-001
   3. action: 财务趋势统一映射产出、账号成本和调用贡献 - evidence: E-002 - finding: F-002
   4. action: 总览只渲染一张事实趋势，其他统计按需展开 - evidence: E-003 - finding: F-003
-- residual_risks: 本地桌面构建已生成 NSIS，但因缺少 Tauri 私钥未生成 updater 签名；正式发布必须使用 GitHub Actions Secret 完成签名和资产上传。
+- residual_risks: 本地桌面构建未配置 Tauri 私钥，因此本地包不能作为更新源；正式签名发布已由 GitHub Actions 完成，后续仍需在目标 Windows 环境进行安装和升级冒烟验证。
 
 ## 发布记录
 
 - 桌面版本元数据：`v0.2.28`。
 - 兼容内核和成本版本未变：`0.1.183` / `1.1.1` / `1.6.0`。
 - 本地 NSIS 产物：`frontend/src-tauri/target/release/bundle/nsis/Sub2API Cost Console_0.2.28_x64-setup.exe`。
-- 本地 NSIS 产物未作为正式更新源发布；updater 签名和 GitHub Release 由 `desktop-release.yml` 完成。
+- 本地 NSIS 产物未作为正式更新源发布；updater 签名和 GitHub Release 由 `desktop-release.yml` 完成并通过 Run `33379760995` 验证。
+- 正式 Release：[v0.2.28](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.28)，安装器 SHA-256：`4290f8a9e6cecd753b2e4e5ff4b99281e528dcd316e5388b3481c2fcdd06fe58`。
+- `latest.json` SHA-256：`4f5a632abfcd25d2e1ca85dfd2d68d5e52f1c4074406dbfa1f64120df5342c80`；安装器签名文件 SHA-256：`d8395c218a1f8210ffb7f07e004b5313f26ef8617f375fd0dca0f94f3e5d2bff`。
