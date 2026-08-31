@@ -202,7 +202,6 @@ func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
 	}
 	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
 }
-
 func isOpenAICapacityShedMessage(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	return strings.Contains(lower, "server is overloaded") ||
@@ -393,7 +392,7 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 		retryableOnSameAccount || oauth429Retry,
 		forceNextAccount...,
 	)
-	if oauth429Retry && failoverErr.RetryableOnSameAccount {
+	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
 	}
