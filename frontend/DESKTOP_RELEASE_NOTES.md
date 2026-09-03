@@ -1,4 +1,4 @@
-# Sub2API Cost Console v0.2.29
+# Sub2API Cost Console v0.2.30
 
 ## 主要更新
 
@@ -11,7 +11,9 @@
 
 ### 兼容内核升级
 
-- 兼容内核从上游 `v0.1.183` 升级到 `v0.1.184`，保留 OAuth、API Key、HTTP 和 WebSocket 的 OpenAI Responses 兼容处理。
+- 兼容内核从上游 `v0.1.184` 升级到 `v0.2.0`，保留 OAuth、API Key、HTTP 和 WebSocket 的 OpenAI Responses 兼容处理。
+- 新增 OpenAI Fast 分组策略、按模型配置 reasoning effort、Kimi 原生 Responses API 转发、Claude Fable 5.1，以及无 call ID 的定时自动化启动请求。
+- 优化 OpenAI passthrough 配置快照和 API Key 对话缓存身份；修复 WebSocket terminal event 关闭处理、模型级冷却误转 429，以及 Anthropic fallback beta 误透传。
 - 新增 Codex 路由模型目录与能力同步，支持真实路由模型、精确账号模型别名和可下载的客户端目录。
 - 新增原生 compaction 用量记录、映射前推理强度、公共分组访问限制、智谱 GLM Coding Plan 用量和 Ollama Cloud 国产平台窗口。
 - 优化 OpenAI service tier/配额重置、TTFT 管理配置、上游倍率探测、DeepSeek 峰谷价格、WebSocket 粘性会话和图像工具冷却。
@@ -39,8 +41,8 @@
 
 ## 当前兼容内核
 
-- 上游 Sub2API：`v0.1.184`
-- 上游提交：`e98ef32eb29aecd30d1def615912ec4dc93173f3`
+- 上游 Sub2API：`v0.2.0`
+- 上游提交：`aa236488351eb71e120fc2b6fb32e36b0374c918`
 - 成本扩展：`v1.1.1`
 - 成本算法：`v1.6.0`
 - 经济预测与时间序列：`v1.1.1`
@@ -56,7 +58,7 @@
 
 ## 升级行为
 
-- `v0.2.22` 至 `v0.2.28` 可通过桌面自动更新直接升级到 `v0.2.29`，也可运行 NSIS 安装包原位升级；本地配置与已保存启动目录保持不变。
+- `v0.2.22` 至 `v0.2.29` 可通过桌面自动更新直接升级到 `v0.2.30`，也可运行 NSIS 安装包原位升级；本地配置与已保存启动目录保持不变。
 - 桌面升级不会改写 Codex、Claude Code、Cursor、OpenCode 或 Grok 的账号配置文件。
 - 内核仍使用活动、待激活和上一版三个槽位；候选内核通过身份与能力校验后才会激活。
 
@@ -73,7 +75,7 @@
 - 回归测试覆盖用户设备当天边界、成功空桶零值、失败来源空态、延迟缺样、API 毛利公式以及采购/减值分账。
 - Rust 启动器测试覆盖 ChatGPT Desktop、Codex CLI、Claude Code、Cursor Agent、OpenCode、Grok CLI 与 PowerShell 回退路径。
 - Release 校验会阻止版本号、必需章节或一键启动说明缺失的发布。
-- 内核身份校验会同时核对 `v0.1.184`、上游提交和成本扩展能力清单，避免发布未验证的官方原版二进制。
+- 内核身份校验会同时核对 `v0.2.0`、上游提交和成本扩展能力清单，避免发布未验证的官方原版二进制。
 
 ## 回滚说明
 
