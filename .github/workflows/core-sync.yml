@@ -116,7 +116,10 @@ jobs:
               throw "Unable to resolve the pinned upstream tree for $pinnedCommit"
             }
             $syntheticBase = $null
-            foreach ($candidate in @(git log --all --format='%H' --fixed-strings "--grep=synthetic upstream v$pinnedVersion")) {
+            # Historical releases used both `synthetic upstream vX` and
+            # `synthetic-upstream-vX`; accept either spelling when locating
+            # the tree that corresponds to the pinned upstream source.
+            foreach ($candidate in @(git log --all --format='%H' --regexp-ignore-case --extended-regexp "--grep=synthetic[- ]upstream[- ]v$pinnedVersion")) {
               $candidateTree = (git show -s --format='%T' $candidate).Trim()
               git merge-base --is-ancestor $candidate HEAD
               if ($LASTEXITCODE -eq 0 -and $candidateTree -eq $pinnedTree) {
