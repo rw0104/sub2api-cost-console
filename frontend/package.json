@@ -6,8 +6,9 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "build:desktop": "vue-tsc -b && vite build --mode desktop",
+    "check:i18n": "vitest run src/i18n/__tests__/localeKeyCompleteness.spec.ts",
+    "build": "pnpm run check:i18n && vue-tsc -b && vite build",
+    "build:desktop": "pnpm run check:i18n && vue-tsc -b && vite build --mode desktop",
     "preview": "vite preview",
     "desktop:prepare-sidecar": "node scripts/prepare-desktop-sidecar.mjs",
     "desktop:prepare-core-release": "node scripts/prepare-core-release.mjs",
