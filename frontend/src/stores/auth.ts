@@ -5,7 +5,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed, readonly, onScopeDispose } from 'vue'
-import { expireAuthSession, onAuthSessionInvalidated } from '@/api/authSession'
+import { expireAuthSession, markAuthSessionEstablished, onAuthSessionInvalidated } from '@/api/authSession'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import type {
   User,
@@ -122,6 +122,7 @@ export const useAuthStore = defineStore('auth', () => {
         user.value = JSON.parse(savedUser)
         refreshTokenValue.value = savedRefreshToken
         tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
+        markAuthSessionEstablished()
 
         // Immediately refresh user data from backend (async, don't block)
         refreshUser().catch((error) => {
@@ -325,6 +326,7 @@ export const useAuthStore = defineStore('auth', () => {
     // Persist to localStorage
     localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
+    markAuthSessionEstablished()
     clearPendingAuthSession()
 
     // Start auto-refresh interval for user data
@@ -375,6 +377,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     token.value = newToken
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
+    markAuthSessionEstablished()
 
     // Read refresh token and expires_at from localStorage if set by OAuth callback
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)

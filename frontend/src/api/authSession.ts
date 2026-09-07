@@ -3,6 +3,10 @@ import { getCurrentAppPath, redirectToAppPath } from './url'
 const invalidationHandlers = new Set<() => void>()
 let loginRedirectPending = false
 
+export function markAuthSessionEstablished(): void {
+  loginRedirectPending = false
+}
+
 /** Store scopes subscribe without introducing an API-client / Pinia import cycle. */
 export function onAuthSessionInvalidated(handler: () => void): () => void {
   invalidationHandlers.add(handler)

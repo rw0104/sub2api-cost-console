@@ -222,4 +222,20 @@ describe('desktop session invalidation', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
     expect(userRefresh).not.toHaveBeenCalled()
   })
+
+  it('can redirect a new session even if its tokens were removed by another document', async () => {
+    seed()
+    await rejectResponse(unauthorized()).catch(() => undefined)
+    const { authAPI } = await import('@/api')
+    vi.spyOn(authAPI, 'login').mockResolvedValue({
+      access_token: 'next-access', refresh_token: 'next-refresh', expires_in: 3600,
+      token_type: 'Bearer', user: user(2),
+    })
+    await auth.login({ email: 'fixture@example.invalid', password: 'fixture-only' })
+    window.history.replaceState({}, '', '/index.html#/admin/dashboard')
+    localStorage.clear()
+    await rejectResponse(unauthorized('')).catch(() => undefined)
+    expect(auth.isAuthenticated).toBe(false)
+    expect(window.location.hash).toBe('#/login')
+  })
 })
