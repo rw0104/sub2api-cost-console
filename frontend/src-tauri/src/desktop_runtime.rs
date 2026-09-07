@@ -1,4 +1,8 @@
+use crate::managed_child::ManagedChild;
 use crate::managed_core_process::stop_owned_listener;
+use crate::startup_dependencies::{
+    configured_dependencies, ensure_dependencies, StartupProblem, SystemDependencies,
+};
 use reqwest::{Client, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -14,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_shell::{process::CommandChild, process::CommandEvent, ShellExt};
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tokio::{
     io::AsyncWriteExt,
     sync::Mutex as AsyncMutex,
@@ -41,10 +45,11 @@ pub const CORE_CAPABILITIES: &str = env!("SUB2API_CORE_CAPABILITIES");
 pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
 pub const BUNDLED_CORE_COMMIT: &str = env!("SUB2API_BUNDLED_CORE_COMMIT");
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendPhase {
     Starting,
+    WaitingForDependencies,
     Ready,
     Stopped,
     Error,
@@ -65,6 +70,7 @@ pub struct BackendStatus {
     pub core_sha256: String,
     pub message: String,
     pub last_log: String,
+    pub problem: Option<StartupProblem>,
 }
 
 impl BackendStatus {
@@ -83,12 +89,14 @@ impl BackendStatus {
             core_sha256: versions.sha256.clone(),
             message: "正在启动本地 Sub2API 内核".into(),
             last_log: String::new(),
+            problem: None,
         }
     }
 }
 
 struct BackendInner {
-    child: Option<CommandChild>,
+    child: Option<ManagedChild>,
+    starting: bool,
     status: BackendStatus,
     generation: u64,
     consecutive_failures: u32,
@@ -99,6 +107,7 @@ struct BackendInner {
 pub struct BackendSupervisor {
     inner: Arc<Mutex<BackendInner>>,
     update_lock: Arc<AsyncMutex<()>>,
+    lifecycle_lock: Arc<Mutex<()>>,
 }
 
 impl BackendSupervisor {
@@ -106,12 +115,14 @@ impl BackendSupervisor {
         Self {
             inner: Arc::new(Mutex::new(BackendInner {
                 child: None,
+                starting: false,
                 status: BackendStatus::initial(data_dir, versions),
                 generation: 0,
                 consecutive_failures: 0,
                 shutting_down: false,
             })),
             update_lock: Arc::new(AsyncMutex::new(())),
+            lifecycle_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -127,6 +138,61 @@ impl BackendSupervisor {
         let mut inner = self.inner.lock().expect("backend state poisoned");
         update(&mut inner.status);
         inner.status.clone()
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        let inner = self.inner.lock().expect("backend state poisoned");
+        inner.generation == generation && !inner.shutting_down
+    }
+
+    fn reserve_start(&self, expected: Option<u64>) -> Option<u64> {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if expected.is_some_and(|generation| inner.generation != generation)
+            || inner.child.is_some()
+            || inner.starting
+            || inner.shutting_down
+        {
+            return None;
+        }
+        inner.generation += 1;
+        inner.starting = true;
+        inner.status.phase = BackendPhase::Starting;
+        inner.status.problem = None;
+        inner.status.last_log.clear();
+        inner.status.message = "正在检查本地数据服务".into();
+        Some(inner.generation)
+    }
+
+    fn record_log(&self, generation: u64, line: String) {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if inner.generation == generation && !inner.shutting_down {
+            inner.status.last_log = line;
+        }
+    }
+
+    fn record_exit(&self, generation: u64, code: Option<i32>) -> Option<(u64, bool)> {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if inner.generation != generation || inner.shutting_down {
+            return None;
+        }
+        inner.child = None;
+        inner.starting = false;
+        inner.status.pid = None;
+        // Invalidate the health check immediately, before any retry delay.
+        inner.generation += 1;
+        inner.consecutive_failures += 1;
+        let restart = inner.consecutive_failures <= 5;
+        inner.status.phase = if restart {
+            BackendPhase::Starting
+        } else {
+            BackendPhase::Error
+        };
+        inner.status.message = if restart {
+            format!("内核已退出（{code:?}），正在重新检查数据服务")
+        } else {
+            "内核多次启动失败，请查看技术详情后重试".into()
+        };
+        Some((inner.generation, restart))
     }
 }
 
@@ -703,21 +769,103 @@ fn ensure_backend_zoneinfo(data_dir: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<(), String> {
-    {
-        let inner = supervisor.inner.lock().expect("backend state poisoned");
-        if inner.child.is_some() || inner.shutting_down {
+    start_backend_if_current(app, supervisor, None)
+}
+
+fn start_backend_if_current(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    expected: Option<u64>,
+) -> Result<(), String> {
+    let generation = {
+        let _guard = supervisor
+            .lifecycle_lock
+            .lock()
+            .expect("backend lifecycle poisoned");
+        let Some(generation) = supervisor.reserve_start(expected) else {
+            return Ok(());
+        };
+        generation
+    };
+    emit_backend_status(&app, &supervisor);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = prepare_backend_start(&app, &supervisor, generation).await {
+            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+            if inner.generation != generation || inner.shutting_down {
+                return;
+            }
+            inner.starting = false;
+            inner.status.phase = BackendPhase::Error;
+            inner.status.message = error;
+            drop(inner);
+            emit_backend_status(&app, &supervisor);
+        }
+    });
+    Ok(())
+}
+
+async fn prepare_backend_start(
+    app: &AppHandle,
+    supervisor: &BackendSupervisor,
+    generation: u64,
+) -> Result<(), String> {
+    let data_dir = backend_data_dir(app)?;
+    loop {
+        if !supervisor.is_current(generation) {
             return Ok(());
         }
+        let dependencies = configured_dependencies(&data_dir);
+        let result = match dependencies {
+            Ok(dependencies) => ensure_dependencies(&dependencies, &SystemDependencies).await,
+            Err(error) => Err(error),
+        };
+        let retry = {
+            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+            if inner.generation != generation || inner.shutting_down {
+                return Ok(());
+            }
+            match result {
+                Ok(()) => {
+                    inner.status.problem = None;
+                    Some(false)
+                }
+                Err(problem) => {
+                    let retryable = problem.retryable;
+                    inner.status.phase = if retryable {
+                        BackendPhase::WaitingForDependencies
+                    } else {
+                        BackendPhase::Error
+                    };
+                    inner.status.message = problem.message.clone();
+                    inner.status.problem = Some(problem);
+                    if !retryable {
+                        inner.starting = false;
+                    }
+                    retryable.then_some(true)
+                }
+            }
+        };
+        emit_backend_status(app, supervisor);
+        match retry {
+            Some(false) => break,
+            None => return Ok(()),
+            Some(true) => {}
+        }
+        sleep(Duration::from_secs(3)).await;
     }
+    spawn_backend_process(app.clone(), supervisor.clone(), generation)
+}
 
-    if port_is_open() {
-        supervisor.update_status(|status| {
-            status.phase = BackendPhase::Ready;
-            status.managed = false;
-            status.pid = None;
-            status.message = "已连接本机现有 Sub2API 服务".into();
-        });
-        emit_backend_status(&app, &supervisor);
+fn spawn_backend_process(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    generation: u64,
+) -> Result<(), String> {
+    let _lifecycle = supervisor
+        .lifecycle_lock
+        .lock()
+        .expect("backend lifecycle poisoned");
+    if !supervisor.is_current(generation) {
         return Ok(());
     }
 
@@ -741,6 +889,26 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
         return Err(message);
     }
 
+    if port_is_open() {
+        // An owned orphan can be reclaimed; an unrelated listener is never killed.
+        if stop_owned_listener(BACKEND_PORT, &executable).unwrap_or(false) {
+            wait_for_backend_port_release_blocking()?;
+        } else {
+            supervisor.update_status(|status| {
+                status.phase = BackendPhase::Starting;
+                status.managed = false;
+                status.pid = None;
+                status.message = "正在验证本机现有服务".into();
+            });
+            emit_backend_status(&app, &supervisor);
+            let probe_supervisor = supervisor.clone();
+            tauri::async_runtime::spawn(async move {
+                probe_backend(app, probe_supervisor, generation).await;
+            });
+            return Ok(());
+        }
+    }
+
     let mut command = app
         .shell()
         .command(&executable)
@@ -761,17 +929,17 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
         .spawn()
         .map_err(|error| format!("无法启动 Sub2API 内核: {error}"))?;
 
+    let child = ManagedChild::new(child)?;
     let pid = child.pid();
-    let generation = {
+    {
         let mut inner = supervisor.inner.lock().expect("backend state poisoned");
-        inner.generation += 1;
+        inner.starting = false;
         inner.child = Some(child);
         inner.status.phase = BackendPhase::Starting;
         inner.status.managed = true;
         inner.status.pid = Some(pid);
         inner.status.message = "Sub2API 内核已启动，正在等待服务就绪".into();
-        inner.generation
-    };
+    }
     emit_backend_status(&app, &supervisor);
 
     let event_app = app.clone();
@@ -782,43 +950,32 @@ pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<()
                 CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                     let line = String::from_utf8_lossy(&bytes).trim().to_string();
                     if !line.is_empty() {
-                        event_supervisor.update_status(|status| status.last_log = line);
+                        event_supervisor.record_log(generation, line);
                     }
                 }
                 CommandEvent::Error(error) => {
-                    event_supervisor.update_status(|status| status.last_log = error);
+                    event_supervisor.record_log(generation, error);
                 }
                 CommandEvent::Terminated(payload) => {
-                    let should_restart = {
-                        let mut inner = event_supervisor
-                            .inner
-                            .lock()
-                            .expect("backend state poisoned");
-                        if inner.generation != generation {
-                            false
-                        } else {
-                            inner.child = None;
-                            inner.status.pid = None;
-                            inner.consecutive_failures += 1;
-                            let should_restart =
-                                !inner.shutting_down && inner.consecutive_failures <= 5;
-                            inner.status.phase = if should_restart {
-                                BackendPhase::Starting
-                            } else {
-                                BackendPhase::Error
-                            };
-                            inner.status.message = if should_restart {
-                                format!("内核已退出（{:?}），正在自动重启", payload.code)
-                            } else {
-                                "内核连续退出，已停止自动重启；请查看诊断信息".into()
-                            };
-                            should_restart
-                        }
-                    };
+                    let retry_generation = event_supervisor.record_exit(generation, payload.code);
                     emit_backend_status(&event_app, &event_supervisor);
-                    if should_restart {
+                    if let Some((retry_generation, restart)) = retry_generation {
+                        if !restart {
+                            recover_unhealthy_backend(
+                                event_app.clone(),
+                                event_supervisor.clone(),
+                                retry_generation,
+                                "内核连续启动失败",
+                            )
+                            .await;
+                            break;
+                        }
                         sleep(Duration::from_millis(700)).await;
-                        let _ = start_backend(event_app.clone(), event_supervisor.clone());
+                        let _ = start_backend_if_current(
+                            event_app.clone(),
+                            event_supervisor.clone(),
+                            Some(retry_generation),
+                        );
                     }
                     break;
                 }
@@ -854,12 +1011,7 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
     };
 
     for _ in 0..60 {
-        let still_current = supervisor
-            .inner
-            .lock()
-            .expect("backend state poisoned")
-            .generation
-            == generation;
+        let still_current = supervisor.is_current(generation);
         if !still_current {
             return;
         }
@@ -867,21 +1019,34 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
             .get(format!("http://{BACKEND_HOST}:{BACKEND_PORT}/setup/status"))
             .send()
             .await;
-        if setup
-            .as_ref()
-            .is_ok_and(|response| response.status().is_success())
-        {
+        let healthy = match setup {
+            Ok(response) if response.status().is_success() => response
+                .json::<serde_json::Value>()
+                .await
+                .is_ok_and(|body| is_setup_health_response(&body)),
+            _ => false,
+        };
+        if healthy {
+            let _lifecycle = supervisor
+                .lifecycle_lock
+                .lock()
+                .expect("backend lifecycle poisoned");
+            let managed;
             {
                 let mut inner = supervisor.inner.lock().expect("backend state poisoned");
-                if inner.generation != generation {
+                if inner.generation != generation || inner.shutting_down {
                     return;
                 }
                 inner.consecutive_failures = 0;
+                inner.starting = false;
+                managed = inner.status.managed;
                 inner.status.phase = BackendPhase::Ready;
+                inner.status.problem = None;
+                inner.status.last_log.clear();
                 inner.status.message = "Sub2API 内核已就绪".into();
             }
             let mut core_state = load_core_state(&app);
-            if core_state.pending_validation {
+            if managed && core_state.pending_validation {
                 core_state.pending_validation = false;
                 core_state.last_error = None;
                 let _ = save_core_state(&app, &core_state);
@@ -896,10 +1061,59 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
         sleep(Duration::from_millis(500)).await;
     }
 
+    recover_unhealthy_backend(app, supervisor, generation, "内核启动超时").await;
+}
+
+async fn recover_unhealthy_backend(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    generation: u64,
+    reason: &str,
+) {
+    // Serialize recovery with manual restart and binary replacement. A stale
+    // health task may neither change current status nor roll back a newer core.
+    let _update = supervisor.update_lock.lock().await;
+    if !supervisor.is_current(generation) {
+        return;
+    }
+    let managed = supervisor.snapshot().managed;
+    if !managed {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        if inner.generation != generation {
+            return;
+        }
+        inner.starting = false;
+        inner.generation += 1;
+        inner.status.phase = BackendPhase::Error;
+        inner.status.message =
+            format!("端口 {BACKEND_PORT} 上的服务没有通过 Sub2API 健康检查，请检查端口占用。");
+        drop(inner);
+        emit_backend_status(&app, &supervisor);
+        return;
+    }
+    if let Ok(data_dir) = backend_data_dir(&app) {
+        if let Ok(dependencies) = configured_dependencies(&data_dir) {
+            if ensure_dependencies(&dependencies, &SystemDependencies)
+                .await
+                .is_err()
+            {
+                if stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+                    let _ = start_backend(app.clone(), supervisor.clone());
+                }
+                // Missing data services are not evidence of an incompatible core.
+                return;
+            }
+        }
+    }
+    if !supervisor.is_current(generation) {
+        return;
+    }
     let pending_validation = load_core_state(&app).pending_validation;
     if pending_validation {
         let failure = "新内核未通过启动健康检查，已自动回滚".to_string();
-        stop_backend_internal(&supervisor, false);
+        if !stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+            return;
+        }
         sleep(Duration::from_millis(400)).await;
         if let Err(error) = restore_previous_core(&app, &failure) {
             supervisor.update_status(|status| {
@@ -922,18 +1136,49 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
             let _ = start_backend(app.clone(), supervisor.clone());
         }
     } else {
+        if !stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+            return;
+        }
         supervisor.update_status(|status| {
             status.phase = BackendPhase::Error;
-            status.message = "Sub2API 内核启动超时；请检查 PostgreSQL、Redis 与诊断日志".into();
+            status.message = format!("{reason}；请查看技术详情后重新检测并启动");
         });
     }
     emit_backend_status(&app, &supervisor);
 }
 
-fn stop_backend_internal(supervisor: &BackendSupervisor, shutting_down: bool) {
+fn is_setup_health_response(body: &serde_json::Value) -> bool {
+    body.get("needs_setup")
+        .is_some_and(serde_json::Value::is_boolean)
+        || (body.get("code").and_then(serde_json::Value::as_i64) == Some(0)
+            && body
+                .pointer("/data/needs_setup")
+                .is_some_and(serde_json::Value::is_boolean))
+}
+
+fn stop_backend_internal(
+    supervisor: &BackendSupervisor,
+    shutting_down: bool,
+) -> Result<(), String> {
+    stop_backend_generation(supervisor, shutting_down, None).map(|_| ())
+}
+
+fn stop_backend_generation(
+    supervisor: &BackendSupervisor,
+    shutting_down: bool,
+    expected: Option<u64>,
+) -> Result<bool, String> {
+    let _lifecycle = supervisor
+        .lifecycle_lock
+        .lock()
+        .expect("backend lifecycle poisoned");
     let child = {
         let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        if expected.is_some_and(|generation| inner.generation != generation) {
+            return Ok(false);
+        }
         inner.generation += 1;
+        inner.starting = false;
         inner.shutting_down = shutting_down;
         inner.status.phase = BackendPhase::Stopped;
         inner.status.pid = None;
@@ -945,8 +1190,9 @@ fn stop_backend_internal(supervisor: &BackendSupervisor, shutting_down: bool) {
         inner.child.take()
     };
     if let Some(child) = child {
-        let _ = child.kill();
+        child.kill()?;
     }
+    Ok(true)
 }
 
 /// Stop the managed sidecar and wait until its listening socket is released.
@@ -956,7 +1202,8 @@ pub async fn desktop_backend_prepare_relaunch(
     app: AppHandle,
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<(), String> {
-    stop_backend_internal(&supervisor, false);
+    let _update = supervisor.update_lock.lock().await;
+    stop_backend_internal(&supervisor, false)?;
     if wait_for_backend_port_release().await.is_ok() {
         return Ok(());
     }
@@ -989,7 +1236,7 @@ async fn wait_for_backend_port_release() -> Result<(), String> {
 
 pub fn shutdown_backend(app: &AppHandle) {
     if let Some(supervisor) = app.try_state::<BackendSupervisor>() {
-        stop_backend_internal(&supervisor, true);
+        let _ = stop_backend_internal(&supervisor, true);
     }
 }
 
@@ -1410,10 +1657,13 @@ pub fn inspect_core_identity(app: AppHandle) -> Result<CoreIdentityCheck, String
 }
 
 #[tauri::command]
-pub fn desktop_backend_start(
+pub async fn desktop_backend_start(
     app: AppHandle,
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<BackendStatus, String> {
+    let _update = supervisor.update_lock.lock().await;
+    // A manual retry is a real restart, even if a hung child never bound a port.
+    stop_backend_internal(&supervisor, false)?;
     {
         let mut inner = supervisor.inner.lock().expect("backend state poisoned");
         inner.shutting_down = false;
@@ -1424,9 +1674,12 @@ pub fn desktop_backend_start(
 }
 
 #[tauri::command]
-pub fn desktop_backend_stop(supervisor: tauri::State<'_, BackendSupervisor>) -> BackendStatus {
-    stop_backend_internal(&supervisor, false);
-    supervisor.snapshot()
+pub async fn desktop_backend_stop(
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<BackendStatus, String> {
+    let _update = supervisor.update_lock.lock().await;
+    stop_backend_internal(&supervisor, false)?;
+    Ok(supervisor.snapshot())
 }
 
 #[tauri::command]
@@ -1710,7 +1963,7 @@ pub async fn restore_bundled_core(
     save_core_state(&app, &staged_state)?;
 
     emit_core_progress(&app, "stopping", 0, None, "正在安全停止当前内核");
-    stop_backend_internal(&supervisor, false);
+    stop_backend_internal(&supervisor, false)?;
     if wait_for_backend_port_release().await.is_err() {
         let active_path = active_core_path(&app)?;
         if let Err(error) = stop_owned_listener(BACKEND_PORT, &active_path) {
@@ -1856,6 +2109,86 @@ pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn supervisor_fixture() -> BackendSupervisor {
+        BackendSupervisor::new(
+            Path::new("fixture"),
+            &CoreVersions {
+                current_version: "0.2.2".into(),
+                current_algorithm_version: "1.6.0".into(),
+                current_extension_version: "1.1.1".into(),
+                capabilities: vec![],
+                upstream_commit: "fixture".into(),
+                sha256: "fixture".into(),
+            },
+        )
+    }
+
+    #[test]
+    fn concurrent_start_requests_reserve_only_one_sidecar_attempt() {
+        let supervisor = supervisor_fixture();
+        let barrier = Arc::new(std::sync::Barrier::new(16));
+        let workers: Vec<_> = (0..16)
+            .map(|_| {
+                let supervisor = supervisor.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    supervisor.reserve_start(None)
+                })
+            })
+            .collect();
+        assert_eq!(
+            workers
+                .into_iter()
+                .filter_map(|worker| worker.join().unwrap())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn exited_generation_cannot_update_logs_health_or_restart_after_manual_retry() {
+        let supervisor = supervisor_fixture();
+        let first = supervisor.reserve_start(None).unwrap();
+        let automatic_retry = supervisor.record_exit(first, Some(1)).unwrap();
+        assert!(!supervisor.is_current(first));
+        stop_backend_internal(&supervisor, false).unwrap();
+        let next = supervisor.reserve_start(None).unwrap();
+        supervisor.record_log(first, "old database failure".into());
+        assert!(supervisor.snapshot().last_log.is_empty());
+        assert!(supervisor.record_exit(first, Some(1)).is_none());
+        assert!(supervisor.reserve_start(Some(automatic_retry.0)).is_none());
+        assert!(!stop_backend_generation(&supervisor, false, Some(first)).unwrap());
+        assert!(supervisor.is_current(next));
+    }
+
+    #[test]
+    fn stopping_dependency_wait_allows_a_fresh_start_without_quitting_the_app() {
+        let supervisor = supervisor_fixture();
+        let first = supervisor.reserve_start(None).unwrap();
+        supervisor.update_status(|status| status.phase = BackendPhase::WaitingForDependencies);
+        stop_backend_internal(&supervisor, false).unwrap();
+        assert!(!supervisor.is_current(first));
+        assert!(supervisor.reserve_start(None).is_some());
+        assert_eq!(supervisor.snapshot().phase, BackendPhase::Starting);
+    }
+
+    #[test]
+    fn an_unrelated_http_success_is_not_a_healthy_sub2api_server() {
+        assert!(!is_setup_health_response(
+            &serde_json::json!({"status": "ok"})
+        ));
+        assert!(!is_setup_health_response(
+            &serde_json::json!({"code": 401, "data": {"needs_setup": false}})
+        ));
+        assert!(is_setup_health_response(
+            &serde_json::json!({"code": 0, "data": {"needs_setup": false}})
+        ));
+        assert!(is_setup_health_response(
+            &serde_json::json!({"needs_setup": true})
+        ));
+    }
 
     fn core_record(version: &str, commit: &str, sha256: &str) -> CoreVersionRecord {
         CoreVersionRecord {

@@ -4,8 +4,10 @@ mod client_launcher;
 mod desktop_proxy;
 mod desktop_runtime;
 mod desktop_shell;
+mod managed_child;
 mod managed_core_process;
 mod setup_environment;
+mod startup_dependencies;
 
 use client_launcher::{
     launch_native_client, list_native_clients, native_working_directory,
@@ -23,6 +25,9 @@ use tauri::Manager;
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            let _ = desktop_shell::show_main_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())

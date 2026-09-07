@@ -105,7 +105,7 @@ fn configure_command(command: &mut Command) {
     }
 }
 
-async fn run_docker(args: &[&str], limit: Duration) -> Result<String, String> {
+pub(crate) async fn run_docker(args: &[&str], limit: Duration) -> Result<String, String> {
     let mut command = Command::new("docker");
     command.args(args);
     configure_command(&mut command);

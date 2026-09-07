@@ -62,6 +62,22 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-sidecar.mjs
 
+      - name: Build desktop UI for runtime checks
+        working-directory: frontend
+        run: corepack pnpm@9 build:desktop
+
+      - name: Verify startup recovery and process lifecycle
+        working-directory: frontend/src-tauri
+        run: cargo test --locked --features custom-protocol
+
+      - name: Verify frontend and updater contracts
+        working-directory: frontend
+        run: corepack pnpm@9 test:run
+
+      - name: Check frontend lint
+        working-directory: frontend
+        run: corepack pnpm@9 lint:check
+
       - name: Collect release metadata
         id: release-meta
         shell: pwsh

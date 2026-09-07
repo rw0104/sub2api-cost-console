@@ -6,7 +6,7 @@
       <h1>{{ title }}</h1>
       <p class="desktop-gate__message">{{ status?.message || '正在连接本地内核…' }}</p>
 
-      <div v-if="status?.phase !== 'error'" class="desktop-gate__progress" aria-label="内核启动中">
+      <div v-if="status?.phase === 'starting'" class="desktop-gate__progress" aria-label="内核启动中">
         <i></i>
       </div>
 
@@ -16,20 +16,20 @@
         <div><dt>Sub2API 上游基线 / 成本算法</dt><dd>v{{ status.core_version }} / v{{ status.algorithm_version }}</dd></div>
       </dl>
 
-      <div v-if="status?.phase === 'error'" class="desktop-gate__error" role="alert">
-        <strong>内核未能就绪</strong>
-        <p>{{ status.last_log || '请确认安装包完整，并检查 PostgreSQL 与 Redis 是否可用。' }}</p>
+      <div v-if="canRetry" class="desktop-gate__error" :role="status?.phase === 'error' ? 'alert' : 'status'">
+        <strong>{{ status?.problem?.title || '内核未能就绪' }}</strong>
+        <p>{{ status?.problem?.message || '请重新检测数据服务并启动内核。如仍失败，可展开下方技术详情。' }}</p>
         <button type="button" :disabled="retrying" @click="retry">
-          {{ retrying ? '正在重试…' : '重新启动内核' }}
+          {{ retrying ? '正在重新检测…' : '重新检测并启动' }}
         </button>
       </div>
 
-      <p v-if="status" class="desktop-gate__path" :title="status.data_dir">
-        数据目录：{{ status.data_dir }}
-      </p>
-      <p v-if="status?.upstream_commit" class="desktop-gate__path" :title="status.upstream_commit">
-        上游提交：{{ status.upstream_commit }}
-      </p>
+      <details v-if="status" class="desktop-gate__details">
+        <summary>查看技术详情</summary>
+        <p v-if="status.last_log" class="desktop-gate__log">{{ status.last_log }}</p>
+        <p class="desktop-gate__path">数据目录：{{ status.data_dir }}</p>
+        <p v-if="status.upstream_commit" class="desktop-gate__path">上游提交：{{ status.upstream_commit }}</p>
+      </details>
     </section>
   </main>
 </template>
@@ -39,7 +39,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-type BackendPhase = 'starting' | 'ready' | 'stopped' | 'error'
+type BackendPhase = 'starting' | 'waiting_for_dependencies' | 'ready' | 'stopped' | 'error'
 
 interface BackendStatus {
   phase: BackendPhase
@@ -52,6 +52,7 @@ interface BackendStatus {
   upstream_commit: string
   message: string
   last_log: string
+  problem?: { code: string; title: string; message: string; retryable: boolean } | null
 }
 
 const emit = defineEmits<{ ready: [] }>()
@@ -60,8 +61,14 @@ const retrying = ref(false)
 let pollTimer: number | null = null
 let unlisten: UnlistenFn | null = null
 let didEmitReady = false
+let disposed = false
+let requestSequence = 0
+let refreshing = false
+
+const canRetry = computed(() => ['error', 'waiting_for_dependencies', 'stopped'].includes(status.value?.phase || ''))
 
 const title = computed(() => {
+  if (status.value?.problem) return status.value.problem.title
   if (status.value?.phase === 'error') return '本地内核需要处理'
   if (status.value?.managed === false) return '正在连接 Sub2API'
   return '正在启动成本运维内核'
@@ -76,9 +83,14 @@ function acceptStatus(next: BackendStatus) {
 }
 
 async function refreshStatus() {
+  if (refreshing || retrying.value || disposed) return
+  refreshing = true
+  const sequence = ++requestSequence
   try {
-    acceptStatus(await invoke<BackendStatus>('desktop_backend_status'))
+    const next = await invoke<BackendStatus>('desktop_backend_status')
+    if (!disposed && sequence === requestSequence) acceptStatus(next)
   } catch (error) {
+    if (disposed || sequence !== requestSequence) return
     status.value = {
       phase: 'error',
       managed: true,
@@ -91,17 +103,24 @@ async function refreshStatus() {
       message: '无法读取桌面内核状态',
       last_log: error instanceof Error ? error.message : String(error),
     }
+  } finally {
+    refreshing = false
   }
 }
 
 async function retry() {
+  if (retrying.value) return
   retrying.value = true
+  const sequence = ++requestSequence
   try {
-    acceptStatus(await invoke<BackendStatus>('desktop_backend_start'))
+    const next = await invoke<BackendStatus>('desktop_backend_start')
+    if (!disposed && sequence === requestSequence) acceptStatus(next)
   } catch (error) {
-    if (status.value) {
+    if (!disposed && sequence === requestSequence && status.value) {
       status.value.phase = 'error'
-      status.value.message = error instanceof Error ? error.message : String(error)
+      status.value.problem = null
+      status.value.message = '重新启动未完成，请查看技术详情后重试'
+      status.value.last_log = error instanceof Error ? error.message : String(error)
     }
   } finally {
     retrying.value = false
@@ -109,12 +128,20 @@ async function retry() {
 }
 
 onMounted(async () => {
-  unlisten = await listen<BackendStatus>('desktop-backend-status', (event) => acceptStatus(event.payload))
+  try {
+    const stopListening = await listen<BackendStatus>('desktop-backend-status', (event) => {
+      if (!disposed) { requestSequence += 1; acceptStatus(event.payload) }
+    })
+    if (disposed) { stopListening(); return }
+    unlisten = stopListening
+  } catch { /* Polling still recovers when the event channel is unavailable. */ }
   await refreshStatus()
-  if (!didEmitReady) pollTimer = window.setInterval(refreshStatus, 750)
+  if (!disposed && !didEmitReady) pollTimer = window.setInterval(refreshStatus, 750)
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  requestSequence += 1
   if (pollTimer !== null) window.clearInterval(pollTimer)
   unlisten?.()
 })
@@ -140,6 +167,10 @@ h1 { margin: 0; font-size: 27px; line-height: 1.25; }
 .desktop-gate__error button { min-height: 34px; padding: 0 15px; color: #e9f4d8; border: 1px solid #779c35; background: transparent; }
 .desktop-gate__error button:hover:not(:disabled) { color: #10150f; background: #b9e55a; }
 .desktop-gate__path { overflow: hidden; margin: 18px 0 0; color: #5e6d63; font: 10px/1.4 'Cascadia Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-gate__details { margin-top: 22px; color: #9ba79e; font-size: 12px; }
+.desktop-gate__details summary { cursor: pointer; }
+.desktop-gate__log { overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) { .desktop-gate__progress i { animation: none; width: 100%; } }
 @keyframes gate-progress { 0% { transform: translateX(-110%); } 60%, 100% { transform: translateX(300%); } }
 @media (max-width: 620px) { .desktop-gate__card { padding: 28px; }.desktop-gate__facts { grid-template-columns: 1fr; }.desktop-gate__facts div { border-right: 0; border-bottom: 1px solid #273028; }.desktop-gate__facts div:last-child { border-bottom: 0; } }
 </style>

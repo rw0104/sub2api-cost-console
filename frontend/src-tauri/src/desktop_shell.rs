@@ -23,7 +23,7 @@ fn tray_menu_action(menu_id: &str) -> Option<TrayMenuAction> {
     }
 }
 
-fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         window.show()?;
         window.unminimize()?;
