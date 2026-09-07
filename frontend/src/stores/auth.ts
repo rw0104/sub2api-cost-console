@@ -4,7 +4,8 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref, computed, readonly } from 'vue'
+import { ref, computed, readonly, onScopeDispose } from 'vue'
+import { expireAuthSession, onAuthSessionInvalidated } from '@/api/authSession'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import type {
   User,
@@ -85,6 +86,8 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let sessionGeneration = 0
+  onScopeDispose(onAuthSessionInvalidated(() => clearAuth({ preservePendingAuthSession: true })))
 
   // ==================== Computed ====================
 
@@ -212,8 +215,10 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
+    const generation = sessionGeneration
     try {
       const response = await authAPI.refreshToken()
+      if (generation !== sessionGeneration) return
 
       // Update state
       token.value = response.access_token
@@ -223,7 +228,10 @@ export const useAuthStore = defineStore('auth', () => {
       scheduleTokenRefresh(response.expires_in)
     } catch (error) {
       console.error('Token refresh failed:', error)
-      // Don't clear auth here - the interceptor will handle 401 errors
+      const failure = error as { status?: number; response?: { status?: number } }
+      if (generation === sessionGeneration && (failure.status === 401 || failure.response?.status === 401)) {
+        expireAuthSession()
+      }
     }
   }
 
@@ -297,6 +305,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
+    clearAuth({ preservePendingAuthSession: true })
     // Store token and user
     token.value = response.access_token
 
@@ -355,6 +364,8 @@ export const useAuthStore = defineStore('auth', () => {
    * @param newToken - 后端签发的 JWT access token
    */
   async function setToken(newToken: string): Promise<User> {
+    sessionGeneration += 1
+    const generation = sessionGeneration
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -389,7 +400,9 @@ export const useAuthStore = defineStore('auth', () => {
       clearPendingAuthSession()
       return userData
     } catch (error) {
-      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      if (generation === sessionGeneration && (error as { code?: string }).code !== 'AUTH_SESSION_CHANGED') {
+        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      }
       throw error
     }
   }
@@ -437,8 +450,12 @@ export const useAuthStore = defineStore('auth', () => {
       throw new Error('Not authenticated')
     }
 
+    const generation = sessionGeneration
     try {
       const response = await authAPI.getCurrentUser()
+      if (generation !== sessionGeneration) {
+        throw { status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Authentication session changed while loading user information.' }
+      }
       if (response.data.run_mode) {
         runMode.value = response.data.run_mode
       }
@@ -451,7 +468,8 @@ export const useAuthStore = defineStore('auth', () => {
       return userData
     } catch (error) {
       // If refresh fails with 401, clear auth state
-      if ((error as { status?: number }).status === 401) {
+      const failure = error as { status?: number; code?: string }
+      if (generation === sessionGeneration && failure.status === 401 && failure.code !== 'AUTH_SESSION_CHANGED') {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
       throw error
@@ -463,6 +481,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
+    sessionGeneration += 1
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh

@@ -41,6 +41,11 @@ export function getAPIBaseURL(): string {
   return API_BASE_URL
 }
 
+export function getCurrentAppPath(): string {
+  const path = isDesktopRuntime() ? window.location.hash.slice(1) : window.location.pathname
+  return path.split(/[?#]/, 1)[0] || '/'
+}
+
 /** Navigate without losing the hash router when the app is hosted in a Tauri asset window. */
 export function redirectToAppPath(path: string): void {
   const normalized = path.startsWith('/') ? path : `/${path}`
