@@ -1,903 +1,342 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="Sub2API Logo" width="128" />
+<img src="assets/cost-console-logo.png" alt="Sub2API Cost Console" width="144" />
 
-# Sub2API
+# Sub2API Cost Console
 
-[![Go](https://img.shields.io/badge/Go-1.27.0-00ADD8.svg)](https://golang.org/)
-[![Vue](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+**把 AI 账号、调用成本和日常运维，放在一个 Windows 桌面窗口里。**
 
-<a href="https://trendshift.io/repositories/21823" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21823" alt="Wei-Shaw%2Fsub2api | Trendshift" width="250" height="55"/></a>
+[![Windows](https://img.shields.io/badge/Windows-10%2F11_x64-0078D4?logo=windows)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
+[![Release](https://img.shields.io/github/v/release/rw0104/sub2api-cost-console?label=最新版本)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
+[![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-**AI API Gateway Platform for Subscription Quota Distribution**
-
-English | [中文](README_CN.md) | [日本語](README_JA.md)
+[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
 
 </div>
 
-## ⚠️ Important Notice
-
-Please read the following carefully before using this project:
-
-- **🚨 Terms of Service Risk**: Using this project may violate the terms of service of Anthropic and other upstream providers. Please review the relevant providers' user agreements before use; all risks arising from such use are borne solely by the user.
-- **⚖️ Compliant Use**: Use this project only in compliance with the laws and regulations of your country or region. Any unlawful use is strictly prohibited.
-- **📖 Disclaimer**: This project is provided for technical learning and research purposes only. The authors assume no liability for account bans, service interruptions, data loss, or any other direct or indirect damages resulting from the use of this project.
-- **🚫 No Commercial Authorization**: The developers of this project have never authorized any individual or organization to conduct any form of commercial operation based on this project. Any commercial activity conducted in the name of or based on this project is unrelated to this project and its developers, and all resulting disputes, losses, and legal liabilities shall be borne solely by the party conducting such activity.
-
-## ❤️ Sponsors
-
-> [Want to appear here?](mailto:support@sub2api.org)
-
-<table>
-
-<tr>
-<td width="180"><a href="https://cctk.ai/register?aff=SUB2API"><img src="assets/partners/logos/cctk.jpg" alt="CCTK.AI" width="150"></a></td>
-<td>Thanks to CCTK.AI for sponsoring this project! <a href="https://cctk.ai/register?aff=SUB2API">CCTK.AI</a> is an AI API gateway focused on stability and cost-effectiveness, offering fast relay services for Claude, OpenAI, Gemini, and other popular models. It works seamlessly with Claude Code, Codex, and other mainstream coding tools, delivering the same model capabilities at a fraction of the official cost. Register via <a href="https://cctk.ai/register?aff=SUB2API">this link</a> for faster, more stable, and more affordable AI API access.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://www.openmodel.ai?ref=sub2api"><img src="assets/partners/logos/openmodel.jpg" alt="openmodel" width="150"></a></td>
-<td>One API, every top model! <a href="https://www.openmodel.ai?ref=sub2api">OpenModel</a> is a production-grade, high-availability AI API gateway that makes your applications truly fast and stable: automatic failover, smart routing to the best-performing channel, and a production-grade SLA. An SLA that far surpasses any single provider — making stability your core competitive advantage. Works directly with Claude Code, Codex, and Gemini CLI. Register via this link to get started.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>Thanks to ETok.ai for sponsoring this project! ETok.ai is dedicated to building a one-stop AI programming tool service platform. We offer professional Claude Code packages and technical community services, with support for Google Gemini and OpenAI Codex. Through carefully designed plans and a professional tech community, we provide developers with reliable service guarantees and continuous technical support, making AI-assisted programming a true productivity tool. Click <a href="https://etok.ai">here</a> to register!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://apikey.fun/register?aff=SUB2API"><img src="assets/partners/logos/apikey-fun.png" alt="APIKEY.FUN" width="150"></a></td>
-<td>Thanks to APIKEY.FUN for sponsoring this project! <a href="https://apikey.fun/register?aff=SUB2API">APIKEY.FUN</a> is one of the core contributors to the sub2api open-source project, dedicated to providing open, stable, and cost-effective AI API access. The platform supports API relay services for Claude, OpenAI, Gemini, and other popular models, with pricing starting from as low as 7% of the original rate. Register via the exclusive link: <a href="https://apikey.fun/register?aff=SUB2API">APIKEY</a> to enjoy up to 5% off on all recharges.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://aigocode.com/invite/SUB2API"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Thanks to AIGoCode for sponsoring this project! AIGoCode is an all-in-one platform that integrates Claude Code, Codex, and the latest Gemini models, providing you with stable, efficient, and highly cost-effective AI coding services. The platform offers flexible subscription plans, zero risk of account suspension, direct access with no VPN required, and lightning-fast responses. AIGoCode has prepared a special benefit for sub2api users: if you register via <a href="https://aigocode.com/invite/SUB2API">this link</a>, you'll receive an extra 10% bonus credit on your first top-up!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://codex-everywhere.com"><img src="assets/partners/logos/codex-everywhere.jpg" alt="CodexEverywhere" width="150"></a></td>
-<td>Real GPT-5.6 series at 3% of OpenAI pricing — <a href="https://codex-everywhere.com">CodexEverywhere</a> is democratizing access to frontier models for developers worldwide. We believe in transparency and honesty, with model quality verified by active community oversight for months. USD and crypto friendly. Start with a free $20 trial at <a href="https://codex-everywhere.com">codex-everywhere.com</a>.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://shop.bmoplus.com/?utm_source=github"><img src="assets/partners/logos/bmoplus.jpg" alt="bmoplus" width="150"></a></td>
-<td>Huge thanks to BmoPlus for sponsoring this project! BmoPlus is a highly reliable AI account provider built strictly for heavy AI users and developers. They offer rock-solid, ready-to-use accounts and official top-up services for ChatGPT Plus / ChatGPT Pro (Full Warranty) / Claude Pro / Super Grok / Gemini Pro. By registering and ordering through <a href="https://shop.bmoplus.com/?utm_source=github">BmoPlus - Premium AI Accounts & Top-ups</a>, users can unlock the mind-blowing rate of 10% of the official GPT subscription price (90% OFF)</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://bestproxy.com/?keyword=a2e8iuol"><img src="assets/partners/logos/bestproxy.png" alt="bestproxy" width="150"></a></td>
-<td>Thanks to Bestproxy for sponsoring this project! <a href="https://bestproxy.com/?keyword=a2e8iuol">Bestproxy</a> provides high-purity residential IPs with dedicated one-IP-per-account support. By combining real home networks with fingerprint isolation, it enables link environment isolation and reduces the probability of association-based risk control.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://pateway.ai/?ch=1tsfr51"><img src="assets/partners/logos/pateway.png" alt="pateway" width="150"></a></td>
-<td>Thanks to PatewayAI for sponsoring this project! <a href="https://pateway.ai/?ch=1tsfr51">PatewayAI</a> is a premium API relay built for heavy AI developers, offering the full Claude and Codex series sourced 100% from official providers, with transparent token-level billing. Enterprise plans include high concurrency, dedicated management, contracts, and invoicing. Register now to get $3 in trial credits, top-ups from 60% off, and referral bonuses up to $150.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://api.pptoken.cc/register?promo=SUB2API"><img src="assets/partners/logos/pptoken.png" alt="pptoken" width="150"></a></td>
-<td>Thanks to PPToken.cc for sponsoring this project! <a href="https://api.pptoken.cc/register?promo=SUB2API">PPToken.cc</a> specializes in GPT model API relay services, supporting Codex, Claude Code, OpenAI-compatible clients, and Gemini CLI integration. Top-ups are 1:1 (¥1 = $1 credit); GPT models start at 0.16x rate multiplier, with overall cost at roughly 2.2% of official pricing and first-token latency around 1 second — ideal for developers seeking low-cost, high-speed access to GPT model capabilities. Technical support: 24/7 real human responses (no bots), @tech in the group chat and get a reply within 10 minutes. Sponsor benefit: the first 200 users who register via the <a href="https://api.pptoken.cc/register?promo=SUB2API">exclusive registration link</a> and enter promo code `SUB2API` can claim free Codex / Claude Code trial credits — no minimum spend, no card required.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://veilx.io/#/hello/SJRBRVDV"><img src="assets/partners/logos/veilx.png" alt="veilx" width="150"></a></td>
-<td>Thanks to Veilx for sponsoring this project! <a href="https://veilx.io/#/hello/SJRBRVDV">Veilx</a> CDN is purpose-built for large-scale AI API traffic, deeply optimized for relay services and call chains across OpenAI, Claude, Gemini, and scenarios like chat, image generation, embeddings, and streaming — delivering lower latency and higher stability under heavy concurrency. It also offers China three-network optimized return lines, making it ideal for global AI relay platforms, overseas AI SaaS, and cross-border high-concurrency deployments.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://roxybrowser.com/invite/bgGKG7"><img src="assets/partners/logos/RoxyBrowser.png" alt="veilx" width="150"></a></td>
-<td>Thanks to RoxyBrowser for sponsoring this project! <a href="https://roxybrowser.com/invite/bgGKG7">RoxyBrowser</a> RoxyBrowser is the perfect partner for Sub2API: it features a built-in native Roxy AI Agent and high-quality native residential IPs, supports batch automation via simple commands, and significantly boosts security and efficiency for multi-account management! Click <a href="https://roxybrowser.com/invite/bgGKG7">this link</a> to sign up and receive a free residential IP package plus a 10% lifetime discount.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://www.proxy4free.com/?keyword=4yjqecpc"><img src="assets/partners/logos/proxy4free.png" alt="proxy4free" width="150"></a></td>
-<td>Thanks to Proxy4Free for sponsoring this project! Proxy4Free is a data proxy service provider for developers and AI applications, offering residential proxies, static residential proxies, ISP proxies, and datacenter proxies for scenarios such as Web Scraping, Browser Automation, and AI Agents. With global IP resources, stable connections, and flexible switching, it helps developers improve data collection success rates and reduce the risk of IP bans. Register via <a href="https://www.proxy4free.com/?keyword=4yjqecpc">this link</a> to get started and easily build more stable and efficient automation workflows.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="http://www.fastaitoken.com/register"><img src="assets/partners/logos/fastaitoken.jpg" alt="fastaitoken" width="150"></a></td>
-<td>🎉 Thanks to FastAIToken for sponsoring this project! <a href="http://www.fastaitoken.com/register">FastAIToken</a> is an AI API aggregation platform for developers, supporting mainstream large models such as OpenAI, Claude, and Gemini. Top-up at 1:1 — 1 CNY = 1 USD of API credit — letting developers use the world's leading large model services at lower cost and with greater convenience.<br>
-
-🚀 The platform offers a variety of channels to choose from: an ultra-low-price 0.02x OpenAI promotional group (limited time), groups as low as 0.25x OpenAI, 0.7x Claude with 95% fixed cache, and a 1.2x Claude Max channel. It also provides a public status page showing real-time availability, latency, and operating status of each group for transparent and reliable service, plus 7×24 human technical support (not bots) with fast responses to developer needs.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="http://aimzoon.com"><img src="assets/partners/logos/aimzoon.jpg" alt="aimzoon" width="150"></a></td>
-<td>Thanks to Aimzoon for sponsoring this project! <a href="http://aimzoon.com">Aimzoon</a> provides stable, cost-effective AI API access services, enabling developers to quickly connect popular AI services to coding tools such as Codex, Claude Code, and Gemini CLI. No complex configuration — faster onboarding, more stable calls, and lower costs. Ongoing promotions including discounted Codex rates and special pricing, with free trial credits upon registration, bringing AI coding into your daily workflow. <a href="http://aimzoon.com">Click here</a> to register and try it out!
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://nagora.ai/"><img src="assets/partners/logos/nagora.png" alt="Nagora" width="150"></a></td>
-<td><a href="https://nagora.ai/">Nagora</a> is a multi-model AI API gateway built for developers and teams. With a single account and API key, you can access more than 26 leading text and image models through one unified interface. It is compatible with OpenAI, Anthropic, and Gemini protocols and integrates seamlessly with development tools such as Claude Code, Codex, and Gemini CLI. The platform provides intelligent routing, automatic failover, transparent pricing, and consolidated billing, along with budget management, rate limiting, and concurrency controls. This makes AI usage more reliable and manageable across individual development, team collaboration, and production environments. No changes to your existing application are required. Simply replace the Base URL and API key to complete the integration in as little as one minute.</td>
-</tr>
+当你同时使用几个 AI 账号、几家 API 服务，最难掌握的往往是每天的实际情况：哪个账号还能用，今天的调用花了多少，买来的订阅有没有用起来，某个渠道为什么突然变慢。
 
-<tr>
-<td width="180"><a href="https://s.qiniu.com/u6rQrq"><img src="assets/partners/logos/qiniu.jpg" alt="Qiniu AI" width="150"></a></td>
-<td>Thanks to Qiniu AI for sponsoring this project! Qiniu AI is the enterprise-grade large-model MaaS platform under Qiniu Cloud (02567.HK), offering one-stop access to 150+ mainstream models worldwide, compatible with the protocols of major global model providers, and covering full-modality capabilities including text, image, audio, video, and file processing, serving over 1.69 million enterprises and developers. Qiniu AI offers an exclusive benefit for Sub2API users: register via <a href="https://s.qiniu.com/u6rQrq">this link</a> — enterprise users get 12 million tokens free, and developers get 3 million tokens free.</td>
-</tr>
+**Sub2API Cost Console 是面向这些日常问题的桌面成本运营工具。** 它把 Sub2API 的账号管理和调用记录，与采购成本、号池统计、模型核对、客户端启动整合在一起。你可以在这里查看整体情况，找到需要处理的账号，也可以把已经配置好的接口接到自己的编程工具里。
 
-<tr>
-<td width="180"><a href="https://api.fenno.ai/s/dC4k"><img src="assets/partners/logos/fennoai.jpg" alt="FennoAI" width="150"></a></td>
-<td>Thanks to FennoAI for sponsoring this project! FennoAI is a high-stability, high-performance API relay provider for enterprise R&D teams and developers, compatible with the OpenAI and Anthropic protocols and seamlessly integrating with mainstream AI coding tools such as Codex, Claude Code, and OpenCode. The platform delivers enterprise-grade stability, supporting call volumes of 100 billion tokens per day, and supports business-to-business settlement and invoicing for both domestic and overseas entities to meet enterprise R&D and procurement needs. As an exclusive benefit for Sub2API users, purchase a subscription via the <a href="https://api.fenno.ai/s/dC4k">exclusive link</a> to get $50 worth of Coding Plan credit for only $1.99. Referral rewards are also available: invite friends to purchase and earn up to 20% commission — the more you invite, the more you earn.</td>
-</tr>
+本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-<tr>
-<td width="180"><a href="https://lanox.ai/?c=6"><img src="assets/partners/logos/lanox.jpg" alt="LanoX AI" width="150"></a></td>
-<td>Thank you to LanoX AI for sponsoring this project! <a href="https://lanox.ai/?c=6">LanoX AI</a> provides stable, cost-effective global model access services for developers, teams, and enterprises. 🎁 New User Benefits — Claim millions of free tokens, plus 500+ free models for easier low-cost testing, validation, and deployment 🧠 Global Leading Models — GPT · Claude · Gemini · Qwen · Grok... 🎬 Multimodal Creation — Seedance 2.0 · GPT Image · Gemini Nano Banana 🛡️ Enterprise-Grade Reliability — High availability 💎 native capability output 💎 no intelligence degradation 💎 no model mixing 💎 transparent usage and billing 💎 💰 Lower API Costs — Top-tier models from as low as 10% of official pricing, with clear documentation, simple integration, invoicing support, and enterprise-scale batch usage 🏢 Enterprise Choice — Ideal for AI products, Agents, content platforms, and R&D teams with high-volume model usage</td>
-</tr>
+## 你可以用它做什么
 
-<tr>
-<td width="180"><a href="https://www.rapidproxy.io/?ref=sub2api"><img src="assets/partners/logos/rapidproxy.jpg" alt="RapidProxy" width="150"></a></td>
-<td><a href="https://www.rapidproxy.io/?ref=sub2api">RapidProxy</a> is a data collection proxy solution built for developers, providing stable and reliable residential proxy services. With 90M+ global residential IPs and 200+ country coverage, intelligent rotation, and precise geo-targeting, it helps projects such as web scraping, AI data training, SEO monitoring, and e-commerce data analysis break through access restrictions and improve data collection efficiency. It supports mainstream automation frameworks such as Playwright, Selenium, and Puppeteer, with prices as low as $0.65/GB — <a href="https://www.rapidproxy.io/?ref=sub2api">start your free test now</a>.</td>
-</tr>
+- **每天看一眼运行情况。** 查看可用账号、请求量、调用成本、计费产出和延迟，发现异常后继续查看具体账号或请求。
+- **把订阅和按量 API 的账分清楚。** 买账号的费用、每次调用的费用、对外计费的金额各自记录，方便按自己的真实账单核算。
+- **比较账号和渠道。** 将账号放在同一张表里，按可用性、产出、请求量或成本排序，再决定下一步怎么调整。
+- **了解一个号池的投入与使用情况。** 看看哪些账号已经产生调用、当前采购费率是多少、历史损失有没有被计入。
+- **检查模型调用经过了哪里。** 同时查看你请求的模型、网关发往上游的模型，以及上游响应中声明的模型。
+- **少重复配置几次客户端。** 选择 API Key 和模型后生成接入配置，并从桌面启动已经安装的 Codex CLI、Claude Code 等工具。
 
-<tr>
-<td width="180"><a href="https://hao.ai"><img src="assets/partners/logos/haoai.png" alt="hao.ai" width="150"></a></td>
-<td><a href="https://hao.ai">hao.ai</a> is a high-speed, stable unified large-model API gateway for developers and teams. With a single API Key and a unified interface, you can access mainstream models such as GPT, Claude, and xAI Grok, with compatibility for common protocols and SDKs including OpenAI and Anthropic. The platform provides model routing, failover, team management, and complete request logs, with model prices as low as 15% of official reference pricing, helping users build AI applications more simply, more reliably, and at lower cost.</td>
-</tr>
+无论是自己用几个账号，还是帮小团队维护一批上游，都可以从最简单的“接入一个账号、跑通一次调用”开始，再逐步用到成本和运维功能。
 
-<tr>
-<td width="180"><a href="https://www.swiftproxy.net/?ref=sub2api"><img src="assets/partners/logos/swiftprox.png" alt="Swiftproxy" width="150"></a></td>
-<td>Swiftproxy is a high-performance proxy solution built for developers, providing stable and reliable residential and static residential proxy services. With 90M+ clean residential IPs, global coverage, flexible rotation, and precise geo-targeting, it helps projects such as web scraping, AI automation, browser automation, SEO monitoring, and multi-account management overcome access restrictions and improve workflow efficiency. It supports HTTP(S) and SOCKS5 protocols, integrates with popular automation tools like Playwright, Selenium, and Puppeteer, with dynamic proxy traffic that never expires until used and free testing available — <a href="https://www.swiftproxy.net/?ref=sub2api">start your free test now</a>!</td>
-</tr>
+<a id="getting-started"></a>
 
-<tr>
-<td width="180"><a href="https://www.duckip.cn/?keyword=cu7oog6y"><img src="assets/partners/logos/duckip.png" alt="DuckIP" width="150"></a></td>
-<td><a href="https://www.duckip.cn/?keyword=cu7oog6y">DuckIP</a> - 90M+ global residential network resources across 195+ countries and regions, with rotation and sticky sessions for public data collection, RAG updates, model evaluation, and multi-region data workloads. 🟢Residential Proxy - 20% Off; 🟢Static Residential Proxy - Starting at ¥50.00/IP; 🟢Unlimited Residential Proxy - Starting at ¥19.8/Hour. ✅Get 500M Free Trial.</td>
-</tr>
+## 开始使用
 
-<tr>
-<td width="180"><a href="https://go.apimart.ai/gh-sub2api"><img src="assets/partners/logos/apimart.jpg" alt="APIMart" width="150"></a></td>
-<td>Thanks to APIMart for sponsoring this project! <a href="https://go.apimart.ai/gh-sub2api">APIMart</a> is a low-cost API platform for AI image and video generation — GPT-Image-2 from $0.006 per image, with 160+ images per dollar. One async API covers both image and video: submit a task, get an ID, and retrieve results via polling or callback. Batch tens of thousands of images without timeouts, and switch models without changing code. Pay as you go with no monthly fee — <a href="https://go.apimart.ai/gh-sub2api">sign up here</a> to get started.</td>
-</tr>
+### 1. 下载并安装
 
-<tr>
-<td width="180"><a href="https://www.axisnow.io/"><img src="assets/partners/logos/axisnow.jpg" alt="AxisNow" width="150"></a></td>
-<td>Thanks to AxisNow for sponsoring this project! <a href="https://www.axisnow.io/">AxisNow</a> protects and accelerates websites and APIs, delivering an optimal access experience across mainland China and globally, while extending acceleration and security capabilities to native/mobile apps through client SDKs — <strong>self-hosted private-deployment CDN</strong> | <strong>subscription-based DDoS-protected CDN</strong> | <strong>autonomous, flexibly composable CDN network</strong>.</td>
-</tr>
+前往 [最新版本下载页](https://github.com/rw0104/sub2api-cost-console/releases/latest)，在附件中下载名称以 **`_x64-setup.exe`** 结尾的安装包，按照安装向导完成安装。
 
-</table>
+普通用户选择这个安装包即可。下载页里的源代码压缩包、签名文件和校验文件主要用于开发或核验，不需要逐个安装。
 
-## Overview
+当前正式桌面包面向 **Windows 10 / 11 的 x64 电脑**。安装包已包含桌面界面和兼容的 Sub2API 内核，无需自己编译 Go、Rust 或前端代码。界面运行依赖 Microsoft Edge WebView2；如果安装或启动时提示缺少该组件，请按提示补齐。
 
-Sub2API is an AI API gateway platform designed to distribute and manage API quotas from AI product subscriptions. Users can access upstream AI services through platform-generated API Keys, while the platform handles authentication, billing, load balancing, and request forwarding.
+### 2. 准备保存数据的环境
 
-## Features
+账号、配置和调用历史需要数据库保存，服务运行还需要缓存。首次打开时，向导会检查环境，并提供两种方式：
 
-- **Multi-Account Management** - Support multiple upstream account types (OAuth, API Key)
-- **API Key Distribution** - Generate and manage API Keys for users
-- **Precise Billing** - Token-level usage tracking and cost calculation
-- **Smart Scheduling** - Intelligent account selection with sticky sessions
-- **Concurrency Control** - Per-user and per-account concurrency limits
-- **Rate Limiting** - Configurable request and token rate limits
-- **Built-in Payment System** - Supports EasyPay, Alipay, WeChat Pay, and Stripe for user self-service top-up, no separate payment service needed ([Configuration Guide](docs/PAYMENT.md))
-- **Admin Dashboard** - Web interface for monitoring and management
-- **Composite Groups** - Admin routing layer that resolves requested models to concrete providers for multi-provider groups ([Operator Guide](docs/COMPOSITE_GROUPS.md))
-- **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
+| 你的情况 | 选择方式 | 接下来会发生什么 |
+| --- | --- | --- |
+| 想在这台电脑上新建一套环境，已经安装并启动 Docker | **快速安装** | 程序创建 PostgreSQL 和 Valkey 服务，生成连接密码，并衔接后续初始化 |
+| 已有数据库，放在本机、NAS、服务器或云端 | **高级连接** | 填写现有 PostgreSQL 与 Redis / Valkey 的地址和凭据，再测试连接 |
 
-## Ecosystem
+**快速安装需要一个已经运行的 Docker 引擎。** 它会帮你准备数据库和缓存，不会代替你安装 Docker。第一次需要下载相关组件，耗时取决于网络情况。
 
-Community projects that extend or integrate with Sub2API:
+高级连接支持 PostgreSQL 15+ 和 Redis 7+ / 兼容的 Valkey 服务。已有环境的用户可以直接填写连接信息，不必再建一套数据库。
 
-| Project | Description | Features |
-|---------|-------------|----------|
-| ~~[Sub2ApiPay](https://github.com/touwaeriol/sub2apipay)~~ | ~~Self-service payment system~~ | **Now Built-in** — Payment is now integrated into Sub2API, no separate deployment needed. See [Payment Configuration Guide](docs/PAYMENT.md) |
-| [sub2api-mobile](https://github.com/ckken/sub2api-mobile) | Mobile admin console | Cross-platform app (iOS/Android/Web) for user management, account management, monitoring dashboard, and multi-backend switching; built with Expo + React Native |
+### 3. 完成初始化并登录
 
-## Tech Stack
+按照向导完成连接测试，创建管理员账号，然后登录。
 
-| Component | Technology |
-|-----------|------------|
-| Backend | Go 1.27.0, Gin, Ent |
-| Frontend | Vue 3.4+, Vite 5+, TailwindCSS |
-| Database | PostgreSQL 15+ |
-| Cache/Queue | Redis 7+ |
+桌面程序默认使用本机 `127.0.0.1:18765` 上的服务；没有现有可用服务时，会启动安装包内置的受管内核。启动页会显示当前连接方式和状态。如果没有成功进入界面，也能在这里看到原因并重试。
 
----
+### 4. 接入第一个上游账号
 
-## Nginx Reverse Proxy Note
+进入 **「上游排行」→「新增上游」**，或从 **「Sub2API 设置」** 进入账号管理。
 
-When using Nginx as a reverse proxy for Sub2API (or CRS) with Codex CLI, add the following to the `http` block in your Nginx configuration:
+按你实际使用的服务添加账号：支持的平台可通过 OAuth 授权，按量服务可填写 API Key；使用中转服务时，填写对应的接口地址和凭据。再将账号分配到适合的分组，检查状态是否可用。
 
-```nginx
-underscores_in_headers on;
-```
+如果是购买的订阅账号，顺手打开它的成本配置，填写实际采购金额、币种和计费周期。这样后面的成本面板才更接近你的实际情况。
 
-Nginx drops headers containing underscores by default (e.g. `session_id`), which breaks sticky session routing in multi-account setups.
+### 5. 跑通一次调用
 
----
+进入 **「API 接入」**，创建或选择一个启用中的 API Key，选择客户端，然后点击 **「测试本地接口」** 获取可用模型。
 
-## Deployment
+选择模型后，可以复制接入配置，或直接启动支持的本机客户端。完成一次正常调用，再回到资产总览，就能逐步看到请求、Token 和成本记录。
 
-### Method 1: Script Installation (Recommended)
+这里有两个不同的检查：**“测试本地接口”只读取模型清单，不发起模型推理；账号上的真实连接探测会发送一条最小请求，可能产生少量调用费用。** 刚接入的环境没有历史数据是正常的，无需为了让图表有数字反复探测。
 
-One-click installation script that downloads pre-built binaries from GitHub Releases.
+<a id="features"></a>
 
-#### Prerequisites
+## 完整功能
 
-- Linux server (amd64 or arm64)
-- PostgreSQL 15+ (installed and running)
-- Redis 7+ (installed and running)
-- Root privileges
+日常操作主要集中在四个工作区：**资产总览、上游排行、渠道号池、API 接入**。需要查看更完整的账号、分组、代理或用量管理时，可以随时打开「Sub2API 设置」。
 
-#### Installation Steps
+### 资产总览：先了解今天的整体情况
 
-```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
-```
+打开总览，就可以看到当前可调度的账号数量、请求情况、质量指标，以及所选时间范围内的计费产出和账号调用成本。
 
-The script will:
-1. Detect your system architecture
-2. Download the latest release
-3. Install binary to `/opt/sub2api`
-4. Create systemd service
-5. Configure system user and permissions
+财务趋势图把**用户计费产出、上游账号成本和调用贡献**放在同一时间轴上，方便观察变化。固定账号采购、当期新增采购和账号资产损失也有各自的展示位置，你可以从总览继续判断是哪一部分发生了变化。
 
-#### Post-Installation
+观察范围可以选择当天，也可以切换到最近 1 分钟、5 分钟、30 分钟、1 小时、6 小时、24 小时、7 天或 1 个月。自动刷新支持 5、10、15、30 秒，也可以暂停，停下来查看某一组数据。
 
-```bash
-# 1. Start the service
-sudo systemctl start sub2api
+平时看总览即可。需要排查时，再点 **「展开诊断数据」**，查看请求质量、账号健康、首个 Token 等待时间、Token 与缓存、模型贡献和路由明细，避免一打开就被大量统计淹没。
 
-# 2. Enable auto-start on boot
-sudo systemctl enable sub2api
+### 上游排行：找到值得关注的账号
 
-# 3. Open Setup Wizard in browser
-# http://YOUR_SERVER_IP:8080
-```
+账号多了以后，逐个打开详情会很费时间。上游排行把日常巡检需要的信息集中在一张表里：
 
-The Setup Wizard will guide you through:
-- Database configuration
-- Redis configuration
-- Admin account creation
+- 账号名称、所属平台、分组和备注。
+- 当前调度状态、优先级，以及内核提供的账号评分。
+- 上游能够提供的额度窗口、使用比例与重置时间。
+- 加入时间、采购费率、累计采购成本和已确认的损失。
+- 当天账号调用成本、用户计费产出、请求量和 Token。
+- 真实连接探测结果与完整测试耗时。
 
-#### Upgrade
+你可以按平台筛选，搜索账号、分组或备注，再按综合评分、可用性、产出、请求量或成本排序。排行会区分是否已有请求、探测或异常证据；没有足够信息的账号不会凭空获得一个可信名次。
 
-You can upgrade directly from the **Admin Dashboard** by clicking the **Check for Updates** button in the top-left corner.
+在这里既能单独调整采购成本，也能选择一批账号，统一保存成本档案。导入导出、授权、编辑和更多账号操作，则可以继续进入账号管理页面完成。
 
-The web interface will:
-- Check for new versions automatically
-- Download and apply updates with one click
-- Support rollback if needed
+**额度信息取决于上游是否提供。** 某个账号没有显示余额或使用窗口，可能是还没有收到可用数据；不要仅凭一个空白格判断它已经用完。
 
-#### Useful Commands
+### 成本档案：按自己的账单来算
 
-```bash
-# Check status
-sudo systemctl status sub2api
+买来的账号和按 Token 付费的 API，费用结构不同。控制台会按账号类型区分处理。
 
-# View logs
-sudo journalctl -u sub2api -f
+**订阅或固定采购账号**可以填写采购金额，选择人民币或美元，以及每小时、每日、每周、每月或一次性的计费方式。默认从账号加入时开始计算，也可以设定较晚的起算时间。
 
-# Restart service
-sudo systemctl restart sub2api
+例如，你购买了一个月费账号，填入实际支付金额后，控制台会把这笔费用折算到使用时间里。月费按 **730 小时**计算；一次性费用则在起算时全额计入，不会一直重复产生小时费用。
 
-# Uninstall
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
-```
+部分账号能根据套餐得到默认成本，界面会标明这是估算。优惠价、年付价格、渠道报价与默认套餐价可能不同，**请用自己的实际账单覆盖默认值**。填得越准确，后面的采购成本和号池分析越有参考价值。
 
----
+**按量 API 账号**通常不需要填写固定采购金额。调用成本根据请求用量、模型或渠道价格和账号倍率计算。如果另外支付了月租、手续费或专线费，也可以添加固定附加成本，与调用费用一起观察。
 
-### Method 2: Docker Compose (Recommended)
+人民币和美元会保留各自的金额含义；需要折算时，页面会显示参考汇率及其来源。这里的换算用于观察成本，并不代表银行实际结算汇率。
 
-Deploy with Docker Compose, including PostgreSQL and Redis containers.
+### 渠道号池：看清一批账号的投入和产出
 
-#### Prerequisites
+渠道号池适合把同一平台的一批账号放在一起看。你可以了解当前有多少账号、多少已经产生请求、哪些处于限流或错误状态，以及它们累计产生了多少调用和计费产出。
 
-- Docker 20.10+
-- Docker Compose v2+
+号池还会展示采购费率、经济成本、封禁净损失，以及每 1 美元计费产出对应的采购经济成本，方便比较不同账号组合的使用情况。
 
-#### Quick Start (One-Click Deployment)
+在有足够稳定采样时，面板会提供产出速率和当日剩余产出的预测，并标明数据完整度。账号成员变化或样本不足时，预测需要重新积累；部分分组没有独立预测数据时会直接显示无数据。
 
-Use the automated deployment script for easy setup:
+**预测是根据近期使用情况作出的推算，不是账号剩余额度，也不是收益承诺。** 用它观察趋势会更合适，不宜当成已经发生的收入。
 
-```bash
-# Create deployment directory
-mkdir -p sub2api-deploy && cd sub2api-deploy
+当前号池只展示仍然存在的账号，但历史调用和已经确认的资产损失会继续保留，避免删掉一个账号就让过去的投入消失。
 
-# Download and run deployment preparation script
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+### 损失账本：让失效、退款和恢复都有记录
 
-# Start services
-docker compose up -d
+采购账号出现临时限流、网络错误或授权刷新问题时，并不一定意味着这笔采购已经损失。控制台会将运行异常和已确认的终局失效分开处理。
 
-# View logs
-docker compose logs -f sub2api
-```
+只有被确认无法自动恢复的采购账号失效，才会按对应规则计入损失。损失关注的是当前已付周期里尚未摊销、又无法退款的部分，相关事件会保留发生时的账号和成本信息。
 
-**What the script does:**
-- Downloads `docker-compose.local.yml` (saved as `docker-compose.yml`) and `.env.example`
-- Generates secure credentials (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
-- Creates `.env` file with auto-generated secrets
-- Creates data directories (uses local directories for easy backup/migration)
-- Displays generated credentials for your reference
+退款和恢复冲销也有对应记录，不会靠直接清零来抹掉过去的变化。删除账号后，已确认损失仍会留在历史账本和相关经济统计中。
 
-#### Manual Deployment
+这样，你看到的既有当前还能使用的账号，也有过去付出过的成本。
 
-If you prefer manual setup:
+### 模型成本与核对：了解每一次调用的去向
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/Wei-Shaw/sub2api.git
-cd sub2api/deploy
+一个客户端请求的模型名，可能经过分组或渠道映射后再发送给上游。模型核对把这条路径分开呈现：
 
-# 2. Copy environment configuration
-cp .env.example .env
-chmod 600 .env
+| 页面里的模型 | 表示什么 |
+| --- | --- |
+| 用户请求模型 | 客户端最初选择的模型 |
+| 实际发往上游模型 | 网关经过映射后发送给上游的模型 |
+| 上游响应声明模型 | 上游返回结果时，在响应中声明的模型 |
 
-# 3. Edit configuration (generate secure passwords)
-nano .env
-```
+你可以按时间、账号和模型审计状态筛选，查看一致、不一致及未观测的请求，并继续展开渠道、账号、分组、接口、Token、缓存和成本明细。
 
-**Required configuration in `.env`:**
+模型成本统计会分别汇总所选时间里的实际调用，所以即使当前账号池换了平台，之前调用过的模型仍然可能出现在历史里。这样的记录有助于回看过去，不会随着账号变化而重新改写。
 
-```bash
-# PostgreSQL password (REQUIRED)
-POSTGRES_PASSWORD=your_secure_password_here
+这里也有一个边界：**上游响应中的模型名称是对方的声明，不能单凭它证明底层模型身份。** 不一致记录是进一步核查的线索；没有声明时会显示未观测，不会被自动算成“验证一致”。
 
-# JWT Secret (RECOMMENDED - keeps users logged in after restart)
-JWT_SECRET=your_jwt_secret_here
+价格目录可以手动同步。更新后的价格用于后续请求，历史成本尽量保留当时的请求快照；缺少账号成本快照、需要回退到标准价的旧记录，会明确标记为估算。
 
-# TOTP Encryption Key (RECOMMENDED - preserves 2FA after restart)
-TOTP_ENCRYPTION_KEY=your_totp_key_here
+### API 接入：把账号用到自己的工具里
 
-# Optional: Admin account
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=your_admin_password
+在 API 接入中心，你可以选择启用中的 API Key、读取当前可用模型、复制网关地址，并生成对应客户端的配置。
 
-# Optional: Custom port
-SERVER_PORT=8080
-```
+桌面默认提供的本地接口地址是 **`http://127.0.0.1:18765/v1`**。界面会区分本地接口响应时间、上游首个 Token 等待时间和上游总耗时，帮助判断慢在连接、排队还是模型响应阶段。
 
-**Generate secure secrets:**
-```bash
-# Generate JWT_SECRET
-openssl rand -hex 32
+接入与启动支持如下：
 
-# Generate TOTP_ENCRYPTION_KEY
-openssl rand -hex 32
+| 客户端或使用方式 | 控制台可以帮你完成 |
+| --- | --- |
+| Codex CLI | 生成配置，检查安装位置，并在所选工作目录启动 |
+| Claude Code | 准备连接所需的环境配置，检查并启动本机客户端 |
+| OpenCode | 生成配置，检查并启动本机客户端 |
+| Cursor | 提供兼容接口配置；原生启动入口对应 Cursor Agent |
+| Grok CLI | 提供环境配置，检查并启动本机客户端 |
+| Cline | 提供兼容接口配置，复制后在客户端中设置 |
+| Python、Node.js、curl / SDK | 提供可复制的接入示例，方便接入自己的脚本或工具 |
+| ChatGPT Desktop | 检查并打开已经安装的官方 Windows 应用 |
 
-# Generate POSTGRES_PASSWORD
-openssl rand -hex 32
-```
+使用原生启动功能前，需要先安装对应客户端。工作目录可以浏览选择，也可以手动填写；有效目录和客户端路径会在本机记住，减少重复操作。
 
-```bash
-# 4. Create data directories (for local version)
-mkdir -p data postgres_data redis_data
+对支持接入的命令行客户端，控制台会把 API Key 和连接配置传给新启动的进程，不接管已有账号配置文件。Claude Code 首次进入某个目录时可能要求确认目录信任，在它自己的窗口完成即可。
 
-# 5. Start all services
-# Option A: Local directory version (recommended - easy migration)
-docker compose -f docker-compose.local.yml up -d
+**ChatGPT Desktop 使用自己的登录与服务体系。这里的按钮负责打开应用，不会把它的对话自动接到本地 API。** 如果希望通过本项目使用编程 Agent，请选择对应的 CLI 或支持自定义接口的客户端。
 
-# Option B: Named volumes version (simple setup)
-docker compose up -d
+### 数据来源与历史：知道数字从哪里来
 
-# 6. Check status
-docker compose -f docker-compose.local.yml ps
+点击工具栏的 **「数据治理」**，可以看到各项数据来源是否可用、最近一次成功读取时间，以及缺少数据的原因。
 
-# 7. View logs
-docker compose -f docker-compose.local.yml logs -f sub2api
-```
+控制台会尽量保留最近成功的结果。某次刷新失败时，已有数据会标成旧数据；首次读取就失败的项目会显示无数据，避免把网络问题误看成没有成本。
 
-#### Deployment Versions
+| 你看到的状态 | 可以怎样理解 |
+| --- | --- |
+| 0 | 查询成功，在这段时间里确实没有相应金额或次数 |
+| 无数据 | 当前没有取得可用结果，需要查看来源状态 |
+| 无样本 | 还没有足够的延迟等观测值 |
+| 估算 | 使用了默认价格、回退数据或配置推算 |
+| 旧数据 | 保留的是上次成功读取的结果 |
 
-| Version | Data Storage | Migration | Best For |
-|---------|-------------|-----------|----------|
-| **docker-compose.local.yml** | Local directories | ✅ Easy (tar entire directory) | Production, frequent backups |
-| **docker-compose.yml** | Named volumes | ⚠️ Requires docker commands | Simple setup |
+“当天”按你设备的自然日计算，跨日后开始新的一天；“最近 24 小时”则一直向前滚动。采购累计和损失账本不随当天统计一起归零。
 
-**Recommendation:** Use `docker-compose.local.yml` (deployed by script) for easier data management.
+需要查账时，可以进入用量记录，按条件筛选并导出 Excel。历史清理有独立入口；用于趋势预测的经济样本与实际调用记录也分开管理，不能把清理某类样本理解为清空全部账本。
 
-#### Access
+### 保留完整的 Sub2API 管理入口
 
-Open `http://YOUR_SERVER_IP:8080` in your browser.
+点击 **「Sub2API 设置」**，还可以继续使用内核提供的管理功能，包括：
 
-If admin password was auto-generated, find it in logs:
-```bash
-docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
-```
+- 账号的新增、授权、编辑、导入导出和分组安排。
+- API Key、用户、分组及访问额度管理。
+- 渠道、模型映射、自定义价格与代理配置。
+- 用量记录、请求与错误监控、系统日志和审计记录。
+- 根据环境启用的订阅、订单、兑换码、公告、图片任务等功能。
 
-#### Upgrade
+上游接入包含 OpenAI / Codex、Claude、Gemini、Grok 等平台，也能通过相应兼容接口接入 DeepSeek、Kimi、智谱、MiniMax 等服务。具体可用模型、图片能力、授权方式和额度信息，取决于你的账号、分组配置以及服务提供方。
 
-```bash
-# Pull latest image and recreate container
-docker compose -f docker-compose.local.yml pull
-docker compose -f docker-compose.local.yml up -d
-```
+部分管理入口需要管理员权限或在设置中启用。日常自用时，可以先完成账号、分组和 API Key 的配置，其余功能按需要使用。
 
-#### Easy Migration (Local Directory Version)
+## 第一次看成本面板，先分清这几笔钱
 
-When using `docker-compose.local.yml`, migrate to a new server easily:
+| 名称 | 它回答的问题 |
+| --- | --- |
+| 用户 API 计费产出 | 这些请求按本站计费规则记了多少金额？ |
+| 上游账号调用成本 | 这些调用按账号价格与倍率计算，消耗了多少成本？ |
+| API 调用毛利 | 计费产出减去上游账号调用成本，还剩多少？ |
+| 账号采购投入 | 为取得账号使用权，投入了多少固定采购费用？ |
+| 账号资产损失 | 账号终局失效后，有多少未消耗的采购价值确认损失？ |
 
-```bash
-# On source server
-docker compose -f docker-compose.local.yml down
-cd ..
-tar czf sub2api-complete.tar.gz sub2api-deploy/
+例如，一段时间里计费产出为 **10 美元**，账号调用成本为 **6 美元**，页面上的 API 调用毛利就是 **4 美元**。如果另外购买了订阅账号，这部分采购和可能发生的损失仍需单独考虑，不能把 4 美元直接当成最终利润。
 
-# Transfer to new server
-scp sub2api-complete.tar.gz user@new-server:/path/
+同样，**“计费产出”不等于已经收到的现金**。它描述的是请求的计费金额；自己使用时，也可以把它看作按当前规则记录的调用价值，而不是实际卖出了这么多钱。
 
-# On new server
-tar xzf sub2api-complete.tar.gz
-cd sub2api-deploy/
-docker compose -f docker-compose.local.yml up -d
-```
+<a id="updates"></a>
 
-#### Useful Commands
+## 更新与日常使用
 
-```bash
-# Stop all services
-docker compose -f docker-compose.local.yml down
+### 桌面和内核可以分别更新
 
-# Restart
-docker compose -f docker-compose.local.yml restart
+打开 **「版本与更新」**，可以查看桌面版本、兼容内核、成本扩展和成本算法，也可以手动点击「检查全部更新」。程序启动后会检查更新，运行期间也会定期检查。
 
-# View all logs
-docker compose -f docker-compose.local.yml logs -f
+桌面整包更新包含界面和桌面功能；独立内核更新主要更新本地网关与兼容能力。上游发布新版本后，本项目会先构建并验证保留成本扩展的兼容内核，通过后才提供给客户端。
 
-# Remove all data (caution!)
-docker compose -f docker-compose.local.yml down
-rm -rf data/ postgres_data/ redis_data/
-```
+发现新的兼容内核时，程序会自动下载并校验。准备完成后，你可以选择立即重启启用，也可以等下一次正常启动。上游已经更新、兼容版本还在验证时，面板会说明等待状态。
 
----
+桌面安装包通过更新签名验证；兼容内核会核对版本、身份、必需能力和文件校验值。新内核首次启动健康检查失败时会尝试恢复上一版，有可用历史版本时也提供内核回滚入口。
 
-### Method 3: Apple container (macOS)
+重启启用更新会影响正在使用本地网关的请求，适合在手头任务结束后进行。
 
-Apple-silicon Macs running macOS 26 can run the full Sub2API, PostgreSQL, and Redis stack with Apple `container` 1.1.0 or newer:
+### 关掉窗口后，程序会留在托盘
 
-```bash
-git clone https://github.com/Wei-Shaw/sub2api.git
-cd sub2api/deploy
-./apple-container.sh init
-./apple-container.sh up
-./apple-container.sh status
-```
+点击关闭或最小化时，程序会隐藏到 Windows 系统托盘，方便继续保持本地服务运行。点击托盘图标可以回到主窗口；需要完全停止时，在托盘菜单里选择 **「退出 Sub2API」**。
 
-This is an operator-managed local workflow; Docker Compose remains the recommended production path. See [deploy/APPLE_CONTAINER.md](deploy/APPLE_CONTAINER.md) for lifecycle commands, persistence, upgrades, and runtime limitations.
+完全退出后，依赖程序受管内核的本地客户端将无法继续通过它发送请求。
 
----
+### 几个常用快捷键
 
-### Method 4: Build from Source
+| 快捷键 | 操作 |
+| --- | --- |
+| `Ctrl + 1 / 2 / 3 / 4` | 切换资产总览、上游排行、渠道号池、API 接入 |
+| `Ctrl + R` | 刷新成本中心数据 |
+| `F11` | 切换全屏 |
+| `Esc` | 关闭正在打开的成本配置面板 |
 
-Build and run from source code for development or customization.
+## 数据保存在哪里
 
-#### Prerequisites
+桌面配置与受管内核文件保存在 Windows 用户应用数据目录，通常位于 **`%APPDATA%\com.sub2api.cost-console`**。启动页会显示实际使用的后端数据目录。
 
-- Go 1.21+
-- Node.js 18+
-- PostgreSQL 15+
-- Redis 7+
+账号、调用记录等业务数据保存在你连接的 PostgreSQL 中。使用快速安装时，数据库内容放在 Docker 的持久化数据卷里；使用高级连接时，则保存在你提供的数据库中。
 
-#### Build Steps
+**备份时需要同时考虑桌面配置和数据库。** 只复制安装目录，并不等于备份了账号和历史用量；删除数据库或 Docker 数据卷也不等于普通卸载。涉及数据库迁移的更新，回滚内核文件不会自动撤销数据库变化。
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/Wei-Shaw/sub2api.git
-cd sub2api
+模型请求仍会发送到你配置的上游服务。桌面运行在本机，并不意味着模型也在本机离线运行。账号导出、配置文件和反馈截图可能包含凭据，分享前请隐藏 API Key、Token、密码等信息。
 
-# 2. Install pnpm (if not already installed)
-npm install -g pnpm
+<a id="faq"></a>
 
-# 3. Build frontend
-cd frontend
-pnpm install
-pnpm run build
-# Output will be in ../backend/internal/web/dist/
+## 常见问题
 
-# 4. Build backend with embedded frontend
-cd ../backend
-VERSION="$(./scripts/resolve-version.sh)"
-go build -tags embed -ldflags="-X main.Version=${VERSION}" -o sub2api ./cmd/server
+### 安装后就能直接使用 AI 吗？
 
-# 5. Create configuration file
-cp ../deploy/config.example.yaml ./config.yaml
+你还需要可用的上游账号或 API Key，以及初始化所需的数据库和缓存。控制台负责管理、接入和统计，不附送模型额度或付费订阅。
 
-# 6. Edit configuration
-nano config.yaml
-```
+### 一定要安装 Docker 吗？
 
-> **Note:** The `-tags embed` flag embeds the frontend into the binary. Without this flag, the binary will not serve the frontend UI.
+使用「快速安装」时需要。如果已经有 PostgreSQL 和 Redis / Valkey，可以选择「高级连接」，Docker 就不是必需条件。
 
-**Key configuration in `config.yaml`:**
+### 一直停留在启动页怎么办？
 
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-  mode: "release"
+先看启动页给出的错误。如果使用快速安装，确认 Docker 和对应服务正在运行；如果连接已有数据库，检查地址、端口、用户名和密码。还要留意本机 `18765` 端口是否被其他程序占用。处理后可以点击「重新启动内核」。
 
-database:
-  host: "localhost"
-  port: 5432
-  user: "postgres"
-  password: "your_password"
-  dbname: "sub2api"
+### 明明添加了账号，为什么模型列表还是空的？
 
-redis:
-  host: "localhost"
-  port: 6379
-  username: ""
-  password: ""
+先确认账号可用，并已分配到相应分组，再检查 API Key 绑定的分组。模型列表受这些设置影响，也需要上游账号具有实际访问权限。完成配置后，回到 API 接入中心重新测试。
 
-jwt:
-  secret: "change-this-to-a-secure-random-string"
-  expire_hour: 24
+### 成本与我的采购账单对不上，应该改哪里？
 
-default:
-  user_concurrency: 5
-  user_balance: 0
-  api_key_prefix: "sk-"
-  rate_multiplier: 1.0
-```
+先看账号是否正在使用默认套餐价。打开成本配置，填入真实采购金额、币种、周期和起算时间；按量 API 还需要核对账号倍率与渠道价格。随后确认自己比较的是调用成本、采购累计还是资产损失，以及时间范围是否一致。
 
-Additional security-related options are available in `config.yaml`:
+### 为什么有些模型显示“未观测”，或与请求模型不同？
 
-- `cors.allowed_origins` for CORS allowlist
-- `security.url_allowlist` for upstream/pricing/CRS host allowlists
-- `security.url_allowlist.enabled` to disable URL validation (use with caution)
-- `security.url_allowlist.allow_insecure_http` to allow HTTP URLs when validation is disabled
-- `security.url_allowlist.allow_private_hosts` to allow private/local IP addresses
-- `security.response_headers.enabled` to enable configurable response header filtering (disabled uses default allowlist)
-- `security.csp` to control Content-Security-Policy headers
-- `billing.circuit_breaker` to fail closed on billing errors
-- `security.trust_forwarded_ip_for_api_key_acl` enables legacy raw forwarded-header takeover (enabled by default for upgrade compatibility); disable it to enforce `server.trusted_proxies`, which should contain only the exact proxy CIDRs that connect directly to Sub2API
-- `security.forwarded_client_ip_headers` configures up to 16 third-party CDN client-IP header names; they are checked in order before the built-in headers only while legacy takeover is enabled
-- `turnstile.required` to require Turnstile in release mode
+模型映射会让请求模型与实际发往上游模型不同；上游也可能没有返回模型声明。打开路由明细分别看这三项，结合自己的分组和渠道设置判断。“未观测”表示信息不足，不能据此确认一致或替换。
 
-Custom client-IP headers can be set in YAML or as a comma-separated environment variable:
+### 测试接口很快，实际回答却很慢？
 
-```bash
-SECURITY_FORWARDED_CLIENT_IP_HEADERS=True-Client-IP,X-CDN-Client-IP
-```
+读取本地模型清单和等待上游生成回答是两件事。继续查看首个 Token 等待时间、总耗时、账号状态和错误记录，才能分清上游排队、代理连接、切换账号或生成速度的影响。
 
-Header names are validated, canonicalized, and de-duplicated. The admin security settings can update the list without a restart; new installations persist YAML/environment defaults and existing installations backfill a missing database value. When legacy takeover is disabled, all custom and built-in raw forwarding headers are ignored and Gin uses only `server.trusted_proxies`. While takeover is enabled, firewall the origin to CDN/proxy addresses and make the edge overwrite every trusted client-IP header. See [`deploy/EDGE_SECURITY.md`](deploy/EDGE_SECURITY.md) for the complete migration and trust-boundary rules.
+### 为什么删掉账号后，历史里还有它的成本？
 
-**⚠️ Security Warning: HTTP URL Configuration**
+因为这些调用和已确认损失曾经发生过。当前账号池会移除它，历史记录仍然保留，方便核对过去的投入与使用情况。
 
-When `security.url_allowlist.enabled=false`, the system performs minimal URL validation and **allows HTTP URLs by default** (dev-friendly mode; Docker Compose deployments use the same default). For production, explicitly tighten this to HTTPS-only:
+### 点了关闭，客户端为什么还能调用？
 
-```yaml
-security:
-  url_allowlist:
-    enabled: false                # Disable allowlist checks
-    allow_insecure_http: false    # HTTPS only (recommended for production)
-```
+关闭按钮会把程序收进托盘，受管内核继续运行。需要停止时，请使用托盘里的「退出 Sub2API」。
 
-**Or via environment variable:**
+### 更新失败会清空数据吗？
 
-```bash
-SECURITY_URL_ALLOWLIST_ENABLED=false
-SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=false
-```
+下载或校验失败本身不会清空业务数据，可以先继续使用当前版本，再检查网络与更新提示。数据库连接故障和新版本迁移问题需要根据具体错误处理；如需恢复数据，仍应使用事先保留的数据库备份。
 
-**Risks of allowing HTTP:**
-- API keys and data transmitted in **plaintext** (vulnerable to interception)
-- Susceptible to **man-in-the-middle (MITM) attacks**
-- **NOT suitable for production** environments
+### 有 macOS 或 Linux 桌面版吗？
 
-**When to use HTTP:**
-- ✅ Development/testing with local servers (http://localhost)
-- ✅ Internal networks with trusted endpoints
-- ✅ Testing account connectivity before obtaining HTTPS
-- ❌ Production environments (use HTTPS only)
+当前本仓库发布的是 Windows x64 桌面安装包。上游的服务器部署方式，与本项目的桌面安装包是不同的使用方式，下载时请以本仓库 Release 中实际提供的附件为准。
 
-**Example error for HTTP URLs when `allow_insecure_http: false` is set:**
-```
-Invalid base URL: invalid url scheme: http
-```
+## 版本说明与反馈
 
-If you disable URL validation or response header filtering, harden your network layer:
-- Enforce an egress allowlist for upstream domains/IPs
-- Block private/loopback/link-local ranges
-- Enforce TLS-only outbound traffic
-- Strip sensitive upstream response headers at the proxy
+这份介绍按 **桌面 v0.2.31** 的功能整理，发布时内置的兼容内核为 **v0.2.1**。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
-#### OpenAI Responses WebSocket ingress limits
+- [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
+- [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)
+- [提交问题或功能建议](https://github.com/rw0104/sub2api-cost-console/issues)
 
-`gateway.openai_ws` bounds the lifetime and aggregate count of client-facing
-Responses WebSocket sessions. These safeguards apply independently from
-per-turn user and account concurrency slots, which are released between turns.
+反馈时，带上桌面与内核版本、出问题前的操作、报错内容和脱敏截图，会更容易复现。成本问题还可以补充观察时间范围和账号计费方式，无需提供真实密钥。
 
-```yaml
-gateway:
-  openai_ws:
-    # Total time to receive and decompress the first client message.
-    client_first_message_timeout_seconds: 30
-    # Close a client socket idle between completed turns; 0 disables this safeguard.
-    ingress_inter_turn_idle_timeout_seconds: 300
-    # Distributed API-key limit for live client ingress sessions; 0 disables it.
-    max_ingress_connections_per_api_key: 64
-```
+## 致谢与许可
 
-The first-message timeout is a total read deadline. Deployments that accept
-large contexts or image-heavy requests over slower links can raise it to
-120-300 seconds. It expires before HTTP bridge routing, so bridge mode does not
-override this limit.
+感谢 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的作者及贡献者。本项目在其基础上增加桌面体验、成本分析和相关运维能力，独立维护这些改动，不代表上游官方桌面产品，也不代表上游与本项目之间存在赞助或背书关系。
 
-The connection cap is coordinated through Redis using a 60-second lease that
-is refreshed every 20 seconds. A process that cannot confirm a lease for a
-full lease lifetime closes its local WebSocket rather than continuing outside
-the global cap.
-
-Enable the v2 mode router before selecting an account-level WS mode such as
-`http_bridge`:
-
-```yaml
-gateway:
-  openai_ws:
-    mode_router_v2_enabled: true
-```
-
-Or set `GATEWAY_OPENAI_WS_MODE_ROUTER_V2_ENABLED=true` in the environment.
-Use `http_bridge` for client-WebSocket/upstream-HTTP operation when rolling out
-or mitigating upstream WebSocket issues.
-
-#### Force OpenAI upstream HTTP/SSE
-
-When an egress proxy or network repeatedly reconnects OpenAI Responses
-WebSockets, set the global fallback in the persisted deployment configuration:
-
-```yaml
-gateway:
-  openai_ws:
-    force_http: true
-```
-
-For Compose and Apple container deployments, the equivalent `.env` setting is:
-
-```bash
-GATEWAY_OPENAI_WS_FORCE_HTTP=true
-```
-
-This selects HTTP/SSE for OpenAI upstream Responses traffic that would
-otherwise use WebSocket. It does not change the client-facing protocol or force
-HTTP/1.1; configure `gateway.openai_http2.enabled` (or
-`GATEWAY_OPENAI_HTTP2_ENABLED=false`) separately when a proxy is incompatible
-with HTTP/2. Unlike the account-level `http_bridge` mode, this global fallback
-takes effect without enabling `mode_router_v2_enabled`. Keep the setting in the
-deployment's persisted `.env` or `config.yaml`, rather than inside a running
-container, so it is read again after an image update or container recreation.
-
-#### ⚠️ Important: Creating the Admin Account
-
-The initial admin account is **only created via the setup wizard** (served at `http://<host>:8080` on first run). The `default.admin_email` / `default.admin_password` fields in `config.yaml` are **not used** to create it — they exist in the template for historical reasons.
-
-Because step 5 above pre-creates `config.yaml`, the setup wizard will be **skipped on first run**: the server detects an existing config and boots straight into normal mode with an empty `users` table, so the first login attempt fails with `invalid email or password`.
-
-**Two ways to create the admin account:**
-
-1. **Recommended — let the wizard generate `config.yaml`:** Skip step 5 (do not run the `cp`). Start `./sub2api` directly; the setup wizard at `http://localhost:8080` walks you through database, Redis, and admin account setup, then writes `config.yaml` for you.
-
-2. **If you already created `config.yaml`:** Temporarily move it aside so the wizard can trigger on first run, then restore it afterwards:
-   ```bash
-   mv config.yaml config.yaml.bak
-   ./sub2api        # wizard runs at http://localhost:8080 and writes a fresh config.yaml
-   # stop the server (Ctrl+C) once the wizard completes, then restore your config:
-   mv config.yaml.bak config.yaml
-   ./sub2api        # restart in normal mode and log in with the admin you just created
-   ```
-
-```bash
-# 6. Run the application
-./sub2api
-```
-
-#### Development Mode
-
-```bash
-# Backend (with hot reload)
-cd backend
-go run ./cmd/server
-
-# Frontend (with hot reload)
-cd frontend
-pnpm run dev
-```
-
-#### Code Generation
-
-When editing `backend/ent/schema`, regenerate Ent + Wire:
-
-```bash
-cd backend
-go generate ./ent
-go generate ./cmd/server
-```
-
----
-
-## Simple Mode
-
-Simple Mode is designed for individual developers or internal teams who want quick access without full SaaS features.
-
-- Enable: Set environment variable `RUN_MODE=simple`
-- Difference: Hides SaaS-related features and skips billing process
-- Security note: In production, you must also set `SIMPLE_MODE_CONFIRM=true` to allow startup
-
----
-
-## Asynchronous Image Tasks
-
-Long-running OpenAI/Grok image generation and editing can be submitted through `/v1/images/generations/async` or `/v1/images/edits/async`, then polled at `/v1/images/tasks/{task_id}` without holding a CDN connection open. See [Asynchronous Image Tasks](docs/ASYNC_IMAGE_TASKS.md) for request and response examples.
-
----
-
-## Grok / xAI Support
-
-Sub2API supports both Grok subscription accounts through xAI OAuth and standard xAI API-key accounts. Both account types forward OpenAI-compatible Responses traffic to xAI.
-
-### Supported Scope
-
-- Platform name: `grok`
-- Account types: OAuth subscription accounts and xAI API-key accounts
-- Public Responses targets: `/v1/responses`, `/responses`, and `/backend-api/codex/responses`, forwarded to the Grok subscription proxy for OAuth accounts or `https://api.x.ai/v1/responses` for API-key accounts
-- Public Claude-compatible target: `/v1/messages`, converted to xAI Responses and returned as Anthropic Messages output for Claude CLI style clients
-- Public Chat Completions targets: `/v1/chat/completions` and `/chat/completions`, forwarded to the account-type-specific xAI upstream
-- Codex CLI style Responses WebSocket ingress is accepted on the Responses targets and bridged to xAI HTTP/SSE Responses upstream
-- Text models: `grok-4.5`, `grok-4.3`, `grok-build-0.1`, `grok-composer-2.5-fast`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-4.20-multi-agent-0309`
-- Media targets for Grok groups: `/v1/images/generations`, `/images/generations`, `/v1/images/edits`, `/images/edits`, `/v1/videos/generations`, `/videos/generations`, `/v1/videos/edits`, `/videos/edits`, `/v1/videos/extensions`, `/videos/extensions`, `/v1/videos/{request_id}`, and `/videos/{request_id}`. Generation, editing, and extension requests require the group image-generation permission.
-- Media models: `grok-imagine`, `grok-imagine-image-quality`, `grok-imagine-image`, `grok-imagine-image-2.0`, `grok-imagine-edit`, `grok-imagine-video`, and `grok-imagine-video-1.5`
-- JSON image-edit and video-generation requests accept image references in `image`, `images`, `reference_images`, and `mask` objects. Use `url` for xAI-compatible payloads; the legacy `image_url` field remains accepted and is normalized to `url` before forwarding.
-- Out of scope for this provider: TTS, transcription, browser automation, cookies, and Grok web scraping
-
-### OAuth Configuration
-
-The Grok OAuth flow uses PKCE and does not require committing private secrets. The default client details follow the public xAI OAuth flow used by compatible clients, and every value can be overridden by environment variable:
-
-| Variable | Default |
-|----------|---------|
-| `XAI_OAUTH_CLIENT_ID` | Public xAI OAuth client ID |
-| `XAI_OAUTH_SCOPE` | `openid profile email offline_access grok-cli:access api:access` |
-| `XAI_OAUTH_REDIRECT_URI` | `http://127.0.0.1:56121/callback` |
-| `XAI_OAUTH_AUTHORIZE_URL` | `https://auth.x.ai/oauth2/authorize` |
-| `XAI_OAUTH_TOKEN_URL` | `https://auth.x.ai/oauth2/token` |
-| `XAI_BASE_URL` | `https://api.x.ai/v1`; runtime-diagnostics override (account `base_url` controls request forwarding) |
-| `XAI_GROK_CLI_VERSION` | `0.2.114`; optional override for the client identity sent to `cli-chat-proxy.grok.com`. The pinned value is also the floor: an override below it is dropped |
-
-Administrators can create Grok OAuth or API-key accounts from the dashboard. OAuth authorization and reauthorization are also available through the admin API:
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/v1/admin/grok/oauth/auth-url` | Generate an xAI OAuth authorization URL |
-| `POST /api/v1/admin/grok/oauth/exchange-code` | Exchange a callback URL, query string, or code for OAuth credentials |
-| `POST /api/v1/admin/grok/oauth/refresh-token` | Validate or refresh a Grok refresh token |
-| `POST /api/v1/admin/grok/accounts/:id/refresh` | Refresh an existing Grok account |
-
-OAuth credential storage reuses the existing account JSON fields: `access_token`, `refresh_token`, `token_type`, `expires_at`, `base_url`, optional `email`, optional `subscription_tier`, and `entitlement_status`. OAuth inference defaults to `https://cli-chat-proxy.grok.com/v1`; existing OAuth accounts that stored the old `https://api.x.ai/v1` default are redirected to the subscription proxy at runtime. Explicit custom upstreams remain unchanged.
-
-For API-key accounts, select **Grok → API Key** in the create-account dialog. The official base URL defaults to `https://api.x.ai/v1`; credentials use the existing `base_url` and `api_key` account fields. OAuth accounts continue to use the subscription flow above.
-
-### Grok Build CLI Configuration
-
-1. In the Sub2API admin dashboard, add either a `grok` OAuth account and complete xAI authorization, or add a Grok API-key account.
-2. Create a Grok group, attach the account to it, then create a Sub2API API key assigned to that group.
-3. In the user API-key page, click **Use Key** and select **Grok CLI**. The modal generates the correct file and base URL for macOS/Linux or Windows. It also provides an OpenCode configuration on the **OpenCode** tab.
-4. If configuring manually, save the following as `~/.grok/config.toml` (Windows: `%USERPROFILE%\.grok\config.toml`):
-
-```toml
-[models]
-default = "grok"
-web_search = "grok"
-
-[model."grok"]
-model = "grok-4.5"
-base_url = "https://your-sub2api.example.com/v1"
-name = "Grok 4.5"
-api_key = "sk-your-sub2api-key"
-api_backend = "responses"
-context_window = 1000000
-supports_backend_search = true
-```
-
-Back up an existing `config.toml` before merging the entry. The file contains a Sub2API API key, so keep it private and restrict its permissions where supported. Verify the effective configuration and make a smoke request:
-
-```bash
-grok inspect
-grok -p "Reply with sub2api-ok" -m grok
-```
-
-The `base_url` above is the public Sub2API URL ending in `/v1`, not `api.x.ai` or the internal xAI OAuth proxy URL.
-
-### Usage And Quota Display
-
-xAI quota is passive. Sub2API does not invent subscription quota values; it records whitelisted xAI rate-limit headers from successful or rate-limited upstream responses when xAI sends them. Before the first usable upstream response, the dashboard shows quota as unknown and still displays local Sub2API usage stats.
-
-`401` responses temporarily remove accounts with invalid credentials from scheduling. `403` responses are treated as access or entitlement failures instead of token-refresh loops. `429` responses use `Retry-After` or a short cooldown to temporarily remove the account from scheduling.
-
-New Grok image and video generation requests use a media-specific eligibility check. API-key accounts remain eligible. OAuth accounts require positive paid-entitlement evidence from the xAI billing probe; Free, forbidden, missing, malformed, and inconclusive billing observations are excluded from new media generation. Unobserved OAuth accounts are probed before the first media request is forwarded, and imports run the billing-first quota probe proactively. Chat requests and video status lookups are not affected by this media-only quarantine. If no eligible account remains, the media endpoint returns HTTP `503` with error type `grok_media_no_eligible_account`.
-
-Administrators can override automatic media eligibility through the account create/update API by setting `extra.grok_media_eligible` to `false` (exclude) or `true` (force eligible). On update, set it to `null` to remove the override and return to automatic probe-based behavior; omitting the field preserves the current override. A weekly allowance period alone is not treated as a paid tier signal. Successful image responses must contain at least one actual image output; empty HTTP `200` responses trigger account failover instead of being counted and returned as successful generations.
-
----
-
-## Antigravity Support
-
-Sub2API supports [Antigravity](https://antigravity.so/) accounts. After authorization, dedicated endpoints are available for Claude and Gemini models.
-
-### Dedicated Endpoints
-
-| Endpoint | Model |
-|----------|-------|
-| `/antigravity/v1/messages` | Claude models |
-| `/antigravity/v1beta/` | Gemini models |
-
-### Claude Code Configuration
-
-```bash
-export ANTHROPIC_BASE_URL="http://localhost:8080/antigravity"
-export ANTHROPIC_AUTH_TOKEN="sk-xxx"
-```
-
-### Hybrid Scheduling Mode
-
-Antigravity accounts support optional **hybrid scheduling**. When enabled, the general endpoints `/v1/messages` and `/v1beta/` will also route requests to Antigravity accounts.
-
-> **⚠️ Warning**: Anthropic Claude and Antigravity Claude **cannot be mixed within the same conversation context**. Use groups to isolate them properly.
-
----
-
-## Project Structure
-
-```
-sub2api/
-├── backend/                  # Go backend service
-│   ├── cmd/server/           # Application entry
-│   ├── internal/             # Internal modules
-│   │   ├── config/           # Configuration
-│   │   ├── model/            # Data models
-│   │   ├── service/          # Business logic
-│   │   ├── handler/          # HTTP handlers
-│   │   └── gateway/          # API gateway core
-│   └── resources/            # Static resources
-│
-├── frontend/                 # Vue 3 frontend
-│   └── src/
-│       ├── api/              # API calls
-│       ├── stores/           # State management
-│       ├── views/            # Page components
-│       └── components/       # Reusable components
-│
-└── deploy/                   # Deployment files
-    ├── docker-compose.yml    # Docker Compose configuration
-    ├── .env.example          # Environment variables for Docker Compose
-    ├── config.example.yaml   # Full config file for binary deployment
-    └── install.sh            # One-click installation script
-```
-
-## Star History
-
-<a href="https://star-history.dera.page/#Wei-Shaw/sub2api&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=Wei-Shaw/sub2api&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=Wei-Shaw/sub2api&type=Date" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=Wei-Shaw/sub2api&type=Date" />
- </picture>
-</a>
-
----
-
-## License
-
-This project is licensed under the [GNU Lesser General Public License v3.0](LICENSE) (or later).
-
-Copyright (c) 2026 Wesley Liddick
-
----
-
-<div align="center">
-
-**If you find this project useful, please give it a star!**
-
-</div>
+项目遵循 [LGPL-3.0-or-later 许可证](LICENSE)，保留原项目和第三方组件的版权及许可声明。详细归属说明见 [NOTICE.md](NOTICE.md)。
