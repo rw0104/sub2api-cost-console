@@ -238,4 +238,27 @@ describe('desktop session invalidation', () => {
     expect(auth.isAuthenticated).toBe(false)
     expect(window.location.hash).toBe('#/login')
   })
+
+  it('rechecks authentication after an asynchronous admin prerequisite', async () => {
+    const router = (await import('@/router')).default
+    for (const route of router.getRoutes()) route.components = { default: { render: () => null } }
+    await router.push('/login')
+    seed()
+    let finishCompliance!: () => void
+    client.defaults.adapter = config => new Promise(resolve => {
+      const finish = () => resolve({ status: 200, data: { code: 0, data: {} }, headers: {}, statusText: 'OK', config })
+      if (String(config.url).includes('/admin/compliance')) finishCompliance = finish
+      else finish()
+    })
+    const navigation = router.push('/admin/dashboard')
+    await vi.waitFor(() => expect(finishCompliance).toBeDefined())
+    // Session invalidation can occur while this guard is suspended.
+    auth.token = null
+    auth.user = null
+    localStorage.clear()
+    finishCompliance()
+    await navigation
+    expect(router.currentRoute.value.path).toBe('/login')
+    router.options.history.destroy()
+  })
 })

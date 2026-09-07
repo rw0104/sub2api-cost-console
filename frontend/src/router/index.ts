@@ -978,6 +978,17 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
+  // The awaited compliance/settings checks may have invalidated or replaced
+  // the session. Never commit a protected route using the earlier decision.
+  if (requiresAuth && !authStore.isAuthenticated) {
+    next({ path: '/login', query: { redirect: to.fullPath } })
+    return
+  }
+  if (requiresAdmin && !authStore.isAdmin) {
+    next('/dashboard')
+    return
+  }
+
   // All checks passed, allow navigation
   next()
 })
