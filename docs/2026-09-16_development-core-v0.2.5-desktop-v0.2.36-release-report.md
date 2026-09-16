@@ -40,6 +40,12 @@
 
 迁移 `238_opencode_go_platform.sql` 与 `238_purge_unlimited_user_platform_quotas.sql` 的数字前缀相同，但迁移状态按完整文件名记录，两者均需保留。原有 Windows ZIP 关闭修复、成本账本、经济采样和桌面生命周期功能继续保留。
 
+## 发布前依赖修复
+
+首轮 [安全扫描 35072262994](https://github.com/rw0104/sub2api-cost-console/actions/runs/35072262994) 在 gRPC `1.82.1` 检出两项符号可达漏洞，调用链涉及插件通信。核对 Go 官方漏洞库后升级到 `1.83.2`：[GO-2026-6348](https://pkg.go.dev/vuln/GO-2026-6348) 的 HTTP/2 内存耗尽问题在 `1.83.1` 修复，但 [GO-2026-6443](https://pkg.go.dev/vuln/GO-2026-6443) 在 `1.83.x` 分支需要 `1.83.2`。后者实际触发还依赖 xDS 配置，扫描可达性不代表当前配置已被利用。
+
+`go get google.golang.org/grpc@v1.83.2` 与 `go mod tidy` 同步其必要的 OpenTelemetry / genproto、`golang.org/x/*` 依赖和校验值。依赖改变后重新验证后端，并由最终源码提交重新执行安全扫描。没有添加漏洞豁免或跳过门禁。
+
 ## 开发与验证命令
 
 从仓库根目录执行；Go 使用 `backend/go.mod` 指定的 1.27.0，pnpm 使用 9，Rust 使用 Windows MSVC stable。需要访问网络时使用本机实际可用代理，不将代理凭据写入仓库。
