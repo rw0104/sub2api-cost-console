@@ -53,11 +53,11 @@
             type="button"
             class="cost-workspaces__settings"
             data-aui-component="button"
-            title="进入 Sub2API 系统设置"
-            @click="openSub2APISettings"
+            title="进入 Sub2API 账号管理"
+            @click="goToAccounts"
           >
             <Settings2 :size="15" />
-            <span>Sub2API 设置</span>
+            <span>账号管理</span>
             <ExternalLink :size="11" />
           </button>
         </nav>
@@ -682,7 +682,7 @@ import {
   useCostCenterData,
   type CostCenterRange,
 } from '@/features/cost-center/useCostCenterData'
-import { costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
+import { accruedWindowBounds, costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
 import { selectFinancialTrend } from '@/features/cost-center/financialTrend'
 import { hasMeasuredData, unavailableValueLabel, type DataAvailability, type DataSourceState } from '@/features/cost-center/dataState'
 import type { ModelRouteRow } from '@/features/cost-center/modelRouteAnalysis'
@@ -850,7 +850,8 @@ const latestCostLossByAccount = computed(() => {
   const states = new Map<number, typeof costLossStates.value[number]>()
   for (const state of costLossStates.value) {
     const previous = states.get(state.account_id)
-    if (!previous || new Date(state.occurred_at).getTime() > new Date(previous.occurred_at).getTime()) {
+    if (!previous || (state.active && !previous.active)
+      || (state.active === previous.active && state.terminal_event_id > previous.terminal_event_id)) {
       states.set(state.account_id, state)
     }
   }
@@ -889,7 +890,7 @@ const archivedImpairmentCny = computed(() => archivedLatestCostLossStates.value.
 const currentImpairmentCny = computed(() => accountLedgers.value.reduce((sum, row) => sum + row.impairmentCny, 0))
 const assetLedgerState = computed<DataAvailability>(() => combineSourceAvailability(sourceStates.value.accounts, sourceStates.value.costLoss))
 const totalImpairmentCny = computed<number | null>(() => hasMeasuredData(sourceStates.value.costLoss) ? currentImpairmentCny.value + archivedImpairmentCny.value : null)
-const observationBounds = computed(() => usageWindowBounds(range.value, now.value))
+const observationBounds = computed(() => accruedWindowBounds(range.value, now.value))
 const windowLatestCostLossStates = computed(() => [...latestCostLossByAccount.value.values()].filter((state) => (
   state.active && isTimestampInWindow(state.occurred_at, observationBounds.value.start, observationBounds.value.end)
 )))
@@ -1308,7 +1309,6 @@ async function refreshPricingCatalog() {
 }
 function toggleAutoRefresh() { autoRefresh.value = !autoRefresh.value; countdown.value = refreshIntervalSeconds.value }
 function goToAccounts() { router.push('/admin/accounts') }
-function openSub2APISettings() { router.push('/admin/settings') }
 async function runProbe(account: Account) {
   if (probes.value[String(account.id)]?.loading) return
   appStore.showInfo(`正在检测 ${account.name}，将发送一次真实最小请求`, 2500)

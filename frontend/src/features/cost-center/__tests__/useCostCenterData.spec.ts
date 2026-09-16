@@ -43,8 +43,7 @@ describe('cost center live ranges', () => {
 
     const start = new Date(now)
     start.setHours(0, 0, 0, 0)
-    const end = new Date(start)
-    end.setDate(end.getDate() + 1)
+    const end = now
 
     expect(buildCostCenterSnapshotQuery('today')).toEqual({
       start_time: start.toISOString(),

@@ -99,6 +99,7 @@ type AccountCostLossState struct {
 	Platform          string                     `json:"platform"`
 	AccountType       string                     `json:"account_type"`
 	TerminalEventID   int64                      `json:"terminal_event_id"`
+	TerminalEventIDs  []int64                    `json:"terminal_event_ids,omitempty"`
 	OccurredAt        time.Time                  `json:"occurred_at"`
 	Currency          string                     `json:"currency"`
 	AccruedCost       float64                    `json:"accrued_cost"`
@@ -156,7 +157,8 @@ func (s *AccountCostLossService) ListStates(ctx context.Context) ([]AccountCostL
 	if s == nil || s.repository == nil {
 		return nil, errors.New("account cost loss repository is unavailable")
 	}
-	return s.repository.ListStates(ctx)
+	states, err := s.repository.ListStates(ctx)
+	return ConsolidateActiveCostLossStates(states), err
 }
 
 func (s *AccountCostLossService) RecordRefund(
@@ -171,7 +173,7 @@ func (s *AccountCostLossService) RecordRefund(
 	if s == nil || s.repository == nil {
 		return nil, false, errors.New("account cost loss repository is unavailable")
 	}
-	if sourceEventID <= 0 || accountID <= 0 || amount <= 0 || occurredAt.IsZero() {
+	if sourceEventID <= 0 || accountID <= 0 || amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) || occurredAt.IsZero() {
 		return nil, false, ErrInvalidCostLossAdjustment
 	}
 	if strings.TrimSpace(idempotency) == "" {
@@ -200,7 +202,7 @@ func (s *AccountCostLossService) ReverseActiveLossesForAccount(
 	if accountID <= 0 || occurredAt.IsZero() {
 		return 0, ErrInvalidCostLossAdjustment
 	}
-	states, err := s.repository.ListStates(ctx)
+	states, err := s.ListStates(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -264,9 +266,8 @@ func BuildTerminalCostLoss(account *Account, failure TerminalFailure) (AccountCo
 		Algorithm:      AccountCostLossAlgorithmVersion,
 		IdempotencyKey: failure.Idempotency,
 	}
-	if draft.IdempotencyKey == "" {
-		draft.IdempotencyKey = fmt.Sprintf("terminal:%d:%d:%s", account.ID, account.UpdatedAt.UnixNano(), failure.Reason)
-	}
+	// The repository assigns default idempotency under the account lifecycle
+	// lock. Ordinary account updates must not create a new terminal lifecycle.
 
 	if profile.BillingCycle == "one_time" {
 		draft.BillingPeriodAt = profile.StartedAt
@@ -337,8 +338,12 @@ func resolveAccountCostProfileSnapshot(account *Account) (AccountCostProfileSnap
 		prices := map[string]float64{
 			"free": 0, "plus": 20, "pro": 100, "team": 25, "business": 25, "k12": 0, "unknown": 0,
 		}
+		amount := 0.0
+		if account.Type == AccountTypeOAuth || account.Type == AccountTypeSetupToken {
+			amount = prices[plan]
+		}
 		return AccountCostProfileSnapshot{
-			Amount:           prices[plan],
+			Amount:           amount,
 			Currency:         "USD",
 			BillingCycle:     "monthly",
 			StartedAt:        account.CreatedAt,
@@ -347,7 +352,7 @@ func resolveAccountCostProfileSnapshot(account *Account) (AccountCostProfileSnap
 		}, nil
 	}
 	amount, ok := numericCostValue(raw["amount"])
-	if !ok || amount < 0 {
+	if !ok || amount < 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return AccountCostProfileSnapshot{}, ErrInvalidCostProfile
 	}
 	currency := strings.ToUpper(strings.TrimSpace(stringCostValue(raw["currency"])))

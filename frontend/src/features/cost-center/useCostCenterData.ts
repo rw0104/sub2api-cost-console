@@ -32,6 +32,7 @@ import {
 } from './dataState'
 import {
   aggregateUsageWindow,
+  accruedWindowBounds,
   fillCostTrendBuckets,
   localDateParameter,
   usageWindowBounds,
@@ -43,8 +44,19 @@ export type CostCenterRange = 'today' | '1m' | '5m' | '30m' | '1h' | '6h' | '24h
 export const DEFAULT_COST_CENTER_RANGE: CostCenterRange = '1h'
 export const DEFAULT_MODEL_COST_RANGE: CostCenterRange = '1h'
 
-export function economicsWindowHours(range: CostCenterRange): number {
-  return ({ today: 24, '1m': 1 / 60, '5m': 5 / 60, '30m': 0.5, '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 })[range]
+export function economicsWindowHours(range: CostCenterRange, now = new Date()): number {
+  const { start, end } = accruedWindowBounds(range, now)
+  return (end.getTime() - start.getTime()) / 3_600_000
+}
+
+export function buildEconomicsWindowQuery(range: CostCenterRange, now = new Date()) {
+  const { start, end } = accruedWindowBounds(range, now)
+  return {
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    window_hours: economicsWindowHours(range, now),
+  }
 }
 
 function economicsPlatformFilter(filter: string): string | undefined {
@@ -62,14 +74,14 @@ export function filterModelAuditLogs(logs: AdminUsageLog[], mismatchOnly: boolea
   return mismatchOnly ? logs.filter((log) => log.upstream_model_mismatch === true) : logs
 }
 
-export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
+export function buildCostCenterSnapshotQuery(range: CostCenterRange, now = new Date()): {
   time_range?: Exclude<CostCenterRange, 'today'>
   start_time?: string
   end_time?: string
   granularity: 'day' | 'hour' | 'minute'
 } {
   if (range === 'today') {
-    const { start, end } = usageWindowBounds('today')
+    const { start, end } = accruedWindowBounds('today', now)
     return { start_time: start.toISOString(), end_time: end.toISOString(), granularity: 'hour' }
   }
   return {
@@ -78,10 +90,10 @@ export function buildCostCenterSnapshotQuery(range: CostCenterRange): {
   }
 }
 
-export function buildCostCenterDataQueries(observationRange: CostCenterRange, modelRange: CostCenterRange) {
+export function buildCostCenterDataQueries(observationRange: CostCenterRange, modelRange: CostCenterRange, now = new Date()) {
   return {
-    observation: buildCostCenterSnapshotQuery(observationRange),
-    model: buildCostCenterSnapshotQuery(modelRange),
+    observation: buildCostCenterSnapshotQuery(observationRange, now),
+    model: buildCostCenterSnapshotQuery(modelRange, now),
   }
 }
 
@@ -190,6 +202,7 @@ export function useCostCenterData() {
   const saving = ref(false)
   const error = ref('')
   const lastUpdated = ref<Date | null>(null)
+  let observationTime: Date | null = null
   const exchangeRate = ref<UsdCnyExchangeRate>({
     rate: 7.2,
     rateDate: null,
@@ -227,8 +240,9 @@ export function useCostCenterData() {
     return reason instanceof Error && reason.message ? reason.message : fallback
   }
 
-  async function loadUsageLogCompatibilityTrend(range: CostCenterRange): Promise<CostTrendDataPoint[]> {
-    const { start, end } = usageWindowBounds(range)
+  async function loadUsageLogCompatibilityTrend(range: CostCenterRange, now = new Date()): Promise<CostTrendDataPoint[]> {
+    const { start, end } = accruedWindowBounds(range, now)
+    if (end.getTime() <= start.getTime()) return []
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
@@ -260,8 +274,9 @@ export function useCostCenterData() {
     return aggregateUsageWindow(logs, range, start, end)
   }
 
-  async function loadModelRouteLogs(range: CostCenterRange, accountId: number | null): Promise<{ logs: AdminUsageLog[]; truncated: boolean }> {
-    const { start, end } = usageWindowBounds(range)
+  async function loadModelRouteLogs(range: CostCenterRange, accountId: number | null, now = new Date()): Promise<{ logs: AdminUsageLog[]; truncated: boolean }> {
+    const { start, end } = accruedWindowBounds(range, now)
+    if (end.getTime() <= start.getTime()) return { logs: [], truncated: false }
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const logs: AdminUsageLog[] = []
     let reachedWindowStart = false
@@ -310,10 +325,11 @@ export function useCostCenterData() {
         if (key !== 'economics') sourceStates.value[key] = sourceState(key, 'loading', '正在刷新')
       }
     }
-    const queries = buildCostCenterDataQueries(range, modelCostRange.value)
-    const { start: observationStart, end: requestedObservationEnd } = usageWindowBounds(range)
-    const observationEnd = range === 'today' ? new Date() : requestedObservationEnd
-    const { start: modelStart, end: modelEnd } = usageWindowBounds(modelCostRange.value)
+    const observedAt = new Date()
+    const queries = buildCostCenterDataQueries(range, modelCostRange.value, observedAt)
+    const { start: observationStart, end: requestedObservationEnd } = accruedWindowBounds(range, observedAt)
+    const observationEnd = requestedObservationEnd
+    const { start: modelStart, end: modelEnd } = accruedWindowBounds(modelCostRange.value, observedAt)
 
     const [accountResult, costLossResult, dashboardResult, modelResult, modelRoutesResult, channelsResult, pricingStatusResult, opsResult, settingsResult, exchangeRateResult] = await Promise.allSettled([
       adminAPI.accounts.list(1, 1000, {
@@ -341,7 +357,7 @@ export function useCostCenterData() {
         include_group_stats: false,
         include_users_trend: false,
       }),
-      loadModelRouteLogs(modelCostRange.value, modelCostAccountId.value),
+      loadModelRouteLogs(modelCostRange.value, modelCostAccountId.value, observedAt),
       adminAPI.channels.list(1, 1000, { sort_by: 'created_at', sort_order: 'asc' }),
       adminAPI.channels.getPricingStatus(),
       adminAPI.ops.getDashboardSnapshotV2(range === 'today'
@@ -352,6 +368,7 @@ export function useCostCenterData() {
     ])
 
     if (sequence !== requestSequence) return
+    observationTime = observedAt
     costLossStates.value = costLossResult.status === 'fulfilled' ? costLossResult.value.states ?? [] : []
     setSourceState(
       'costLoss',
@@ -391,7 +408,7 @@ export function useCostCenterData() {
     const dashboardHasAccountCost = trendHasAccountCost(dashboardTrend)
     const compatibilityTrend = dashboardWindowIsExact && dashboardHasAccountCost
       ? null
-      : loadUsageLogCompatibilityTrend(range)
+      : loadUsageLogCompatibilityTrend(range, observedAt)
 
     if (accountResult.status === 'fulfilled') {
       accounts.value = accountResult.value.items ?? []
@@ -589,7 +606,7 @@ export function useCostCenterData() {
         account_ids: accountIds.length ? accountIds.join(',') : undefined,
         cny_per_usd: exchangeRate.value.rate,
         exchange_rate_source: exchangeRate.value.source,
-        window_hours: economicsWindowHours(range),
+        ...buildEconomicsWindowQuery(range, observationTime ?? new Date()),
       })
       if (sequence === economicsRequestSequence) {
         accountEconomics.value = snapshot

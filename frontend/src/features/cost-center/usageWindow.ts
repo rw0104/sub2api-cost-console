@@ -49,6 +49,12 @@ export function usageWindowBounds(range: CostCenterRange, end = new Date()): { s
   }
 }
 
+/** Actual financial amounts stop at the observation time, even on a full-day axis. */
+export function accruedWindowBounds(range: CostCenterRange, now = new Date()): { start: Date; end: Date } {
+  const bounds = usageWindowBounds(range, now)
+  return { start: bounds.start, end: new Date(Math.min(bounds.end.getTime(), now.getTime())) }
+}
+
 export function localDateParameter(value: Date): string {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')

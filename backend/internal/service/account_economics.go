@@ -161,6 +161,9 @@ type AccountEconomicsSnapshot struct {
 	DataQuality       AccountEconomicsDataQuality   `json:"data_quality"`
 	Series            []AccountEconomicsSeriesPoint `json:"series"`
 	Events            []AccountEconomicsEvent       `json:"events"`
+	WindowStart       time.Time                     `json:"window_start"`
+	WindowEnd         time.Time                     `json:"window_end"`
+	Timezone          string                        `json:"timezone"`
 }
 
 type AccountEconomicsQuery struct {
@@ -171,6 +174,9 @@ type AccountEconomicsQuery struct {
 	ExchangeRateSource string
 	Window             time.Duration
 	Now                time.Time
+	StartTime          time.Time
+	EndTime            time.Time
+	Timezone           string
 }
 
 type AccountEconomicsService struct {
@@ -220,10 +226,11 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	if now.IsZero() {
 		now = time.Now()
 	}
-	window := query.Window
-	if window <= 0 {
-		window = time.Hour
+	windowStart, windowEnd, location, err := ResolveEconomicsWindow(query, now)
+	if err != nil {
+		return nil, err
 	}
+	window := windowEnd.Sub(windowStart)
 	cnyPerUSD := query.CNYPerUSD
 	quality := AccountEconomicsDataQuality{Status: "complete", ExchangeRateSource: strings.TrimSpace(query.ExchangeRateSource)}
 	if cnyPerUSD <= 0 || math.IsNaN(cnyPerUSD) || math.IsInf(cnyPerUSD, 0) {
@@ -239,7 +246,7 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	if err != nil {
 		return nil, err
 	}
-	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, now.Add(-window), now)
+	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, windowStart, windowEnd)
 	if err != nil {
 		return nil, fmt.Errorf("list economics samples: %w", err)
 	}
@@ -259,12 +266,11 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 		return nil, fmt.Errorf("list account procurement profiles: %w", err)
 	}
 	monthOneTimeProcurementCNY, monthOneTimePurchaseCount, monthDeletedOneTimePurchaseCount, monthDeletedRecurringProcurementCNY, monthDeletedRecurringPurchaseCount := summarizeMonthlyProcurementProfiles(
-		procurementProfiles, query.Platform, query.AccountIDs, cnyPerUSD, now, includeDeleted,
+		procurementProfiles, query.Platform, query.AccountIDs, cnyPerUSD, now.In(location), includeDeleted,
 	)
-	windowStart := now.Add(-window)
 	windowProcurementCNY, windowImpairmentCNY := summarizeWindowEconomics(
 		accounts, procurementProfiles, states, query.Platform, query.AccountIDs,
-		cnyPerUSD, windowStart, now, includeDeleted,
+		cnyPerUSD, windowStart, windowEnd, includeDeleted,
 	)
 	procurement, impairment, hourly, invalid := summarizeProcurementEconomics(accounts, states, query.Platform, cnyPerUSD, now, includeDeleted)
 	quality.InvalidCostProfileCount = invalid
@@ -297,13 +303,13 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	actual.WindowImpairmentLossCNY = windowImpairmentCNY
 	actual.WindowEconomicCostCNY = windowProcurementCNY + windowImpairmentCNY
 	series, events := BuildAccountEconomicsSeries(samples, window)
-	if !s.startedAt.Before(windowStart) && !s.startedAt.After(now) {
+	if !s.startedAt.Before(windowStart) && !s.startedAt.After(windowEnd) {
 		events = append(events, AccountEconomicsEvent{
 			OccurredAt: s.startedAt, Kind: "core_started", Label: "核心进程启动", Severity: "info",
 		})
 	}
 	for _, state := range states {
-		if !state.Active || state.OccurredAt.Before(windowStart) || state.OccurredAt.After(now) {
+		if !state.Active || state.OccurredAt.Before(windowStart) || state.OccurredAt.After(windowEnd) {
 			continue
 		}
 		events = append(events, AccountEconomicsEvent{
@@ -327,6 +333,7 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 			HealthyRatio: healthyRatio, MembershipHash: current.MembershipHash,
 		},
 		Actual: actual, Projection: projection, DataQuality: quality, Series: series, Events: events,
+		WindowStart: windowStart, WindowEnd: windowEnd, Timezone: location.String(),
 	}, nil
 }
 
@@ -525,6 +532,7 @@ func summarizeAccountEconomicsHealth(accounts []Account, now time.Time) (normal,
 }
 
 func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossState, platform string, cnyPerUSD float64, now time.Time, includeDeleted bool) (procurementCNY, impairmentCNY, hourlyCNY float64, invalid int) {
+	states = ConsolidateActiveCostLossStates(states)
 	latestActive := make(map[int64]AccountCostLossState)
 	for _, state := range states {
 		if !state.Active || (normalizeEconomicsPlatform(platform) != "" && !strings.EqualFold(state.Platform, platform)) {
@@ -538,9 +546,8 @@ func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossS
 	currentIDs := make(map[int64]struct{}, len(accounts))
 	for index := range accounts {
 		account := &accounts[index]
-		if !isProcurementAccountForCostLoss(account) {
-			continue
-		}
+		// Explicit fixed overhead is valid for every account type. Eligibility
+		// for terminal impairment is a separate rule, not a procurement filter.
 		currentIDs[account.ID] = struct{}{}
 		if state, ok := latestActive[account.ID]; ok {
 			// RecognizedCost already contains NetLoss. Keep the two economic
@@ -630,6 +637,7 @@ func summarizeWindowEconomics(
 	windowStart, windowEnd time.Time,
 	includeDeleted bool,
 ) (procurementCNY, impairmentCNY float64) {
+	states = ConsolidateActiveCostLossStates(states)
 	selected := make(map[int64]struct{}, len(accountIDs))
 	for _, id := range accountIDs {
 		if id > 0 {
@@ -665,12 +673,11 @@ func summarizeWindowEconomics(
 		profileByID[item.AccountID] = item
 	}
 	for _, account := range accounts {
-		if _, exists := profileByID[account.ID]; exists {
-			continue
-		}
 		profile, err := resolveAccountCostProfileSnapshot(&account)
 		if err == nil {
 			profileByID[account.ID] = AccountProcurementProfile{AccountID: account.ID, Platform: account.Platform, CostProfile: profile}
+		} else {
+			delete(profileByID, account.ID)
 		}
 	}
 	for accountID, item := range profileByID {

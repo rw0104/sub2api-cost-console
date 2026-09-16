@@ -202,7 +202,7 @@ export function resolveCostProfile(account: CostAccount): CostProfile {
 
   const plan = inferPlan(account)
   return {
-    amount: DEFAULT_MONTHLY_PRICES_USD[plan],
+    amount: resolveAccountBillingMode(account) === 'subscription' ? DEFAULT_MONTHLY_PRICES_USD[plan] : 0,
     currency: 'USD',
     billing_cycle: 'monthly',
     started_at: account.created_at,
@@ -314,11 +314,14 @@ export function economicCostSnapshot(
     }
   }
   const procurementCost = accruedCost(profile, now)
+  const startedAtMs = timestamp(profile.started_at)
+  const nowMs = timestamp(now)
+  const isActive = startedAtMs !== null && nowMs !== null && nowMs >= startedAtMs
   return {
     procurementCost,
     impairmentLoss: 0,
     economicCost: procurementCost,
-    hourlyRate: hourlyRate(profile),
+    hourlyRate: isActive ? hourlyRate(profile) : 0,
     accrualEndedAt: null,
   }
 }

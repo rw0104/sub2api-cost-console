@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 type accountCostLossRepository struct {
@@ -33,11 +34,44 @@ func (r *accountCostLossRepository) RecordTerminalFailure(
 		return nil, false, fmt.Errorf("marshal account cost profile: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := lockAccountCostLifecycle(ctx, tx, draft.AccountID); err != nil {
+		return nil, false, err
+	}
+	if draft.IdempotencyKey != "" {
+		existing, loadErr := loadAccountCostLossEventByKey(ctx, tx, draft.IdempotencyKey)
+		if loadErr == nil {
+			if existing.AccountIDSnapshot != draft.AccountID || existing.EventType != service.AccountCostLossEventTerminal {
+				return nil, false, service.ErrInvalidCostLossAdjustment
+			}
+			return commitExistingCostLoss(tx, existing)
+		}
+		if !errors.Is(loadErr, sql.ErrNoRows) {
+			return nil, false, loadErr
+		}
+	}
+	active, err := loadActiveCostTerminals(ctx, tx, draft.AccountID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(active) > 0 {
+		if err := markCostAccountTerminal(ctx, tx, draft.AccountID, errorMessage); err != nil {
+			return nil, false, err
+		}
+		return commitExistingCostLoss(tx, active[0])
+	}
+	if draft.IdempotencyKey == "" {
+		var recoveryID int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM account_cost_loss_events
+			WHERE account_id_snapshot = $1 AND event_type = 'reversal'`, draft.AccountID).Scan(&recoveryID); err != nil {
+			return nil, false, err
+		}
+		draft.IdempotencyKey = fmt.Sprintf("terminal:%d:recovery:%d", draft.AccountID, recoveryID)
+	}
 
 	var eventID int64
 	var createdAt time.Time
@@ -66,6 +100,9 @@ func (r *accountCostLossRepository) RecordTerminalFailure(
 		if loadErr != nil {
 			return nil, false, loadErr
 		}
+		if event.AccountIDSnapshot != draft.AccountID || event.EventType != service.AccountCostLossEventTerminal {
+			return nil, false, service.ErrInvalidCostLossAdjustment
+		}
 		if commitErr := tx.Commit(); commitErr != nil {
 			return nil, false, commitErr
 		}
@@ -75,25 +112,7 @@ func (r *accountCostLossRepository) RecordTerminalFailure(
 		return nil, false, err
 	}
 
-	result, err := tx.ExecContext(ctx, `
-		UPDATE accounts
-		SET status = $1,
-			error_message = $2,
-			schedulable = FALSE,
-			updated_at = NOW()
-		WHERE id = $3 AND deleted_at IS NULL
-	`, service.StatusError, errorMessage, draft.AccountID)
-	if err != nil {
-		return nil, false, err
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return nil, false, err
-	}
-	if updated != 1 {
-		return nil, false, service.ErrAccountNotFound
-	}
-	if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &draft.AccountID, nil, nil); err != nil {
+	if err := markCostAccountTerminal(ctx, tx, draft.AccountID, errorMessage); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -169,7 +188,7 @@ func (r *accountCostLossRepository) ListStates(ctx context.Context) ([]service.A
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return states, nil
+	return service.ConsolidateActiveCostLossStates(states), nil
 }
 
 func (r *accountCostLossRepository) RecordAdjustment(
@@ -179,7 +198,7 @@ func (r *accountCostLossRepository) RecordAdjustment(
 	if r == nil || r.db == nil {
 		return nil, false, errors.New("account cost loss repository is unavailable")
 	}
-	if adjustment.SourceEventID <= 0 || adjustment.AccountID <= 0 || adjustment.Amount < 0 ||
+	if adjustment.SourceEventID <= 0 || adjustment.AccountID <= 0 || adjustment.Amount < 0 || math.IsNaN(adjustment.Amount) || math.IsInf(adjustment.Amount, 0) ||
 		adjustment.OccurredAt.IsZero() || adjustment.Idempotency == "" ||
 		(adjustment.EventType != service.AccountCostLossEventRefund && adjustment.EventType != service.AccountCostLossEventReversal) {
 		return nil, false, service.ErrInvalidCostLossAdjustment
@@ -188,18 +207,21 @@ func (r *accountCostLossRepository) RecordAdjustment(
 		return nil, false, service.ErrInvalidCostLossAdjustment
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := lockAccountCostLifecycle(ctx, tx, adjustment.AccountID); err != nil {
+		return nil, false, err
+	}
 	existing, err := loadAccountCostLossEventByKey(ctx, tx, adjustment.Idempotency)
 	if err == nil {
-		if commitErr := tx.Commit(); commitErr != nil {
-			return nil, false, commitErr
+		if !matchesCostLossAdjustment(existing, adjustment) {
+			return nil, false, service.ErrInvalidCostLossAdjustment
 		}
-		return existing, false, nil
+		return commitExistingCostLoss(tx, existing)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, false, err
@@ -215,25 +237,57 @@ func (r *accountCostLossRepository) RecordAdjustment(
 	if source.AccountIDSnapshot != adjustment.AccountID {
 		return nil, false, service.ErrInvalidCostLossAdjustment
 	}
+	active, err := loadActiveCostTerminals(ctx, tx, adjustment.AccountID)
+	if err != nil {
+		return nil, false, err
+	}
+	ids := make([]int64, 0, len(active))
+	sourceActive := false
+	for _, event := range active {
+		ids = append(ids, event.ID)
+		sourceActive = sourceActive || event.ID == source.ID
+	}
+	if !sourceActive {
+		if adjustment.EventType == service.AccountCostLossEventRefund {
+			return nil, false, service.ErrInvalidCostLossAdjustment
+		}
+		recovery, err := scanAccountCostLossEvent(tx.QueryRowContext(ctx, accountCostLossEventSelect+
+			" WHERE source_event_id = $1 AND event_type = 'reversal' ORDER BY id DESC LIMIT 1", source.ID))
+		if err != nil {
+			return nil, false, err
+		}
+		return commitExistingCostLoss(tx, recovery)
+	}
+	if adjustment.EventType == service.AccountCostLossEventReversal {
+		return reverseCostLifecycle(ctx, tx, active, adjustment)
+	}
 
 	var priorAdjustments float64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM account_cost_loss_events
-		WHERE source_event_id = $1
+		WHERE source_event_id = ANY($1)
 		  AND event_type IN ('refund', 'reversal')
-	`, adjustment.SourceEventID).Scan(&priorAdjustments); err != nil {
+	`, pq.Array(ids)).Scan(&priorAdjustments); err != nil {
 		return nil, false, err
 	}
-	outstanding := math.Max(0, source.Amount+priorAdjustments)
+	// Legacy duplicate terminals share the first terminal's prepaid balance.
+	outstanding := math.Max(0, active[0].Amount+priorAdjustments)
 	consume := adjustment.Amount
-	if adjustment.EventType == service.AccountCostLossEventReversal {
-		consume = outstanding
-	}
-	if (adjustment.EventType == service.AccountCostLossEventRefund && consume <= 0) || consume-outstanding > 1e-8 {
+	if consume <= 0 || consume-outstanding > 1e-8 {
 		return nil, false, service.ErrInvalidCostLossAdjustment
 	}
+	event, created, err := insertCostAdjustment(ctx, tx, source, adjustment, consume)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return event, created, nil
+}
 
+func insertCostAdjustment(ctx context.Context, tx *sql.Tx, source *service.AccountCostLossEvent, adjustment service.AccountCostLossAdjustment, consume float64) (*service.AccountCostLossEvent, bool, error) {
 	profileJSON, err := json.Marshal(source.CostProfile)
 	if err != nil {
 		return nil, false, fmt.Errorf("marshal account cost profile: %w", err)
@@ -267,15 +321,12 @@ func (r *accountCostLossRepository) RecordAdjustment(
 		if loadErr != nil {
 			return nil, false, loadErr
 		}
-		if commitErr := tx.Commit(); commitErr != nil {
-			return nil, false, commitErr
+		if !matchesCostLossAdjustment(event, adjustment) {
+			return nil, false, service.ErrInvalidCostLossAdjustment
 		}
 		return event, false, nil
 	}
 	if err != nil {
-		return nil, false, err
-	}
-	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
 

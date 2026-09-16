@@ -3,6 +3,7 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -104,7 +105,7 @@ func (h *AccountHandler) RecordCostLossRefund(c *gin.Context) {
 	}
 	var accountID int64
 	for _, state := range states {
-		if state.TerminalEventID == eventID {
+		if state.TerminalEventID == eventID || slices.Contains(state.TerminalEventIDs, eventID) {
 			accountID = state.AccountIDSnapshot
 			break
 		}

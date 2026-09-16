@@ -138,7 +138,7 @@ func TestAccountCostLossModuleConfirmsTerminalFailureThroughLedger(t *testing.T)
 	require.Equal(t, int64(99), event.ID)
 	require.Equal(t, int64(18), repo.recorded.AccountID)
 	require.Equal(t, TerminalFailureTokenRevoked, repo.recorded.Failure.Reason)
-	require.NotEmpty(t, repo.recorded.IdempotencyKey)
+	require.Empty(t, repo.recorded.IdempotencyKey, "the transactional repository assigns the lifecycle key")
 }
 
 func TestAccountCostLossModuleAppendsRefundAndRecoveryReversal(t *testing.T) {

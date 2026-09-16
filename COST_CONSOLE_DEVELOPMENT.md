@@ -1,12 +1,14 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
 > 文档版本：1.1（2026-09-16）
-> 桌面应用版本：0.2.37；内置兼容内核：0.2.5
+> 桌面源码版本：0.2.38；内置兼容内核：0.2.5；成本扩展：1.1.2；算法：1.6.1
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
 
 本文档面向需要继续开发、部署、调试和维护 Sub2API Cost Console 的开发者。项目在 Sub2API 管理端基础上增加了 Windows 桌面壳、三套成本运营面板、号码采购成本模型以及桌面端连接适配。
+
+成本算法与扩展的五项修复、生命周期事务规则、日历窗口和回归证据见[成本审计及修复记录](docs/2026-09-16_cost-algorithm-extension-audit-report.md)。源码版本更新不等同于安装包已经发布。
 
 本次上游合并、冲突处理、验证命令和发布记录见 [v0.2.37 开发与发布报告](docs/2026-09-16_development-core-v0.2.5-desktop-v0.2.37-release-report.md)。版本值以 `frontend/CORE_VERSION`、`frontend/UPSTREAM_SUB2API_COMMIT` 和 `frontend/src-tauri/tauri.conf.json` 为准。
 

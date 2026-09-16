@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,6 +47,11 @@ func TestAccountCostLossRepositoryRecordsTerminalLossAndDisablesAccountAtomicall
 	}
 
 	mock.ExpectBegin()
+	expectCostLifecycleLock(mock, 42)
+	mock.ExpectQuery(`(?s)FROM account_cost_loss_events.*WHERE idempotency_key = \$1`).
+		WithArgs(draft.IdempotencyKey).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`(?s)FROM account_cost_loss_events.*terminal.*NOT EXISTS.*ORDER BY terminal.id ASC`).
+		WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows(accountCostLossEventColumns()))
 	mock.ExpectQuery(`(?s)INSERT INTO account_cost_loss_events .*ON CONFLICT \(idempotency_key\) DO NOTHING.*RETURNING id, created_at`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(7), createdAt))
 	mock.ExpectExec(`(?s)UPDATE accounts.*status = \$1.*error_message = \$2.*schedulable = FALSE.*WHERE id = \$3`).
@@ -76,6 +82,7 @@ func TestAccountCostLossRepositoryAppendsBoundedRefund(t *testing.T) {
 	profile := `{"amount":20,"currency":"USD","billing_cycle":"monthly","started_at":"2026-08-01T00:00:00Z","source":"custom","algorithm_version":"1.5.0"}`
 
 	mock.ExpectBegin()
+	expectCostLifecycleLock(mock, 42)
 	mock.ExpectQuery(`(?s)FROM account_cost_loss_events.*WHERE idempotency_key = \$1`).
 		WithArgs("refund:provider:7").
 		WillReturnError(sql.ErrNoRows)
@@ -87,8 +94,15 @@ func TestAccountCostLossRepositoryAppendsBoundedRefund(t *testing.T) {
 			"USD", 10.0, 10.0, 20.0, occurredAt.Add(-48*time.Hour), occurredAt.Add(682*time.Hour), []byte(profile),
 			nil, "terminal:42:v1", service.AccountCostLossAlgorithmVersion, sourceCreatedAt,
 		))
-	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(amount\), 0\).*source_event_id = \$1`).
-		WithArgs(int64(7)).
+	mock.ExpectQuery(`(?s)FROM account_cost_loss_events.*terminal.*NOT EXISTS.*ORDER BY terminal.id ASC`).
+		WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows(accountCostLossEventColumns()).AddRow(
+		int64(7), int64(42), int64(42), "local-plus", service.PlatformOpenAI, service.AccountTypeOAuth,
+		service.AccountCostLossEventTerminal, service.TerminalFailureTokenRevoked, 401, "token_revoked", "revoked", occurredAt.Add(-24*time.Hour),
+		"USD", 10.0, 10.0, 20.0, occurredAt.Add(-48*time.Hour), occurredAt.Add(682*time.Hour), []byte(profile),
+		nil, "terminal:42:v1", service.AccountCostLossAlgorithmVersion, sourceCreatedAt,
+	))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(amount\), 0\).*source_event_id = ANY\(\$1\)`).
+		WithArgs("{7}").
 		WillReturnRows(sqlmock.NewRows([]string{"sum"}).AddRow(-2.0))
 	mock.ExpectQuery(`(?s)INSERT INTO account_cost_loss_events .*RETURNING id, created_at`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(12), occurredAt.Add(time.Second)))
@@ -110,6 +124,11 @@ func TestAccountCostLossRepositoryAppendsBoundedRefund(t *testing.T) {
 	require.Equal(t, -3.0, event.Amount)
 	require.Equal(t, int64(7), *event.SourceEventID)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func expectCostLifecycleLock(mock sqlmock.Sqlmock, accountID int64) {
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)`).
+		WithArgs(fmt.Sprintf("sub2api:account-cost-loss:%d", accountID)).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func accountCostLossEventColumns() []string {

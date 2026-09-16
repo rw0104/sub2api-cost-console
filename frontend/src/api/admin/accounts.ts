@@ -37,6 +37,7 @@ export interface AccountCostLossState {
   platform: string
   account_type: string
   terminal_event_id: number
+  terminal_event_ids?: number[]
   occurred_at: string
   currency: 'USD' | 'CNY'
   accrued_cost: number
@@ -63,6 +64,9 @@ export interface AccountCostLossStatesResponse {
 }
 
 export interface AccountEconomicsSnapshot {
+  window_start?: string
+  window_end?: string
+  timezone?: string
   algorithm_version: string
   projection_version: string
   sampled_at: string
@@ -140,6 +144,9 @@ export async function getEconomicsSnapshot(input: {
   cny_per_usd: number
   exchange_rate_source?: string
   window_hours?: number
+  start_time?: string
+  end_time?: string
+  timezone?: string
 }): Promise<AccountEconomicsSnapshot> {
   const { data } = await apiClient.get<AccountEconomicsSnapshot>('/admin/accounts/economics/snapshot', { params: input })
   return data
