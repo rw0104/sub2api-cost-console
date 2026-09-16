@@ -134,7 +134,7 @@ Pop-Location
 - [完整 CI 35119345806](https://github.com/rw0104/sub2api-cost-console/actions/runs/35119345806) 已通过：后端全量单元与数据库集成、Go 静态检查、前端检查和部署脚本全部成功，headSha 为上述修复提交。
 - [安全扫描 35119345792](https://github.com/rw0104/sub2api-cost-console/actions/runs/35119345792) 已通过，源码为上述修复提交。
 
-上述业务修复提交已经推送到 `origin/main` 和 `origin/codex/cost-audit-account-shortcut`。本记录的后续提交只补充验证说明。用户原有 `.gitignore` 修改保留在本地，没有混入提交。本次未创建 `v0.2.38` 发布标签或重新安装本机客户端。
+上述业务修复提交已经推送到 `origin/main` 和 `origin/codex/cost-audit-account-shortcut`。本记录的后续提交只补充验证说明。用户原有 `.gitignore` 修改保留在本地，没有混入提交。修复阶段先完成源码推送；随后按用户要求正式发布了 v0.2.38，详见[开发日志与发布记录](2026-09-16_development-desktop-v0.2.38-release-report.md)。未重新安装本机客户端。
 
 全量 Go 测试发现已有 Ollama 测试依赖两次 `time.Now()` 必须不同，在 Windows 时钟精度下会偶发误判。同一测试现显式用旧冷却时间加 1 秒构造新代次，保留“过期回调不能覆盖新代次”的断言，没有修改生产逻辑。
 
@@ -164,10 +164,10 @@ Pop-Location
 
 ### P-01：优先修复路径
 
-E-01 / E-02 的原始失败 → 生命周期事务与费用资格修复 → 明确日历窗口和当前费率 → 默认回归与共享前后端样例 → 真实 PostgreSQL 并发验证 → 全量门禁 → 提交并推送 Git。此次目标是修复并推送源码，未推送新的桌面安装包标签。
+E-01 / E-02 的原始失败 → 生命周期事务与费用资格修复 → 明确日历窗口和当前费率 → 默认回归与共享前后端样例 → 真实 PostgreSQL 并发验证 → 全量门禁 → 提交并推送 Git → 按后续要求发布 v0.2.38 并下载核验。
 
 ## 账号管理入口修改
 
 `CostCenterView.vue` 原按钮从“Sub2API 设置”改为“账号管理”，提示文字为“进入 Sub2API 账号管理”，直接复用 `goToAccounts()` 跳转到 `/admin/accounts`。已移除仅用于旧设置入口的函数，保留正常的系统设置页面。
 
-该修改与成本修复位于 `codex/cost-audit-account-shortcut`。已发布的 v0.2.37 安装器不会因 Git 推送而改变；配套安装包需单独发布。
+该修改与成本修复位于 `codex/cost-audit-account-shortcut`，现已包含在正式发布的 v0.2.38 安装包中。旧 v0.2.37 安装器不变。
