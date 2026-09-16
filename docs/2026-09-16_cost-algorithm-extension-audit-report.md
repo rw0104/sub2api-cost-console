@@ -31,6 +31,8 @@
 
 ## 原始审计发现（已修复）
 
+以下代码位置、行为和复现数字描述审计基线；当前修复行为见上节及最终验证记录。
+
 | 编号 | 优先级 | 问题 | 复现结果 |
 | --- | --- | --- | --- |
 | F-01 | P1 | 重复终局确认会掩盖已记录的退款 | 730 元预付费用，退款 30 元后应保留 700 元；再次确认同一故障后聚合恢复为 730 元 |
@@ -117,6 +119,24 @@ Pop-Location
 - [后端成本回归](../backend/internal/service/account_cost_regression_test.go)
 
 默认相关前端回归：13 个文件、129 项测试通过；按钮文件和新增前端审计文件 ESLint 通过。既有后端损失、退款、聚合、样本及仓储测试通过。测试日志保存在 `.git/cost-audit-2026-09-16/`，不包含生产数据。
+
+## 最终修复验证
+
+业务修复提交：`a453b6e6e272412854ddf5ebdc72935f96bbf2d2`，分支 `codex/cost-audit-account-shortcut`。最终修复日志保存在 `.git/cost-fix-2026-09-16/`。
+
+- 前端全量 `vitest run --maxWorkers=3 --minWorkers=1`：314 个文件、2,390 项测试通过；ESLint 通过。
+- 前后端共享 8 组金额样例纳入常规测试；前端午夜、夏令时 11/13 小时、未来费率和按量套餐边界通过。
+- 最终真实 PostgreSQL 生命周期测试：3 项通过，覆盖 8 并发确认、30 元退款保持、并发退款余额、恢复后新生命周期、硬删除后退款，以及旧重复记录的退款合并和整体恢复。
+- 本地 Windows `go test -p 2 -tags=unit ./...` 全量通过（退出码 0），包括成本回归、共享金额样例、时区与月份边界、旧终局别名退款接口及现有服务层测试。
+- Web 生产构建通过。
+- 受管内核与桌面生产构建通过；内核 `--version` 确认上游 `0.2.5`、提交 `86f93c28ee34cc74b629dafb748bd5ac5ca8c5ea`、扩展 `1.1.2` 和两项必需成本能力。
+- Rust `cargo test --locked --features custom-protocol`：60 passed、0 failed、1 ignored（显式启用的本机 Docker 恢复用例）。
+- [完整 CI 35119345806](https://github.com/rw0104/sub2api-cost-console/actions/runs/35119345806) 已通过：后端全量单元与数据库集成、Go 静态检查、前端检查和部署脚本全部成功，headSha 为上述修复提交。
+- [安全扫描 35119345792](https://github.com/rw0104/sub2api-cost-console/actions/runs/35119345792) 已通过，源码为上述修复提交。
+
+上述业务修复提交已经推送到 `origin/main` 和 `origin/codex/cost-audit-account-shortcut`。本记录的后续提交只补充验证说明。用户原有 `.gitignore` 修改保留在本地，没有混入提交。本次未创建 `v0.2.38` 发布标签或重新安装本机客户端。
+
+全量 Go 测试发现已有 Ollama 测试依赖两次 `time.Now()` 必须不同，在 Windows 时钟精度下会偶发误判。同一测试现显式用旧冷却时间加 1 秒构造新代次，保留“过期回调不能覆盖新代次”的断言，没有修改生产逻辑。
 
 ## Evidence → Finding → Path
 

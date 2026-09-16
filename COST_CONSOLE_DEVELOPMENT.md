@@ -1,6 +1,6 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
-> 文档版本：1.1（2026-09-16）
+> 文档版本：1.2（2026-09-16）
 > 桌面源码版本：0.2.38；内置兼容内核：0.2.5；成本扩展：1.1.2；算法：1.6.1
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
@@ -1074,7 +1074,7 @@ Invoke-WebRequest -Method Options `
 | `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
 | `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与兼容清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.2.5` |
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与兼容清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
-| `extension_version` | `frontend/CORE_EXTENSION_VERSION` | 成本扩展实现版本；本次为 `1.1.1` |
+| `extension_version` | `frontend/CORE_EXTENSION_VERSION` | 成本扩展实现版本；本次为 `1.1.2` |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
 版本面板同时显示桌面版本、上游内核基线、上游提交和成本算法版本。不能仅根据桌面版本或上游内核版本推断成本规则。桌面整包与上游内核分别使用独立更新源，用户从同一个“版本与更新”面板检查和安装。
