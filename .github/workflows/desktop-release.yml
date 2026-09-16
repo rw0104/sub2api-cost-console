@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -33,6 +35,17 @@ jobs:
 
       - name: Enable pnpm
         run: corepack enable
+
+      - name: Verify pinned upstream source identity
+        shell: pwsh
+        run: |
+          $coreVersion = (Get-Content -Raw frontend/CORE_VERSION).Trim()
+          git fetch --no-tags https://github.com/Wei-Shaw/sub2api.git "refs/tags/v${coreVersion}:refs/tags/release-upstream-v${coreVersion}"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to fetch official upstream release tag' }
+          node --test frontend/scripts/verify-core-source.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream source contract test failed' }
+          node frontend/scripts/verify-core-source.mjs "release-upstream-v${coreVersion}"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned upstream source identity does not match the official release' }
 
       - name: Set up Go
         uses: actions/setup-go@v6

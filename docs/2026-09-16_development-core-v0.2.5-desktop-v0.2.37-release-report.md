@@ -1,4 +1,4 @@
-# 内核 v0.2.5 与桌面 v0.2.36 开发与发布记录
+# 内核 v0.2.5 与桌面 v0.2.37 开发与发布记录
 
 记录日期：2026-09-16（America/Los_Angeles）。本次承接已发布的桌面 v0.2.35 / 内核 v0.2.4，同步上游 v0.2.5，并发布内置新内核的 Windows 安装包。
 
@@ -8,12 +8,13 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 开发分支 | `codex/core-v0.2.5-desktop-v0.2.36` |
-| 桌面版本 | `0.2.36` |
+| 开发分支 | `codex/core-v0.2.5-desktop-v0.2.37` |
+| 桌面版本 | `0.2.37` |
 | 内置兼容内核 | `0.2.5` |
 | 官方上游 | [Wei-Shaw/sub2api v0.2.5](https://github.com/Wei-Shaw/sub2api/releases/tag/v0.2.5) |
-| 官方上游提交 | `30ed40a56a5f4b5ab7b8dd3d685353db3a531c84` |
+| 官方上游提交 | `86f93c28ee34cc74b629dafb748bd5ac5ca8c5ea` |
 | 上一版源码 | `4fe2e80db19f527ad39055159957998ba62290f0` |
+| 通过首轮完整 CI 的业务源码 | `54a266a69d76bcec8100d12cb9ec171c9a54e704` |
 | 上一版上游提交 | `5de5e2bed035d43591a2e10e51f420ef6a84eb98` |
 | 成本扩展 / 算法 | `1.1.1` / `1.6.0` |
 | 必需能力 | `account_cost_loss_ledger.v1`、`account_economics_sampling.v1` |
@@ -46,9 +47,19 @@
 
 `go get google.golang.org/grpc@v1.83.2` 与 `go mod tidy` 同步其必要的 OpenTelemetry / genproto、`golang.org/x/*` 依赖和校验值。依赖改变后重新验证后端，并由最终源码提交重新执行安全扫描。没有添加漏洞豁免或跳过门禁。
 
+## 上游身份元数据修正
+
+初次准备 v0.2.36 时，PowerShell 中未加引号的 `^{commit}` 表达式导致人工记录了上游父提交 `30ed40a56a5f4b5ab7b8dd3d685353db3a531c84`。实际合并使用了正确解引用的官方源码树 `a291b5788afa30085709a78349233656e730ac11`，但 `UPSTREAM_SUB2API_COMMIT` 和说明中的元数据不匹配。稳定内核工作流拒绝该不一致状态，既有 core-stable 未被覆盖。
+
+发现后取消尚未发布资产的 v0.2.36 安装器任务，保留原 Git 标签历史，将最终桌面版本推进到 v0.2.37，并将元数据修正为官方注解标签解引用后的 `86f93c28ee34cc74b629dafb748bd5ac5ca8c5ea`。业务源码树不需要重新合并。
+
+新增 `frontend/scripts/verify-core-source.mjs`，同时用于桌面和稳定内核工作流：核对官方标签解引用提交、元数据提交，以及当前历史中已集成 synthetic upstream 的完整源码树。桌面 checkout 使用完整历史，并在构建前获取对应官方标签。`node --test frontend/scripts/verify-core-source.test.mjs` 用独立临时仓库验证正确注解标签、误填父提交和未集成源码树三种情况。
+
 ## 开发与验证命令
 
 从仓库根目录执行；Go 使用 `backend/go.mod` 指定的 1.27.0，pnpm 使用 9，Rust 使用 Windows MSVC stable。需要访问网络时使用本机实际可用代理，不将代理凭据写入仓库。
+
+Windows 的备份进程测试需要 Git for Windows 提供的 `sh` 在 PATH 中。首轮本地 Go 测试有 3 项因为缺少 `sh` 失败，另 1 项验证码网络错误测试受到依赖下载代理影响。依赖下载完成后，测试进程清除 HTTP/HTTPS/ALL_PROXY、设置 NO_PROXY，并将已安装的 Git `bin` / `usr/bin` 加入当前进程 PATH 后重跑。不要因此放宽生产错误处理或跳过测试。
 
 ```powershell
 Push-Location backend
@@ -76,17 +87,19 @@ Go 默认测试不等同于所有带标签的数据库集成测试；完整单�
 
 版本文件包括 `frontend/CORE_VERSION`、`frontend/UPSTREAM_SUB2API_COMMIT`、`backend/cmd/server/VERSION`，以及 `frontend/src-tauri/tauri.conf.json`、`Cargo.toml`、`Cargo.lock`。成本扩展和算法版本保持不变。
 
-桌面通道由推送 `v0.2.36` 标签触发 `desktop-release.yml`，输出 NSIS 安装器、`.sig`、`latest.json`、`INSTALLER_SHA256SUMS.txt` 和发布说明。稳定内核通道由 `core-sync.yml` 输出兼容 ZIP、`CORE_SHA256SUMS.txt` 和 schema 2 的 `core-latest.json`。解决冲突并将源码推送到 main 后，关闭对应的阻塞 issue，再触发稳定内核工作流。
+桌面通道由推送 `v0.2.37` 标签触发 `desktop-release.yml`，输出 NSIS 安装器、`.sig`、`latest.json`、`INSTALLER_SHA256SUMS.txt` 和发布说明。稳定内核通道由 `core-sync.yml` 输出兼容 ZIP、`CORE_SHA256SUMS.txt` 和 schema 2 的 `core-latest.json`。解决冲突并将源码推送到 main 后，关闭对应的阻塞 issue，再触发稳定内核工作流。
 
 公开入口：
 
 - [桌面更新清单](https://github.com/rw0104/sub2api-cost-console/releases/latest/download/latest.json)
 - [稳定内核清单](https://github.com/rw0104/sub2api-cost-console/releases/download/core-stable/core-latest.json)
-- [桌面发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.36)
+- [桌面发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.37)
 
-发布后应从 GitHub 重新下载产物，重算所有校验清单条目，核对安装器签名与更新清单签名一致，并使用客户端内置公钥验证 Ed25519 文件签名和可信注释签名。内核 ZIP 仅应包含预期可执行文件；解压后执行 `--version` 核对上游提交、扩展、算法和能力。还需匿名获取两个公开入口，避免只验证本地产物。
+发布后应从 GitHub 重新下载产物，重算所有校验清单条目，核对安装器签名与更新清单签名一致，并使用客户端内置公钥验证 Ed25519 文件签名和可信注释签名。内核 ZIP 仅应包含预期可执行文件；解压后执行 `--version` 核对上游提交、扩展和能力，并将清单中的算法版本与 `frontend/ALGORITHM_VERSION` 核对。还需匿名获取两个公开入口，避免只验证本地产物。
 
-本次本地日志保存在 `.git/release-v0.2.36/`，下载核验产物保存在 `frontend/release-assets/online-verify-v0.2.36/`，均不作为源码分发。用户原有 `.gitignore` 修改保留在工作区，不并入发布提交。
+前序完整测试日志保存在 `.git/release-v0.2.36/`，身份修正后的构建与核验日志保存在 `.git/release-v0.2.37/`，下载产物保存在 `frontend/release-assets/online-verify-v0.2.37/`，均不作为源码分发。用户原有 `.gitignore` 修改保留在工作区，不并入发布提交。
+
+发布验证不对本机现用桌面或生产数据库执行原位升级；实际安装和数据迁移仍由使用者在备份后执行。
 
 ## Evidence → Finding → Path
 
@@ -97,7 +110,7 @@ Go 默认测试不等同于所有带标签的数据库集成测试；完整单�
 - source_ref：官方 Release API、本地 Git 源码树
 - content_hash / artifact_path：n/a
 - repro_command：`gh api repos/Wei-Shaw/sub2api/releases/tags/v0.2.5 --jq .tag_name`；`git show -s --format=%T 38161fe68 5de5e2bed035d43591a2e10e51f420ef6a84eb98`
-- raw_excerpt：官方 `v0.2.5`，完整提交 `30ed40a56a5f4b5ab7b8dd3d685353db3a531c84`；上一版官方树与 synthetic 基线一致。
+- raw_excerpt：官方 `v0.2.5`，完整提交 `86f93c28ee34cc74b629dafb748bd5ac5ca8c5ea`；上一版官方树与 synthetic 基线一致。
 - linked_workitem：#28
 - supersedes：none
 
@@ -115,4 +128,10 @@ Go 默认测试不等同于所有带标签的数据库集成测试；完整单�
 
 ## 最终验证记录
 
-本节在发布工作流和重新下载核验完成后记录实际结果；当前说明不代表已通过安装包发布验收。
+- 前端全量：312 个文件、2,371 项测试通过；ESLint 通过；Web 生产构建通过。
+- [最终源码 CI 35073085526](https://github.com/rw0104/sub2api-cost-console/actions/runs/35073085526)：后端单元、数据库集成、Go 静态检查、前端与部署脚本全部通过。
+- [最终源码安全扫描 35073085555](https://github.com/rw0104/sub2api-cost-console/actions/runs/35073085555)：后端 govulncheck 与前端依赖扫描均成功。
+- 前序业务源码已推送到 main 并关闭 #28；v0.2.36 仅保留 Git 标签，无正式安装包发布。
+- 本地受管内核 `--version` 确认版本、完整上游提交、成本扩展和两项必需能力；`go version -m` 确认 Go 1.27.0、gRPC 1.83.2、x/net 0.58.0。
+
+安装包与稳定内核工作流、下载核验结果在完成后继续补入；上述源码验证不代表安装包已经发布完成。
