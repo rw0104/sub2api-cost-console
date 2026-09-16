@@ -38,6 +38,8 @@
 - 回归覆盖重复终局与退款、不同账号类型固定附加费、自然日和未来时间边界。
 - 真实 PostgreSQL 并发测试覆盖重复确认、退款余额、恢复后再次终局，以及旧重复事件的合并读取与恢复。
 - Web/桌面构建、前端全量、Go 与 Rust 检查结果记录于 `docs/2026-09-16_cost-algorithm-extension-audit-report.md`。
+- 前端 2,390 项测试、真实 PostgreSQL 并发测试、Go 全量和 Rust 60 项测试已通过；发布工作流会重新执行安装包契约门禁。
+- 安装包与稳定内核发布、重新下载校验结果记录于 `docs/2026-09-16_development-desktop-v0.2.38-release-report.md`。
 
 ## 回滚说明
 
