@@ -193,7 +193,7 @@ describe('desktop session invalidation', () => {
     expect(localStorage.getItem('auth_token')).toBe('new-user-access')
   })
 
-  it.each([undefined, 429, 503])('preserves the session when refreshing is temporarily unavailable (%s)', async status => {
+  it.each([undefined, 0, 408, 429, 503])('preserves the session when refreshing is temporarily unavailable (%s)', async status => {
     seed()
     localStorage.setItem('refresh_token', 'still-valid-refresh')
     const refresh = await import('@/api/tokenRefresh')

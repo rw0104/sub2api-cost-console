@@ -1,12 +1,14 @@
 # Sub2API Cost Console 桌面成本作战台开发文档
 
-> 文档版本：1.0  
-> 桌面应用版本：0.2.17
+> 文档版本：1.1（2026-09-16）
+> 桌面应用版本：0.2.36；内置兼容内核：0.2.5
 > 适用平台：Windows 10/11 x64  
 > 上游项目：[`Wei-Shaw/sub2api`](https://github.com/Wei-Shaw/sub2api)  
 > 本项目：[`rw0104/sub2api-cost-console`](https://github.com/rw0104/sub2api-cost-console)
 
 本文档面向需要继续开发、部署、调试和维护 Sub2API Cost Console 的开发者。项目在 Sub2API 管理端基础上增加了 Windows 桌面壳、三套成本运营面板、号码采购成本模型以及桌面端连接适配。
+
+本次上游合并、冲突处理、验证命令和发布记录见 [v0.2.36 开发与发布报告](docs/2026-09-16_development-core-v0.2.5-desktop-v0.2.36-release-report.md)。版本值以 `frontend/CORE_VERSION`、`frontend/UPSTREAM_SUB2API_COMMIT` 和 `frontend/src-tauri/tauri.conf.json` 为准。
 
 ---
 
@@ -26,10 +28,10 @@ Sub2API Cost Console 用于集中观察上游账号、OAuth 号池、API 产出�
 
 非目标：
 
-- 当前版本不会把 PostgreSQL、Redis 和 Go 后端嵌入桌面 EXE。
+- PostgreSQL 和 Redis 仍是外部数据服务；Go 后端作为受管 sidecar 随安装包分发。
 - 当前版本不替代 Sub2API 原有网页管理端。
 - 当前版本不提供自动购买、自动续费或支付结算能力。
-- 当前版本生成免安装 EXE，尚未默认启用 NSIS/MSI 安装器和代码签名。
+- 当前默认分发 NSIS 安装器，附 Tauri/Minisign 更新签名与 SHA-256 清单；该签名与 Windows Authenticode 证书独立。
 
 ---
 
@@ -79,7 +81,7 @@ flowchart LR
 
 ### 3.2 后端
 
-- Go 1.26.6，与 `backend/go.mod` 保持一致。
+- Go 1.27.0，与 `backend/go.mod` 保持一致。
 - PostgreSQL 15+，开发环境推荐 PostgreSQL 16。
 - Redis 7+。
 - 可访问需要接入的上游 API。
@@ -619,24 +621,15 @@ frontend/src-tauri/target/release/sub2api-cost-console.exe
 ```json
 {
   "bundle": {
-    "active": false,
-    "targets": "all"
-  }
-}
-```
-
-如果需要 NSIS 安装器，可改为：
-
-```json
-{
-  "bundle": {
     "active": true,
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/sub2api-backend"]
   }
 }
 ```
 
-发布给外部用户前建议配置 Windows 代码签名证书、自动更新策略和版本号管理。
+正式发布使用 `.github/workflows/desktop-release.yml`：先构建 Web 资源与受管内核，再构建桌面前端并执行契约测试，最终生成签名 NSIS 安装包、`latest.json`、签名文件和校验清单。安装包位于 `frontend/src-tauri/target/release/bundle/nsis/`。签名私钥由 GitHub Actions Secrets 提供，禁止写入仓库。
 
 ---
 
@@ -1077,7 +1070,7 @@ Invoke-WebRequest -Method Options `
 | 字段 | 来源 | 作用 |
 |---|---|---|
 | `desktop_version` | `src-tauri/tauri.conf.json` / Cargo package | Tauri、Vue 和安装结构 |
-| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与签名清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.1.172` |
+| `core_version` | `frontend/CORE_VERSION`、Go 编译 `main.Version` 与兼容清单 | 当前桌面包实际绑定的 Sub2API 上游基线；本次为 `0.2.5` |
 | `upstream_commit` | `frontend/UPSTREAM_SUB2API_COMMIT` 与签名清单 | 绑定的上游完整 Git 提交，避免只显示一个无法核对的版本号 |
 | `algorithm_version` | `frontend/ALGORITHM_VERSION` | 成本折算、起算边界和累计规则 |
 
@@ -1091,29 +1084,20 @@ Invoke-WebRequest -Method Options `
 
 ### 27.3 内核通道
 
-内核扫描使用固定的官方公开入口：
+桌面查询官方最新版本，并从本仓库的兼容稳定通道获取带成本能力的内核：
 
 ```text
 https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest
-https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/checksums.txt
-https://github.com/Wei-Shaw/sub2api/releases/download/<tag>/sub2api_<version>_windows_amd64.zip
+https://github.com/rw0104/sub2api-cost-console/releases/download/core-stable/core-latest.json
 ```
 
-该仓库公开可匿名读取，不需要用户登录 GitHub。启动约 2 秒后自动扫描，此后每 6 小时扫描；手动“检查更新”调用同一服务。发现新版后由用户确认下载，避免工作中被强制重启。
+兼容清单 schema 为 2，记录内核版本、上游提交、成本扩展、算法、能力列表及 Windows ZIP 的 URL、字节数和 SHA-256。客户端下载后验证归档和可执行文件身份，要求 `account_cost_loss_ledger.v1` 与 `account_economics_sampling.v1`。上游官方二进制可能不具备这些成本能力，不能仅因版本更新就绕过能力检查。
 
-安全顺序：
+内核更新使用 pending / active / previous 槽位，停止原进程后激活新内核并检查健康状态，失败时恢复 previous。桌面内置内核与已安装内核身份不同时仍走既有选择、验证和回滚流程。具体实现见 `frontend/src-tauri/src/desktop_runtime.rs`。
 
-1. 解析官方最新 Release，要求严格的 `v<semver>` 标签和 Windows x64 资产。
-2. 只接受固定 `Wei-Shaw/sub2api` 仓库的 HTTPS 下载路径。
-3. 读取官方 `checksums.txt`，下载 ZIP 到 `pending` 并实时报告字节进度。
-4. 校验 ZIP 的 SHA-256，只提取根目录 `sub2api.exe`，拒绝异常大小和异常路径。
-5. 执行待更新内核 `--version`，核对 Release 版本和真实十六进制提交号。
-6. 保留当前内核到 `previous`，重启时原子激活 `pending`。
-7. 新内核必须在 30 秒内通过健康检查；失败时恢复 `previous`。
-8. 用户也可从版本面板手动回滚上一版内核。
-9. 桌面内置内核与活动内核按版本、提交和 SHA-256 三项识别；桌面升级后身份不同会要求用户选择，恢复内置内核时沿用同一套停止、验证和回滚状态机，不得手工删除 `core\active`。
+`.github/workflows/core-sync.yml` 定时或手动发现官方最新正式版，基于已集成上游源码树合并增量，遇到未审阅冲突时创建阻塞 issue 并保留已有稳定内核。只有 Go、前端、Rust 和内核身份验证通过才上传 `core-stable`。手动合并并通过门禁后，关闭对应版本的已解决阻塞 issue，再触发工作流。
 
-更新程序绝不对源码目录执行 `git pull`，也不接受其他仓库或缺少官方校验文件的 Release 资产。
+桌面升级需要推送与 Tauri/Cargo 版本一致的 `v*` 标签；发布稳定内核不会自动替换安装器中已有的 Vue 资源。两个发布通道都要单独核验。
 
 ### 27.4 算法可追溯性
 

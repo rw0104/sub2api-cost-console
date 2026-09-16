@@ -215,10 +215,12 @@ apiClient.interceptors.response.use(
                   storedAuthUserId() !== refreshSessionUser) {
                 return Promise.reject(changedSessionError())
               }
-              const failure = refreshError as { status?: number; response?: { status?: number } }
+              const failure = refreshError as { status?: number; message?: string; response?: { status?: number; data?: { message?: string } } }
               const refreshStatus = failure.response?.status ?? failure.status
-              if (refreshStatus === undefined || refreshStatus === 408 || refreshStatus === 429 || refreshStatus >= 500) {
-                return Promise.reject({ status: refreshStatus ?? 0, code: 'TOKEN_REFRESH_UNAVAILABLE', message: 'Unable to refresh the session right now. Please try again.' })
+              const transportFailure = axios.isAxiosError(refreshError) && !refreshError.response
+              const unknownTransportStatus = refreshStatus === undefined && !(refreshError instanceof Error)
+              if (transportFailure || unknownTransportStatus || refreshStatus === 0 || refreshStatus === 408 || refreshStatus === 429 || (refreshStatus !== undefined && refreshStatus >= 500)) {
+                return Promise.reject({ status: refreshStatus ?? 0, code: 'TOKEN_REFRESH_UNAVAILABLE', message: failure.response?.data?.message || failure.message || 'Unable to refresh the session right now. Please try again.' })
               }
               expireAuthSession()
               return Promise.reject({ status: 401, code: 'TOKEN_REFRESH_FAILED', message: 'Session expired. Please log in again.' })
