@@ -75,7 +75,21 @@ Write-Output "    publisher-demo: '$publicKey'"
 | `TestConfig` | 有界诊断，不泄漏秘密或请求正文 |
 | `Preprocess` | 遵守 context 截止时间和取消，返回明确决策及受限补丁 |
 
-独立仓库使用自己的 Go module，并将 `github.com/Wei-Shaw/sub2api` 固定到已验证提交；本地可用 `go mod edit -replace` 指向宿主的 `backend` 目录。不能假设未合并的 SDK 已存在于旧版本 module 中。其他语言除实现 [proto](../backend/pkg/pluginapi/v2/extension.proto) 外，还要兼容 go-plugin 握手、mTLS 和 broker，不是仅暴露普通 gRPC 服务。
+SDK 尚未独立发布为可 `go get` 的版本，且此 fork 保留原上游 module 名。不要把本支线提交号传给 `go get github.com/Wei-Shaw/sub2api`。独立项目请固定一份本仓库源码，使用本地 replace。下面从宿主仓库根目录执行，在相邻目录创建一个新的插件工程（该目录应尚不存在）：
+
+```powershell
+$sdkBackend = (Resolve-Path backend).Path
+New-Item -ItemType Directory ../my-sub2api-plugin | Out-Null
+Copy-Item "$sdkBackend/pkg/pluginapi/examples/preprocess/main.go" ../my-sub2api-plugin/main.go
+Set-Location ../my-sub2api-plugin
+go mod init example.com/my-sub2api-plugin
+go mod edit '-go=1.27.0'
+go mod edit -replace "github.com/Wei-Shaw/sub2api=$sdkBackend"
+go mod tidy
+go build -o preprocess.exe .
+```
+
+CI 中也检出同一宿主提交，并更新 replace 到该目录；不要依赖开发机绝对路径。配置 UI、清单和打包器可继续复用宿主示例，通过打包器的 `-source` 指向自己的清单/UI 目录。其他语言除实现 [proto](../backend/pkg/pluginapi/v2/extension.proto) 外，还要兼容 go-plugin 握手、mTLS 和 broker，不是仅暴露普通 gRPC 服务。
 
 ### 权限与修改白名单
 
