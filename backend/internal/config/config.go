@@ -109,12 +109,23 @@ type Config struct {
 // PluginConfig 控制管理员手动上传的本地进程插件。
 // 默认不包含插件，也不允许安装未签名插件；TrustedPublishers 用于追加第三方发布者。
 type PluginConfig struct {
-	DataDir              string            `mapstructure:"data_dir"`
-	AllowUnsigned        bool              `mapstructure:"allow_unsigned"`
-	TrustedPublishers    map[string]string `mapstructure:"trusted_publishers"`
-	MaxUploadBytes       int64             `mapstructure:"max_upload_bytes"`
-	MaxUncompressedBytes int64             `mapstructure:"max_uncompressed_bytes"`
-	StartTimeoutSeconds  int               `mapstructure:"start_timeout_seconds"`
+	DataDir              string              `mapstructure:"data_dir"`
+	AllowUnsigned        bool                `mapstructure:"allow_unsigned"`
+	TrustedPublishers    map[string]string   `mapstructure:"trusted_publishers"`
+	MaxUploadBytes       int64               `mapstructure:"max_upload_bytes"`
+	MaxUncompressedBytes int64               `mapstructure:"max_uncompressed_bytes"`
+	StartTimeoutSeconds  int                 `mapstructure:"start_timeout_seconds"`
+	V2Sandbox            PluginSandboxConfig `mapstructure:"v2_sandbox"`
+}
+
+// PluginSandboxConfig applies only to v2 hooks. Container mode fails closed if
+// its local Docker image/runtime is unavailable; it never falls back to process.
+type PluginSandboxConfig struct {
+	Mode      string `mapstructure:"mode"`
+	Image     string `mapstructure:"image"`
+	MemoryMB  int    `mapstructure:"memory_mb"`
+	CPUMilli  int    `mapstructure:"cpu_milli"`
+	PidsLimit int    `mapstructure:"pids_limit"`
 }
 
 type LogConfig struct {
@@ -1819,6 +1830,12 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	if err := ValidatePluginPreviewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName); err != nil {
+		return nil, err
+	}
+	if err := ValidatePluginPreviewRedis(cfg.Redis.Host, cfg.Redis.Port); err != nil {
+		return nil, err
+	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
 	}
@@ -2337,6 +2354,11 @@ func setDefaults() {
 	viper.SetDefault("plugins.max_upload_bytes", int64(128*1024*1024))
 	viper.SetDefault("plugins.max_uncompressed_bytes", int64(256*1024*1024))
 	viper.SetDefault("plugins.start_timeout_seconds", 15)
+	viper.SetDefault("plugins.v2_sandbox.mode", "process")
+	viper.SetDefault("plugins.v2_sandbox.image", "sub2api-plugin-sandbox:1")
+	viper.SetDefault("plugins.v2_sandbox.memory_mb", 256)
+	viper.SetDefault("plugins.v2_sandbox.cpu_milli", 1000)
+	viper.SetDefault("plugins.v2_sandbox.pids_limit", 64)
 
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
@@ -2703,6 +2725,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Plugins.StartTimeoutSeconds < 1 || c.Plugins.StartTimeoutSeconds > 120 {
 		return fmt.Errorf("plugins.start_timeout_seconds must be between 1 and 120")
+	}
+	if err := c.Plugins.V2Sandbox.Validate(); err != nil {
+		return err
 	}
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")

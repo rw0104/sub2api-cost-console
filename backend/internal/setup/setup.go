@@ -214,6 +214,9 @@ type postgresDatabaseOpener func(*DatabaseConfig, string) (*sql.DB, error)
 
 // TestDatabaseConnection tests the database connection and creates database if not exists
 func TestDatabaseConnection(cfg *DatabaseConfig) error {
+	if err := config.ValidatePluginPreviewDatabase(cfg.Host, cfg.Port, cfg.DBName); err != nil {
+		return err
+	}
 	return testDatabaseConnection(cfg, openAndPingPostgresDatabase)
 }
 
@@ -279,6 +282,9 @@ func testDatabaseConnection(cfg *DatabaseConfig, openDatabase postgresDatabaseOp
 
 // TestRedisConnection tests the Redis connection
 func TestRedisConnection(cfg *RedisConfig) error {
+	if err := config.ValidatePluginPreviewRedis(cfg.Host, cfg.Port); err != nil {
+		return err
+	}
 	opts := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Username: cfg.Username,

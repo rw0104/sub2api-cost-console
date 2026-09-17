@@ -12,6 +12,7 @@ import (
 	"time"
 
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 )
 
 const (
@@ -49,14 +50,20 @@ type PluginRequirements struct {
 	RecommendedSub2APIVersion string   `json:"recommended_sub2api_version,omitempty"`
 	TestedSub2APIVersions     []string `json:"tested_sub2api_versions,omitempty"`
 	PluginProtocol            int      `json:"plugin_protocol"`
-	TransportAPI              int      `json:"transport_api"`
+	TransportAPI              int      `json:"transport_api,omitempty"`
+	ExtensionAPI              int      `json:"extension_api,omitempty"`
 	UIBridge                  int      `json:"ui_bridge"`
 }
 
 type PluginCapability struct {
-	ID          string `json:"id"`
-	Platform    string `json:"platform"`
-	AccountType string `json:"account_type"`
+	ID          string                  `json:"id"`
+	Platform    string                  `json:"platform"`
+	AccountType string                  `json:"account_type"`
+	Kind        pluginv2.CapabilityKind `json:"kind,omitempty"`
+	Permissions []pluginv2.Permission   `json:"permissions,omitempty"`
+	TimeoutMS   int64                   `json:"timeout_ms,omitempty"`
+	FailureMode pluginv2.FailureMode    `json:"failure_mode,omitempty"`
+	Synchronous bool                    `json:"synchronous,omitempty"`
 }
 
 type PluginRuntime struct {
@@ -84,34 +91,38 @@ type PluginCompatibility struct {
 	RecommendedSub2API string `json:"recommended_sub2api_version"`
 	PluginProtocol     int    `json:"plugin_protocol"`
 	TransportAPI       int    `json:"transport_api"`
+	ExtensionAPI       int    `json:"extension_api,omitempty"`
 	UIBridge           int    `json:"ui_bridge"`
 }
 
 type PluginInstallation struct {
-	ID              int64               `json:"id"`
-	PluginKey       string              `json:"plugin_key"`
-	Name            string              `json:"name"`
-	Version         string              `json:"version"`
-	Description     string              `json:"description"`
-	Author          string              `json:"author"`
-	Manifest        PluginManifest      `json:"manifest"`
-	ArtifactData    []byte              `json:"-"`
-	ArtifactPath    string              `json:"-"`
-	InstallPath     string              `json:"-"`
-	BinaryPath      string              `json:"-"`
-	BinarySHA256    string              `json:"binary_sha256"`
-	SignatureStatus string              `json:"signature_status"`
-	State           string              `json:"state"`
-	ConfigEncrypted string              `json:"-"`
-	LastError       string              `json:"last_error"`
-	InstalledBy     *int64              `json:"installed_by"`
-	InstalledAt     time.Time           `json:"installed_at"`
-	EnabledAt       *time.Time          `json:"enabled_at"`
-	UpdatedAt       time.Time           `json:"updated_at"`
-	Bindings        []PluginBinding     `json:"bindings"`
-	Compatibility   PluginCompatibility `json:"compatibility"`
-	RuntimeHealthy  bool                `json:"runtime_healthy"`
-	RuntimeMessage  string              `json:"runtime_message"`
+	ID                int64                     `json:"id"`
+	PluginKey         string                    `json:"plugin_key"`
+	Name              string                    `json:"name"`
+	Version           string                    `json:"version"`
+	Description       string                    `json:"description"`
+	Author            string                    `json:"author"`
+	Manifest          PluginManifest            `json:"manifest"`
+	ArtifactData      []byte                    `json:"-"`
+	ArtifactPath      string                    `json:"-"`
+	InstallPath       string                    `json:"-"`
+	BinaryPath        string                    `json:"-"`
+	BinarySHA256      string                    `json:"binary_sha256"`
+	SignatureStatus   string                    `json:"signature_status"`
+	State             string                    `json:"state"`
+	ConfigEncrypted   string                    `json:"-"`
+	LastError         string                    `json:"last_error"`
+	InstalledBy       *int64                    `json:"installed_by"`
+	InstalledAt       time.Time                 `json:"installed_at"`
+	EnabledAt         *time.Time                `json:"enabled_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+	Bindings          []PluginBinding           `json:"bindings"`
+	Compatibility     PluginCompatibility       `json:"compatibility"`
+	RuntimeHealthy    bool                      `json:"runtime_healthy"`
+	RuntimeVersion    string                    `json:"runtime_version,omitempty"`
+	RuntimeIsolation  string                    `json:"runtime_isolation,omitempty"`
+	RuntimeMessage    string                    `json:"runtime_message"`
+	CapabilityRuntime []PluginCapabilityRuntime `json:"capability_runtime,omitempty"`
 }
 
 type PluginBinding struct {
@@ -122,6 +133,12 @@ type PluginBinding struct {
 	AccountType    string    `json:"account_type"`
 	Enabled        bool      `json:"enabled"`
 	RolloutPercent int       `json:"rollout_percent"`
+	Priority       int       `json:"priority"`
+	AccountIDs     []int64   `json:"account_ids"`
+	UserIDs        []int64   `json:"user_ids"`
+	GroupIDs       []int64   `json:"group_ids"`
+	MaxConcurrency int       `json:"max_concurrency"`
+	TimeoutMS      int64     `json:"timeout_ms"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -145,7 +162,11 @@ func (m PluginManifest) RuntimeKey() string {
 }
 
 func (m PluginManifest) Validate() error {
-	if m.SchemaVersion != 1 {
+	return m.ValidateForRuntime(m.RuntimeKey())
+}
+
+func (m PluginManifest) ValidateForRuntime(runtimeKey string) error {
+	if m.SchemaVersion != 1 && m.SchemaVersion != 2 {
 		return fmt.Errorf("不支持的插件清单版本: %d", m.SchemaVersion)
 	}
 	if !pluginIDPattern.MatchString(m.ID) || len(m.ID) > 160 {
@@ -160,22 +181,32 @@ func (m PluginManifest) Validate() error {
 	if strings.TrimSpace(m.Requires.Sub2API) == "" {
 		return errors.New("插件必须声明 requires.sub2api")
 	}
-	if m.Requires.PluginProtocol != pluginv1.ProtocolVersion ||
-		m.Requires.TransportAPI != pluginv1.TransportAPIVersion ||
-		m.Requires.UIBridge != pluginv1.UIBridgeVersion {
-		return errors.New("插件协议、传输 API 或 UI Bridge 版本与当前宿主不兼容")
+	if err := m.validateProtocol(); err != nil {
+		return err
 	}
 	if len(m.Capabilities) == 0 {
 		return errors.New("插件必须声明至少一个能力")
 	}
+	seen := make(map[string]bool)
 	for _, capability := range m.Capabilities {
-		if capability.ID != PluginCapabilityOpenAIOAuthOutbound || capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
-			return fmt.Errorf("初期仅支持能力 %s", PluginCapabilityOpenAIOAuthOutbound)
+		if seen[capability.ID] {
+			return fmt.Errorf("插件能力重复: %s", capability.ID)
+		}
+		seen[capability.ID] = true
+		if m.SchemaVersion == 1 {
+			if capability.ID != PluginCapabilityOpenAIOAuthOutbound || capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
+				return fmt.Errorf("v1 仅支持能力 %s", PluginCapabilityOpenAIOAuthOutbound)
+			}
+			if capability.Kind != "" || len(capability.Permissions) > 0 || capability.TimeoutMS != 0 || capability.FailureMode != "" || capability.Synchronous {
+				return errors.New("v1 清单不能声明 v2 能力属性")
+			}
+		} else if err := capability.ExtensionCapability().Validate(); err != nil {
+			return err
 		}
 	}
-	runtimeEntry, ok := m.Runtimes[m.RuntimeKey()]
+	runtimeEntry, ok := m.Runtimes[runtimeKey]
 	if !ok || !safePluginRelativePath(runtimeEntry.Path) {
-		return fmt.Errorf("插件不支持当前运行平台 %s", m.RuntimeKey())
+		return fmt.Errorf("插件不支持运行平台 %s", runtimeKey)
 	}
 	if !safePluginRelativePath(m.UI.Entrypoint) || !strings.HasPrefix(m.UI.Entrypoint, "ui/") {
 		return errors.New("插件 UI 入口必须位于 ui/ 目录")
@@ -197,6 +228,64 @@ func (m PluginManifest) Validate() error {
 	return nil
 }
 
+func (m PluginManifest) validateProtocol() error {
+	if m.Requires.UIBridge != pluginv1.UIBridgeVersion {
+		return errors.New("插件 UI Bridge 版本与当前宿主不兼容")
+	}
+	if m.SchemaVersion == 1 && m.Requires.PluginProtocol == pluginv1.ProtocolVersion &&
+		m.Requires.TransportAPI == pluginv1.TransportAPIVersion && m.Requires.ExtensionAPI == 0 {
+		return nil
+	}
+	if m.SchemaVersion == 2 && m.Requires.PluginProtocol == int(pluginv2.ProtocolVersion) &&
+		m.Requires.ExtensionAPI == 1 && m.Requires.TransportAPI == 0 {
+		return nil
+	}
+	return errors.New("插件清单与协议版本不匹配")
+}
+
+func (c PluginCapability) ExtensionCapability() pluginv2.Capability {
+	return pluginv2.Capability{ID: c.ID, Kind: c.Kind, Platform: c.Platform, AccountType: c.AccountType,
+		Permissions: append([]pluginv2.Permission(nil), c.Permissions...), TimeoutMS: c.TimeoutMS,
+		FailureMode: c.FailureMode, Synchronous: c.Synchronous}
+}
+
+// supportedExtensionCapability is the host registry for executable v2 hooks.
+// Unknown capabilities remain installable, but cannot be enabled.
+func supportedExtensionCapability(c PluginCapability) error {
+	if c.ID != pluginv2.CapabilityRequestPreprocess {
+		return fmt.Errorf("宿主尚未实现能力 %s", c.ID)
+	}
+	if err := c.ExtensionCapability().Validate(); err != nil {
+		return err
+	}
+	if c.Kind != pluginv2.CapabilityKindHook || !c.Synchronous ||
+		(c.FailureMode != pluginv2.FailureModeClosed && c.FailureMode != pluginv2.FailureModeOpen) {
+		return errors.New("请求预处理必须是同步 hook，失败策略为 fail_closed 或 fail_open")
+	}
+	if c.Platform != PlatformOpenAI || (c.AccountType != AccountTypeOAuth && c.AccountType != AccountTypeAPIKey) {
+		return errors.New("请求预处理当前支持 openai 平台的 oauth 或 apikey 账号")
+	}
+	metadata := false
+	for _, permission := range c.Permissions {
+		switch permission {
+		case pluginv2.PermissionRequestMetadata:
+			metadata = true
+		case pluginv2.PermissionRequestBody, pluginv2.PermissionRequestMutate,
+			pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig,
+			pluginv2.PermissionSecretBroker, pluginv2.PermissionEventPublish:
+		default:
+			return fmt.Errorf("请求预处理不支持权限 %s", permission)
+		}
+	}
+	if !metadata {
+		return errors.New("请求预处理必须声明 request.metadata.read")
+	}
+	if c.TimeoutMS > 5000 {
+		return errors.New("同步请求预处理超时不能超过 5000ms")
+	}
+	return nil
+}
+
 func safePluginRelativePath(path string) bool {
 	cleaned := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 	return cleaned != "" && cleaned != "." && !strings.HasPrefix(cleaned, "/") &&
@@ -209,6 +298,10 @@ func (m PluginManifest) MarshalJSONBytes() ([]byte, error) {
 
 func (m PluginManifest) SortedCapabilities() []PluginCapability {
 	out := append([]PluginCapability(nil), m.Capabilities...)
+	for i := range out {
+		out[i].Permissions = append([]pluginv2.Permission(nil), out[i].Permissions...)
+		sort.Slice(out[i].Permissions, func(a, b int) bool { return out[i].Permissions[a] < out[i].Permissions[b] })
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }

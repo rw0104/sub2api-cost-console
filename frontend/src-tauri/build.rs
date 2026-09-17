@@ -46,8 +46,11 @@ fn main() {
         std::fs::read_to_string("../CORE_VERSION").expect("frontend/CORE_VERSION must exist");
     let algorithm_version = std::fs::read_to_string("../ALGORITHM_VERSION")
         .expect("frontend/ALGORITHM_VERSION must exist");
-    let extension_version = std::fs::read_to_string("../CORE_EXTENSION_VERSION")
+    let mut extension_version = std::fs::read_to_string("../CORE_EXTENSION_VERSION")
         .expect("frontend/CORE_EXTENSION_VERSION must exist");
+    if env::var_os("CARGO_FEATURE_PLUGIN_PREVIEW").is_some() {
+        extension_version = "1.2.0-plugin.1".into();
+    }
     let core_capabilities = std::fs::read_to_string("../CORE_CAPABILITIES")
         .expect("frontend/CORE_CAPABILITIES must exist")
         .split_whitespace()

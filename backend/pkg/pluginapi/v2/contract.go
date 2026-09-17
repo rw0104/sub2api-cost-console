@@ -39,6 +39,9 @@ const (
 	PermissionNetworkOutbound Permission = "network.outbound"
 	PermissionSecretBroker    Permission = "secrets.broker"
 	PermissionEventPublish    Permission = "events.publish"
+	PermissionHostLog         Permission = "host.log"
+	PermissionHostMetric      Permission = "host.metric"
+	PermissionHostConfig      Permission = "host.config.read"
 
 	DecisionPass   Decision = "pass"
 	DecisionModify Decision = "modify"
@@ -49,6 +52,7 @@ const (
 	MaxHeaderCount      = 64
 	MaxHeaderValues     = 16
 	MaxReasonBytes      = 2048
+	MaxHeaderBytes      = 16 * 1024
 )
 
 var capabilityIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)+\.v[1-9][0-9]*$`)
@@ -71,7 +75,7 @@ type Capability struct {
 }
 
 func (c Capability) Validate() error {
-	if !capabilityIDPattern.MatchString(strings.TrimSpace(c.ID)) {
+	if !capabilityIDPattern.MatchString(c.ID) {
 		return fmt.Errorf("能力 ID 无效: %q", c.ID)
 	}
 	switch c.Kind {
@@ -186,6 +190,7 @@ func (c RequestContext) Validate() error {
 	if len(c.Headers) > MaxHeaderCount {
 		return fmt.Errorf("请求头数量超过限制: %d", len(c.Headers))
 	}
+	headerBytes := 0
 	for name, values := range c.Headers {
 		if !validHeaderName(name) {
 			return fmt.Errorf("请求头名称无效: %q", name)
@@ -196,6 +201,16 @@ func (c RequestContext) Validate() error {
 		if len(values) > MaxHeaderValues {
 			return fmt.Errorf("请求头 %q 的值数量超过限制", name)
 		}
+		headerBytes += len(name)
+		for _, value := range values {
+			headerBytes += len(value)
+			if strings.ContainsAny(value, "\r\n\x00") {
+				return errors.New("请求头值包含控制字符")
+			}
+		}
+	}
+	if headerBytes > MaxHeaderBytes {
+		return errors.New("请求头总大小超过限制")
 	}
 	return nil
 }
@@ -237,6 +252,7 @@ func (p RequestPatch) Validate() error {
 	if len(p.Headers) > MaxHeaderCount {
 		return fmt.Errorf("修改后的请求头数量超过限制: %d", len(p.Headers))
 	}
+	headerBytes := 0
 	for name, values := range p.Headers {
 		if !validHeaderName(name) {
 			return fmt.Errorf("修改后的请求头名称无效: %q", name)
@@ -247,6 +263,19 @@ func (p RequestPatch) Validate() error {
 		if len(values) > MaxHeaderValues {
 			return fmt.Errorf("修改后的请求头 %q 的值数量超过限制", name)
 		}
+		headerBytes += len(name)
+		for _, value := range values {
+			headerBytes += len(value)
+			if strings.ContainsAny(value, "\r\n\x00") {
+				return errors.New("修改后的请求头包含控制字符")
+			}
+		}
+	}
+	if headerBytes > MaxHeaderBytes {
+		return errors.New("修改后的请求头总大小超过限制")
+	}
+	if !p.BodyChanged && len(p.BodyJSON) > 0 {
+		return errors.New("请求体变更必须声明 body_changed")
 	}
 	if len(p.BodyJSON) > MaxRequestBodyBytes {
 		return fmt.Errorf("修改后的请求体超过限制: %d", len(p.BodyJSON))
@@ -318,6 +347,7 @@ func NormalizeCapabilities(capabilities []Capability) ([]Capability, error) {
 		if err := cloned[i].Validate(); err != nil {
 			return nil, err
 		}
+		cloned[i].Permissions = append([]Permission(nil), cloned[i].Permissions...)
 		sort.Slice(cloned[i].Permissions, func(left, right int) bool {
 			return cloned[i].Permissions[left] < cloned[i].Permissions[right]
 		})
@@ -332,7 +362,6 @@ func NormalizeCapabilities(capabilities []Capability) ([]Capability, error) {
 }
 
 func validHeaderName(name string) bool {
-	name = strings.TrimSpace(name)
 	if name == "" || strings.ToLower(name) != name {
 		return false
 	}
@@ -347,7 +376,7 @@ func validHeaderName(name string) bool {
 
 func isSensitiveHeader(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization", "cookie", "set-cookie":
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-goog-api-key":
 		return true
 	default:
 		return false

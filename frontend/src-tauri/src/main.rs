@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client_launcher;
+mod desktop_profile;
 mod desktop_proxy;
 mod desktop_runtime;
 mod desktop_shell;
@@ -24,14 +25,16 @@ use setup_environment::{detect_setup_environment, provision_quick_setup};
 use tauri::Manager;
 
 fn main() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = desktop_shell::show_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+    #[cfg(not(feature = "plugin-preview"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = builder
         .on_window_event(handle_main_window_event)
         .setup(|app| {
             let handle = app.handle().clone();

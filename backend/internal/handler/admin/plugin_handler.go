@@ -80,6 +80,13 @@ func (h *PluginHandler) Upload(c *gin.Context) {
 	response.Created(c, plugin)
 }
 
+// AuthorizeUpload is protected by the same admin/step-up middleware as Upload.
+// A small request lets browsers finish 2FA before sending a large package; an
+// early 403 during multipart upload can otherwise close the HTTP connection.
+func (h *PluginHandler) AuthorizeUpload(c *gin.Context) {
+	response.Success(c, gin.H{"authorized": true})
+}
+
 type pluginEnableRequest struct {
 	AcceptUntested bool `json:"accept_untested"`
 	RolloutPercent int  `json:"rollout_percent"`
@@ -111,6 +118,166 @@ func (h *PluginHandler) Disable(c *gin.Context) {
 	plugin, err := h.manager.Disable(c.Request.Context(), id)
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, plugin)
+}
+
+func (h *PluginHandler) Versions(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	versions, err := h.manager.ListVersions(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, versions)
+}
+
+func (h *PluginHandler) SaveRouting(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Policies          []service.PluginRoutingPolicy `json:"policies" binding:"required,min=1,max=16"`
+		ExpectedUpdatedAt time.Time                     `json:"expected_updated_at" binding:"required"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256*1024)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "插件路由参数无效")
+		return
+	}
+	plugin, err := h.manager.SaveRouting(c.Request.Context(), id, request.Policies, request.ExpectedUpdatedAt)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, plugin)
+}
+
+func (h *PluginHandler) HostStats(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	snapshot, err := h.manager.HostStats(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, snapshot)
+}
+func (h *PluginHandler) SecretGrants(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	grants, err := h.manager.ListSecretGrants(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, grants)
+}
+func (h *PluginHandler) PutSecretGrant(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	var request struct {
+		Capability string `json:"capability" binding:"required"`
+		Alias      string `json:"alias" binding:"required"`
+		Value      string `json:"value" binding:"required"`
+		TTLSeconds int    `json:"ttl_seconds" binding:"required,min=1,max=3600"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "秘密授权参数无效")
+		return
+	}
+	if err := h.manager.PutSecretGrant(c.Request.Context(), id, request.Capability, request.Alias, request.Value, request.TTLSeconds); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"saved": true})
+}
+func (h *PluginHandler) DeleteSecretGrant(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+	var request struct {
+		Capability string `json:"capability" binding:"required"`
+		Alias      string `json:"alias" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "秘密授权参数无效")
+		return
+	}
+	if err := h.manager.DeleteSecretGrant(c.Request.Context(), id, request.Capability, request.Alias); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}
+
+func (h *PluginHandler) Upgrade(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.manager.MaxUploadBytes()+(1<<20))
+	file, header, err := c.Request.FormFile("plugin")
+	if err != nil {
+		response.BadRequest(c, "请选择有效的 .s2plugin 文件")
+		return
+	}
+	defer file.Close()
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".s2plugin") {
+		response.BadRequest(c, "插件包扩展名必须是 .s2plugin")
+		return
+	}
+	acceptUntested := false
+	if raw := c.PostForm("accept_untested"); raw != "" {
+		acceptUntested, err = strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "版本确认参数无效")
+			return
+		}
+	}
+	var installedBy *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		userID := subject.UserID
+		installedBy = &userID
+	}
+	plugin, err := h.manager.Upgrade(c.Request.Context(), id, file, installedBy, acceptUntested)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, plugin)
+}
+
+func (h *PluginHandler) Rollback(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		VersionID      int64 `json:"version_id" binding:"required,gt=0"`
+		AcceptUntested bool  `json:"accept_untested"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "回滚版本参数无效")
+		return
+	}
+	plugin, err := h.manager.Rollback(c.Request.Context(), id, request.VersionID, request.AcceptUntested)
+	if err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 	response.Success(c, plugin)

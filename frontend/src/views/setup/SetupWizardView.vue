@@ -373,13 +373,14 @@ const confirmPassword = ref('')
 const serviceReady = ref(false)
 let unlistenProgress: UnlistenFn | null = null
 
+const pluginPreview = import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
 const formData = reactive<InstallRequest>({
-  database: { host: 'localhost', port: 5432, user: 'postgres', password: '', dbname: 'sub2api', sslmode: 'disable' },
-  redis: { host: 'localhost', port: 6379, username: '', password: '', db: 0, enable_tls: false },
+  database: { host: 'localhost', port: pluginPreview ? 25432 : 5432, user: 'postgres', password: '', dbname: pluginPreview ? 'sub2api_plugin_preview' : 'sub2api', sslmode: 'disable' },
+  redis: { host: 'localhost', port: pluginPreview ? 26379 : 6379, username: '', password: '', db: 0, enable_tls: false },
   admin: { email: '', password: '' },
   server: {
     host: desktop ? '127.0.0.1' : '0.0.0.0',
-    port: desktop ? 18765 : Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80)),
+    port: desktop ? (pluginPreview ? 19765 : 18765) : Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80)),
     mode: 'release',
   },
 })
@@ -472,7 +473,7 @@ async function startQuickSetup() {
     currentStep.value = 3
   } catch (error) {
     errorMessage.value = errorText(error)
-    if (formData.database.port === 15432 || formData.redis.port === 16379) currentStep.value = dbConnected.value ? 2 : 1
+    if (formData.database.port === (pluginPreview ? 25432 : 15432) || formData.redis.port === (pluginPreview ? 26379 : 16379)) currentStep.value = dbConnected.value ? 2 : 1
     await refreshEnvironment()
   } finally {
     provisioning.value = false

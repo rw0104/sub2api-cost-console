@@ -1,3 +1,6 @@
+use crate::desktop_profile::{
+    POSTGRES_CONTAINER, POSTGRES_PORT, PREVIEW, REDIS_PORT, VALKEY_CONTAINER,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path, time::Duration};
 use tokio::{net::TcpStream, time::timeout};
@@ -78,14 +81,14 @@ fn dependencies_from_yaml(yaml: &str) -> Result<Vec<Dependency>, StartupProblem>
     Ok(vec![
         Dependency {
             name: "PostgreSQL",
-            container: (is_local(&database.host) && database.port == 15432)
-                .then_some(("sub2api-cost-postgres", "5432/tcp")),
+            container: (is_local(&database.host) && database.port == POSTGRES_PORT)
+                .then_some((POSTGRES_CONTAINER, "5432/tcp")),
             endpoint: database,
         },
         Dependency {
             name: "Redis / Valkey",
-            container: (is_local(&redis.host) && redis.port == 16379)
-                .then_some(("sub2api-cost-valkey", "6379/tcp")),
+            container: (is_local(&redis.host) && redis.port == REDIS_PORT)
+                .then_some((VALKEY_CONTAINER, "6379/tcp")),
             endpoint: redis,
         },
     ])
@@ -105,6 +108,19 @@ pub fn configured_dependencies(data_dir: &Path) -> Result<Vec<Dependency>, Start
         )
     })?;
     let mut dependencies = dependencies_from_yaml(&yaml)?;
+    if PREVIEW {
+        for (dependency, port) in dependencies.iter().zip([POSTGRES_PORT, REDIS_PORT]) {
+            if !is_local(&dependency.endpoint.host) || dependency.endpoint.port != port {
+                return Err(StartupProblem::new(
+                    "preview_isolation",
+                    "测试环境隔离保护",
+                    "测试版只连接独立的本机 25432/26379 数据服务。请勿复制正式版配置。",
+                    false,
+                ));
+            }
+        }
+        return Ok(dependencies);
+    }
     for (dependency, prefix) in dependencies.iter_mut().zip(["DATABASE", "REDIS"]) {
         if let Ok(host) = std::env::var(format!("{prefix}_HOST")) {
             dependency.endpoint.host = host;
@@ -188,7 +204,11 @@ impl DependencyControl for SystemDependencies {
     }
     async fn container_info(&self, name: &str) -> Result<ContainerInfo, String> {
         // Only inspect ownership and bindings; credentials never enter diagnostics.
-        let format = r#"{"managed":{{json (index .Config.Labels "com.sub2api.cost-console.managed")}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}}}"#;
+        let format = if PREVIEW {
+            r#"{"managed":{{json (index .Config.Labels "com.sub2api.plugin-preview.managed")}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}}}"#
+        } else {
+            r#"{"managed":{{json (index .Config.Labels "com.sub2api.cost-console.managed")}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}}}"#
+        };
         let json = crate::setup_environment::run_docker(
             &["container", "inspect", "--format", format, name],
             Duration::from_secs(4),
@@ -283,9 +303,9 @@ mod tests {
         }
         async fn container_info(&self, name: &str) -> Result<ContainerInfo, String> {
             let (port, host) = if name.ends_with("postgres") {
-                ("5432/tcp", "15432")
+                ("5432/tcp", POSTGRES_PORT.to_string())
             } else {
-                ("6379/tcp", "16379")
+                ("6379/tcp", REDIS_PORT.to_string())
             };
             Ok(ContainerInfo {
                 managed: Some(self.owned.to_string()),
@@ -314,7 +334,7 @@ mod tests {
     }
     fn dependencies() -> Vec<Dependency> {
         dependencies_from_yaml(
-            "database: {host: 127.0.0.1, port: 15432}\nredis: {host: 127.0.0.1, port: 16379}",
+            &format!("database: {{host: 127.0.0.1, port: {POSTGRES_PORT}}}\nredis: {{host: 127.0.0.1, port: {REDIS_PORT}}}"),
         )
         .unwrap()
     }
@@ -336,7 +356,7 @@ mod tests {
             .calls
             .lock()
             .unwrap()
-            .ends_with(&["sub2api-cost-postgres".into(), "sub2api-cost-valkey".into()]));
+            .ends_with(&[POSTGRES_CONTAINER.into(), VALKEY_CONTAINER.into()]));
         fake.ports.store(true, Ordering::SeqCst);
         assert!(ensure_dependencies(&deps, &fake).await.is_ok());
     }

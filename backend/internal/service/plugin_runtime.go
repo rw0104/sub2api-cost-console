@@ -16,15 +16,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pluginruntime"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 	hclog "github.com/hashicorp/go-hclog"
 	hcplugin "github.com/hashicorp/go-plugin"
+	"github.com/hashicorp/go-plugin/runner"
 )
 
 type pluginRuntime struct {
 	installation *PluginInstallation
 	client       *hcplugin.Client
 	api          pluginv1.TransportPluginClient
+	extension    pluginv2.ExtensionHandler
+	isolation    string
+	host         *pluginHostServices
 	inFlight     atomic.Int64
 	draining     atomic.Bool
 	done         chan struct{}
@@ -32,6 +39,10 @@ type pluginRuntime struct {
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string) (*pluginRuntime, error) {
+	return startPluginRuntimeWithSandbox(ctx, installation, startTimeout, socketDir, config.PluginSandboxConfig{})
+}
+
+func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig) (*pluginRuntime, error) {
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
 	}
@@ -40,9 +51,13 @@ func startPluginRuntime(ctx context.Context, installation *PluginInstallation, s
 		return nil, errors.New("插件二进制哈希无效")
 	}
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), installation.BinaryPath)
-	client := hcplugin.NewClient(&hcplugin.ClientConfig{
-		HandshakeConfig:  pluginv1.HandshakeConfig,
-		Plugins:          pluginv1.ClientPluginMap(),
+	handshake, plugins, name := pluginv1.HandshakeConfig, pluginv1.ClientPluginMap(), pluginv1.TransportPluginName
+	if installation.Manifest.SchemaVersion == 2 {
+		handshake, plugins, name = pluginv2.HandshakeConfig, pluginv2.ClientPluginMap(), pluginv2.ExtensionPluginName
+	}
+	clientConfig := &hcplugin.ClientConfig{
+		HandshakeConfig:  handshake,
+		Plugins:          plugins,
 		Cmd:              cmd,
 		AllowedProtocols: []hcplugin.Protocol{hcplugin.ProtocolGRPC},
 		StartTimeout:     startTimeout,
@@ -55,47 +70,53 @@ func startPluginRuntime(ctx context.Context, installation *PluginInstallation, s
 		SyncStderr:       io.Discard,
 		UnixSocketConfig: &hcplugin.UnixSocketConfig{TempDir: socketDir},
 		SkipHostEnv:      true,
-	})
+	}
+	isolation := "process"
+	if installation.Manifest.SchemaVersion == 2 {
+		if err := sandbox.Validate(); err != nil {
+			return nil, err
+		}
+		sandbox = sandbox.WithDefaults()
+		clientConfig.AutoMTLS = true
+		clientConfig.GRPCBrokerMultiplex = hasHostPermissions(installation.Manifest)
+		if sandbox.Mode == "container" {
+			isolation = "container"
+			clientConfig.Cmd = nil
+			// The runner hashes the exact private copy mounted into the container.
+			clientConfig.SecureConfig = nil
+			clientConfig.RunnerFunc = func(_ hclog.Logger, spec *exec.Cmd, workDir string) (runner.Runner, error) {
+				return pluginruntime.NewContainer(pluginruntime.ContainerOptions{BinaryPath: installation.BinaryPath,
+					BinarySHA256: installation.BinarySHA256, WorkDir: workDir, Image: sandbox.Image,
+					MemoryMB: sandbox.MemoryMB, CPUMilli: sandbox.CPUMilli, PidsLimit: sandbox.PidsLimit, Env: spec.Env})
+			}
+		}
+	}
+	client := hcplugin.NewClient(clientConfig)
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()
 		return nil, fmt.Errorf("启动插件进程: %w", err)
 	}
-	dispensed, err := rpcClient.Dispense(pluginv1.TransportPluginName)
+	dispensed, err := rpcClient.Dispense(name)
 	if err != nil {
 		client.Kill()
 		return nil, fmt.Errorf("获取插件传输能力: %w", err)
 	}
-	api, ok := dispensed.(pluginv1.TransportPluginClient)
-	if !ok {
-		client.Kill()
-		return nil, errors.New("插件未实现传输 gRPC 客户端")
-	}
 	runtime := &pluginRuntime{
 		installation: installation,
 		client:       client,
-		api:          api,
 		done:         make(chan struct{}),
+		isolation:    isolation,
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
-	info, err := api.GetInfo(infoCtx, &pluginv1.GetInfoRequest{})
-	if err != nil {
+	if err := runtime.initializeAPI(infoCtx, dispensed); err != nil {
 		runtime.kill()
-		return nil, fmt.Errorf("读取插件信息: %w", err)
+		return nil, err
 	}
-	if info.PluginId != installation.PluginKey || info.PluginVersion != installation.Version ||
-		info.ProtocolVersion != pluginv1.ProtocolVersion || info.TransportApiVersion != pluginv1.TransportAPIVersion {
+	if err := runtime.checkHealth(infoCtx); err != nil {
 		runtime.kill()
-		return nil, errors.New("插件运行时信息与已校验清单不一致")
-	}
-	health, err := api.Health(infoCtx, &pluginv1.HealthRequest{})
-	if err != nil || !health.Healthy {
-		runtime.kill()
-		if err != nil {
-			return nil, fmt.Errorf("插件健康检查失败: %w", err)
-		}
-		return nil, fmt.Errorf("插件不健康: %s", health.Message)
+		return nil, err
 	}
 	return runtime, nil
 }
@@ -106,7 +127,7 @@ func (r *pluginRuntime) validateAndApplyConfig(ctx context.Context, configJSON [
 }
 
 func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, configJSON []byte) ([]byte, error) {
-	validation, err := r.api.ValidateConfig(ctx, &pluginv1.ValidateConfigRequest{ConfigJson: configJSON})
+	validation, err := r.validateConfig(ctx, configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("插件配置校验失败: %w", err)
 	}
@@ -133,21 +154,24 @@ func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, co
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件规范化配置: %w", err)
 	}
-	applied, err := r.api.ApplyConfig(ctx, &pluginv1.ApplyConfigRequest{ConfigJson: configJSON})
+	applied, err := r.applyConfig(ctx, configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("应用插件配置失败: %w", err)
 	}
 	if !applied.Applied {
 		return nil, fmt.Errorf("插件拒绝应用配置: %s", applied.Message)
 	}
+	if r.host != nil {
+		r.host.setConfig(configJSON)
+	}
 	return configJSON, nil
 }
 
 func (r *pluginRuntime) checkHealth(ctx context.Context) error {
-	if r == nil || r.api == nil || r.client == nil || r.client.Exited() {
+	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
 		return errors.New("插件进程已退出")
 	}
-	health, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
+	health, err := r.health(ctx)
 	if err != nil {
 		return fmt.Errorf("插件健康检查失败: %w", err)
 	}
@@ -197,6 +221,9 @@ func (r *pluginRuntime) drain(timeout time.Duration) {
 }
 
 func (r *pluginRuntime) kill() {
+	if r != nil && r.host != nil {
+		r.host.Close()
+	}
 	if r != nil && r.client != nil {
 		r.client.Kill()
 	}

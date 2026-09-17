@@ -30,7 +30,8 @@
       </dl>
 
       <p class="desktop-update__managed-note">
-        启动后及每 5 分钟自动检查桌面与内核稳定通道：持续跟踪 Wei-Shaw/sub2api 上游，扩展兼容内核由 rw0104/sub2api-cost-console 自动构建。发现后自动下载、校验；可一键立即重启启用，也可在下次安全启动时切换。
+        <template v-if="pluginPreview">插件独立测试版：不连接正式桌面或内核更新通道，请使用新的测试安装包升级。请勿导入正式版数据库或配置。</template>
+        <template v-else>启动后及每 5 分钟自动检查桌面与内核稳定通道：持续跟踪 Wei-Shaw/sub2api 上游，扩展兼容内核由 rw0104/sub2api-cost-console 自动构建。发现后自动下载、校验；可一键立即重启启用，也可在下次安全启动时切换。</template>
       </p>
 
       <div v-if="progressStage" class="desktop-update__progress" aria-live="polite">
@@ -212,6 +213,7 @@ interface CoreProgress {
 }
 
 const desktop = isDesktopRuntime()
+const pluginPreview = import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
 const open = ref(false)
 const appVersion = ref('0.0.0')
 const coreVersion = ref('0.0.0')
@@ -306,6 +308,10 @@ async function loadRuntimeVersions() {
 
 async function checkAll(silent = true) {
   if (!desktop || checking.value || isBusy.value) return
+  if (pluginPreview) {
+    await loadRuntimeVersions()
+    return
+  }
   checking.value = true
   errorMessage.value = ''
   const failures: string[] = []

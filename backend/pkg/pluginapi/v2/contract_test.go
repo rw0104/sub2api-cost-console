@@ -78,3 +78,27 @@ func TestPluginInfoRejectsDuplicateCapabilities(t *testing.T) {
 		t.Fatal("重复能力应该被拒绝")
 	}
 }
+
+func TestNormalizeCapabilitiesDoesNotMutateCallerPermissions(t *testing.T) {
+	input := []Capability{{ID: CapabilityRequestPreprocess, Kind: CapabilityKindHook, TimeoutMS: 100, FailureMode: FailureModeClosed,
+		Synchronous: true, Permissions: []Permission{PermissionRequestMutate, PermissionRequestMetadata}}}
+	if _, err := NormalizeCapabilities(input); err != nil {
+		t.Fatal(err)
+	}
+	if input[0].Permissions[0] != PermissionRequestMutate {
+		t.Fatal("normalization mutated the caller's permission slice")
+	}
+}
+
+func TestPatchRejectsHeaderInjectionAndUnmarkedBody(t *testing.T) {
+	for _, patch := range []RequestPatch{
+		{Headers: map[string][]string{"x-test": {"ok\r\nAuthorization: injected"}}},
+		{Headers: map[string][]string{"x-api-key": {"secret"}}},
+		{Headers: map[string][]string{" x-test ": {"invalid"}}},
+		{Headers: map[string][]string{"x-test": {"valid"}}, BodyJSON: []byte(`{}`)},
+	} {
+		if err := patch.Validate(); err == nil {
+			t.Fatalf("invalid patch accepted: %#v", patch)
+		}
+	}
+}

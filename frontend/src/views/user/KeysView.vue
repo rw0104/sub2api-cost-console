@@ -1408,7 +1408,8 @@ const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
 const gatewayBaseUrl = computed(() => {
-  if ('__TAURI_INTERNALS__' in (window as any)) return 'http://127.0.0.1:18765/v1'
+  if ('__TAURI_INTERNALS__' in (window as any)) return import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
+    ? 'http://127.0.0.1:19765/v1' : 'http://127.0.0.1:18765/v1'
   return publicSettings.value?.api_base_url || ''
 })
 const dropdownRef = ref<HTMLElement | null>(null)

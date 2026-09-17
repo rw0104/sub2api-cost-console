@@ -6,14 +6,18 @@
 
 [`v2/`](v2/) 是与现有 v1 传输插件并行的通用能力契约。第一版定义 `request.preprocess.v1` 请求预处理能力，并统一描述能力类型、权限、超时、失败策略、脱敏请求上下文和 `pass`/`modify`/`deny`/`error` 决策。
 
-v2 当前是公共协议和 Go 适配接口，宿主路由仍使用 v1 实现。接入宿主时应先增加能力注册表和 `ExtensionDispatcher`，再逐步把具体业务入口接入 v2，确保已有 v1 插件可以继续运行。
+v2 已接入宿主进程管理、清单校验、能力路由、管理页和 OpenAI HTTP 出站预处理。可运行的 [请求策略示例](examples/preprocess/README.md) 包含运行时、配置 UI 和打包器。具体权限和修改白名单见 [v2 说明](v2/README.md)。
 
 ## 开发文档
+
+从零对接入口：[插件对接指南](../../../docs/PLUGIN_DEVELOPMENT.md)，包含可运行示例、密钥生成、签名打包、管理 API、安装调试、灰度与升级回滚。
 
 - [开发指南](docs/development.md)：从运行时、配置到集成测试的完整流程。
 - [UI Bridge](docs/ui-bridge.md)：沙箱配置 UI 的消息结构和安全要求。
 - [包格式](docs/package-format.md)：清单、文件哈希、签名和版本规则。
 - [安全边界](docs/security.md)：进程权限、敏感数据和故障策略。
+- [v2 容器隔离](docs/sandbox.md)：无网络、只读文件、低权限与资源限制的配置和真实验证。
+- [v2 Host API](docs/host-api.md)：按实例授权的日志、指标、配置、短期秘密读取和受限事件。
 
 ## 实体与运行方式
 
@@ -27,7 +31,7 @@ v2 当前是公共协议和 Go 适配接口，宿主路由仍使用 v1 实现。
 
 ## 初期能力边界
 
-当前只接受 `openai.oauth.outbound_transport.v1`：
+v1 能力 `openai.oauth.outbound_transport.v1`：
 
 - 仅匹配 `platform=openai` 且 `account_type=oauth` 的上游 HTTP 请求。
 - API Key 账号、其他 provider、OAuth 登录与 Token 刷新流程不进入插件。
@@ -59,7 +63,7 @@ ui/assets/...
 - `requires.sub2api`：允许的 Sub2API 语义化版本范围。
 - `requires.recommended_sub2api_version`：建议使用的宿主版本。
 - `requires.tested_sub2api_versions`：发布者实际验证过的宿主版本。
-- `plugin_protocol`、`transport_api`、`ui_bridge`：三个独立协议版本。
+- v1 使用 `plugin_protocol=1`、`transport_api=1`、`ui_bridge=1`；v2 使用 `plugin_protocol=2`、`extension_api=1`、`ui_bridge=1`。
 
 宿主版本超出范围时，插件可以安装并查看，但保持“不兼容”状态且不能启用。版本在范围内但未列入已测试版本时，管理员必须再次确认才能启用。
 

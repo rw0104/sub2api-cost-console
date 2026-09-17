@@ -40,7 +40,7 @@ function capture(command, args, fallback) {
 }
 
 const commit = readFileSync(upstreamCommitFile, 'utf8').trim()
-const extensionVersion = readFileSync(extensionVersionFile, 'utf8').trim()
+const extensionVersion = (process.env.SUB2API_CORE_EXTENSION_VERSION || readFileSync(extensionVersionFile, 'utf8')).trim()
 const capabilities = readFileSync(capabilitiesFile, 'utf8').trim().split(/\s+/).filter(Boolean).join('|')
 const date = capture('git', ['show', '-s', '--format=%cI', commit], 'unknown')
 const ldflags = [
@@ -52,6 +52,8 @@ const ldflags = [
   `-X main.CoreExtensionVersion=${extensionVersion}`,
   `-X main.CoreCapabilities=${capabilities}`,
   '-X main.BuildType=release',
+  ...(process.env.SUB2API_PLUGIN_PREVIEW_BUILD === '1'
+    ? ['-X github.com/Wei-Shaw/sub2api/internal/config.PluginPreviewBuild=1', '-X main.BuildType=plugin-preview'] : []),
 ].join(' ')
 
 mkdirSync(dirname(output), { recursive: true })

@@ -31,6 +31,7 @@
             accept=".s2plugin,application/zip"
             @change="handleFileSelected"
           />
+          <input ref="upgradeFileInput" class="hidden" type="file" accept=".s2plugin,application/zip" @change="handleUpgradeFile" />
           <button
             type="button"
             class="btn btn-primary"
@@ -209,7 +210,38 @@
               >
                 {{ plugin.runtime_message }}
               </p>
+              <p v-if="plugin.runtime_isolation" class="mt-2 text-xs text-gray-500">
+                {{ t("admin.plugins.isolation") }}: {{ t(`admin.plugins.isolation_${plugin.runtime_isolation}`) }}
+              </p>
             </div>
+
+            <section class="space-y-3 md:col-span-2" :aria-label="t('admin.plugins.capabilities')">
+              <h4 class="text-xs font-medium text-gray-500">{{ t("admin.plugins.capabilities") }}</h4>
+              <div v-for="capability in plugin.manifest.capabilities" :key="capability.id" class="border-l-2 border-gray-200 pl-3 text-xs dark:border-dark-600">
+                <p class="break-all font-mono text-gray-800 dark:text-gray-200">{{ capability.id }}</p>
+                <dl class="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+                  <dt class="text-gray-500">{{ t("admin.plugins.scope") }}</dt>
+                  <dd class="text-gray-700 dark:text-gray-300">{{ capability.platform }} / {{ capability.account_type }}</dd>
+                  <template v-if="capability.kind">
+                    <dt class="text-gray-500">{{ t("admin.plugins.permissions") }}</dt>
+                    <dd class="break-words font-mono text-gray-700 dark:text-gray-300">{{ capability.permissions?.join(", ") || "—" }}</dd>
+                    <dt class="text-gray-500">{{ t("admin.plugins.timeout") }}</dt>
+                    <dd class="tabular-nums text-gray-700 dark:text-gray-300">{{ plugin.bindings.find(binding => binding.capability === capability.id)?.timeout_ms || capability.timeout_ms }} ms</dd>
+                    <dt class="text-gray-500">{{ t("admin.plugins.failurePolicy") }}</dt>
+                    <dd class="text-gray-700 dark:text-gray-300">{{ t(`admin.plugins.${capability.failure_mode}`) }}</dd>
+                  </template>
+                </dl>
+                <p v-if="capability.id === 'request.preprocess.v1'" class="mt-2 text-gray-500">{{ t("admin.plugins.preprocessScope") }}</p>
+              </div>
+              <div v-for="status in plugin.capability_runtime || []" :key="status.capability" class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                <span>{{ t("admin.plugins.calls") }}: {{ status.calls }}</span>
+                <span>{{ t("admin.plugins.failures") }}: {{ status.errors }}</span>
+                <span>{{ t("admin.plugins.denied") }}: {{ status.denied }}</span>
+                <span>{{ t("admin.plugins.inFlight") }}: {{ status.in_flight }} / {{ status.concurrency_limit }}</span>
+                <span v-if="status.circuit_open" class="text-amber-700 dark:text-amber-300">{{ t("admin.plugins.circuitOpen") }}</span>
+                <span v-if="status.message" class="w-full break-words text-red-600 dark:text-red-400">{{ status.message }}</span>
+              </div>
+            </section>
 
             <div class="md:col-span-2">
               <label
@@ -225,7 +257,7 @@
               <input
                 :value="rolloutValues[plugin.id] ?? currentRollout(plugin)"
                 type="range"
-                min="1"
+                :min="plugin.manifest.schema_version === 2 ? 0 : 1"
                 max="100"
                 step="1"
                 class="mt-2 w-full accent-primary-600"
@@ -238,6 +270,18 @@
           <div
             class="flex flex-wrap justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-dark-700"
           >
+            <button v-if="plugin.manifest.schema_version === 2" type="button" class="btn btn-secondary btn-sm" :disabled="busyID === plugin.id || !plugin.compatibility.compatible || plugin.state === 'starting'" @click="openRouting(plugin)">
+              {{ t("admin.plugins.routing") }}
+            </button>
+            <button v-if="plugin.manifest.schema_version === 2" type="button" class="btn btn-secondary btn-sm" :disabled="busyID === plugin.id" @click="openHostServices(plugin)">
+              {{ t("admin.plugins.hostServices") }}
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="busyID === plugin.id || plugin.state === 'starting'" @click="selectUpgrade(plugin)">
+              {{ t("admin.plugins.upgrade") }}
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="busyID === plugin.id" @click="openVersions(plugin)">
+              {{ t("admin.plugins.versions") }}
+            </button>
             <button
               type="button"
               class="btn btn-secondary btn-sm"
@@ -327,7 +371,28 @@
         </div>
       </BaseDialog>
 
+      <BaseDialog :show="versionPlugin !== null" :title="t('admin.plugins.versions')" @close="versionPlugin = null">
+        <div class="space-y-4 p-5">
+          <p class="text-sm text-gray-500">{{ t("admin.plugins.rollbackRetention") }}</p>
+          <p v-if="versionsLoading" class="text-sm text-gray-500">{{ t("common.loading") }}</p>
+          <p v-else-if="versionError" class="text-sm text-red-600 dark:text-red-400">{{ versionError }}</p>
+          <p v-else-if="versionHistory.length === 0" class="text-sm text-gray-500">{{ t("admin.plugins.noVersions") }}</p>
+          <div v-for="version in versionHistory" :key="version.id" class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 py-3 dark:border-dark-700">
+            <div class="min-w-0 text-sm">
+              <p class="font-medium">v{{ version.version }}</p>
+              <p class="text-xs text-gray-500">{{ t("admin.plugins.expires") }}: {{ new Date(version.expires_at).toLocaleString() }}</p>
+              <p class="text-xs text-gray-500">{{ version.compatibility.message }}</p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="busyID !== null || !version.compatibility.compatible" @click="rollbackPlugin(version)">
+              {{ t("admin.plugins.rollback") }}
+            </button>
+          </div>
+        </div>
+      </BaseDialog>
+
       <TotpStepUpDialog :controller="pluginStepUp" />
+      <PluginRoutingDialog :plugin="routingPlugin" :busy="routingPlugin !== null && busyID === routingPlugin.id" @close="routingPlugin = null" @save="savePluginRouting" />
+      <PluginHostDialog :plugin="hostPlugin" :stats="hostSnapshot" :grants="hostGrants" :loading="hostLoading" :busy="hostPlugin !== null && busyID === hostPlugin.id" :error="hostError" @close="hostPlugin = null" @refresh="refreshHostServices" @grant="grantHostSecret" @revoke="revokeHostSecret" />
     </div>
   </AppLayout>
 </template>
@@ -338,12 +403,18 @@ import { useI18n } from "vue-i18n";
 import {
   adminAPI,
   type PluginInstallation,
+  type PluginVersion,
+  type PluginRoutingPolicy,
+  type PluginHostSnapshot,
+  type PluginSecretGrant,
   type PluginUISession,
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import Icon from "@/components/icons/Icon.vue";
+import PluginRoutingDialog from "@/components/plugins/PluginRoutingDialog.vue";
+import PluginHostDialog from "@/components/plugins/PluginHostDialog.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import {
   isStepUpBlocked,
@@ -371,6 +442,18 @@ const loading = ref(false);
 const uploading = ref(false);
 const busyID = ref<number | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const upgradeFileInput = ref<HTMLInputElement | null>(null);
+const upgradeTarget = ref<PluginInstallation | null>(null);
+const versionPlugin = ref<PluginInstallation | null>(null);
+const versionHistory = ref<PluginVersion[]>([]);
+const versionsLoading = ref(false);
+const versionError = ref("");
+const routingPlugin = ref<PluginInstallation | null>(null);
+const hostPlugin = ref<PluginInstallation | null>(null);
+const hostSnapshot = ref<PluginHostSnapshot | null>(null);
+const hostGrants = ref<PluginSecretGrant[]>([]);
+const hostLoading = ref(false);
+const hostError = ref("");
 const rolloutValues = ref<Record<number, number>>({});
 const configPlugin = ref<PluginInstallation | null>(null);
 const uiSession = ref<PluginUISession | null>(null);
@@ -427,7 +510,10 @@ async function handleFileSelected(event: Event): Promise<void> {
   }
   uploading.value = true;
   try {
-    await pluginStepUp.run(() => adminAPI.plugins.upload(file));
+    await pluginStepUp.run(async () => {
+      await adminAPI.plugins.authorizeUpload();
+      return adminAPI.plugins.upload(file);
+    });
     appStore.showSuccess(t("admin.plugins.uploadSuccess"));
     await loadPlugins();
   } catch (error: unknown) {
@@ -438,11 +524,151 @@ async function handleFileSelected(event: Event): Promise<void> {
 }
 
 function currentRollout(plugin: PluginInstallation): number {
-  return (
-    plugin.bindings.find(
-      (binding) => binding.capability === "openai.oauth.outbound_transport.v1",
-    )?.rollout_percent || 100
-  );
+  return plugin.bindings[0]?.rollout_percent ?? 100;
+}
+
+function selectUpgrade(plugin: PluginInstallation): void {
+  upgradeTarget.value = plugin;
+  upgradeFileInput.value?.click();
+}
+
+async function savePluginRouting(policies: PluginRoutingPolicy[]): Promise<void> {
+  const plugin = routingPlugin.value;
+  if (!plugin) return;
+  busyID.value = plugin.id;
+  try {
+    await pluginStepUp.run(() => adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at));
+    routingPlugin.value = null;
+    appStore.showSuccess(t("admin.plugins.routingSaved"));
+    await loadPlugins();
+  } catch (error: unknown) {
+    reportSensitiveActionError(error);
+  } finally {
+    busyID.value = null;
+  }
+}
+
+async function openRouting(plugin: PluginInstallation): Promise<void> {
+  routingPlugin.value = plugin;
+  busyID.value = plugin.id;
+  try {
+    const fresh = await adminAPI.plugins.get(plugin.id);
+    if (routingPlugin.value?.id === plugin.id) routingPlugin.value = fresh;
+  } catch (error: unknown) {
+    if (routingPlugin.value?.id === plugin.id) routingPlugin.value = null;
+    appStore.showError(errorMessage(error));
+  } finally {
+    if (busyID.value === plugin.id) busyID.value = null;
+  }
+}
+
+async function openHostServices(plugin: PluginInstallation): Promise<void> {
+  hostPlugin.value = plugin;
+  hostSnapshot.value = null;
+  hostGrants.value = [];
+  await refreshHostServices();
+}
+async function refreshHostServices(): Promise<void> {
+  const plugin = hostPlugin.value;
+  if (!plugin) return;
+  hostLoading.value = true;
+  hostError.value = "";
+  try {
+    const [stats, grants] = await Promise.all([adminAPI.plugins.hostStats(plugin.id), adminAPI.plugins.secretGrants(plugin.id)]);
+    if (hostPlugin.value?.id === plugin.id) {
+      hostSnapshot.value = stats;
+      hostGrants.value = grants;
+    }
+  } catch (error: unknown) {
+    if (hostPlugin.value?.id === plugin.id) hostError.value = errorMessage(error);
+  } finally {
+    if (hostPlugin.value?.id === plugin.id) hostLoading.value = false;
+  }
+}
+async function grantHostSecret(capability: string, alias: string, value: string, ttlSeconds: number): Promise<void> {
+  const plugin = hostPlugin.value;
+  if (!plugin) return;
+  busyID.value = plugin.id;
+  try {
+    await pluginStepUp.run(() => adminAPI.plugins.putSecretGrant(plugin.id, capability, alias, value, ttlSeconds));
+    appStore.showSuccess(t("admin.plugins.secretSaved"));
+    await refreshHostServices();
+  } catch (error: unknown) {
+    reportSensitiveActionError(error);
+  } finally { busyID.value = null; }
+}
+async function revokeHostSecret(grant: PluginSecretGrant): Promise<void> {
+  const plugin = hostPlugin.value;
+  if (!plugin || !window.confirm(t("admin.plugins.confirmRevokeSecret"))) return;
+  busyID.value = plugin.id;
+  try {
+    await pluginStepUp.run(() => adminAPI.plugins.deleteSecretGrant(plugin.id, grant.capability, grant.alias));
+    await refreshHostServices();
+  } catch (error: unknown) {
+    reportSensitiveActionError(error);
+  } finally { busyID.value = null; }
+}
+
+async function handleUpgradeFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  const plugin = upgradeTarget.value;
+  input.value = "";
+  upgradeTarget.value = null;
+  if (!file || !plugin) return;
+  if (!file.name.toLowerCase().endsWith(".s2plugin")) {
+    appStore.showError(t("admin.plugins.fileRequired"));
+    return;
+  }
+  if (!window.confirm(t("admin.plugins.confirmUpgrade"))) return;
+  busyID.value = plugin.id;
+  try {
+    await pluginStepUp.run(async () => {
+      await adminAPI.plugins.authorizeUpload();
+      return adminAPI.plugins.upgrade(plugin.id, file, true);
+    });
+    closeConfiguration();
+    appStore.showSuccess(t("admin.plugins.upgradeSuccess"));
+    await loadPlugins();
+  } catch (error: unknown) {
+    reportSensitiveActionError(error);
+  } finally {
+    busyID.value = null;
+  }
+}
+
+async function openVersions(plugin: PluginInstallation): Promise<void> {
+  versionPlugin.value = plugin;
+  versionHistory.value = [];
+  versionError.value = "";
+  versionsLoading.value = true;
+  try {
+    const history = await adminAPI.plugins.versions(plugin.id);
+    if (versionPlugin.value?.id === plugin.id) versionHistory.value = history;
+  } catch (error: unknown) {
+    if (versionPlugin.value?.id === plugin.id) versionError.value = errorMessage(error);
+  } finally {
+    if (versionPlugin.value?.id === plugin.id) versionsLoading.value = false;
+  }
+}
+
+async function rollbackPlugin(version: PluginVersion): Promise<void> {
+  const plugin = versionPlugin.value;
+  if (!plugin || !window.confirm(t("admin.plugins.confirmRollback", { version: version.version }))) return;
+  const acceptUntested = !version.compatibility.tested;
+  if (acceptUntested && !window.confirm(t("admin.plugins.confirmUntested"))) return;
+  busyID.value = plugin.id;
+  try {
+    await pluginStepUp.run(() => adminAPI.plugins.rollback(plugin.id, version.id, acceptUntested));
+    closeConfiguration();
+    versionPlugin.value = null;
+    appStore.showSuccess(t("admin.plugins.rollbackSuccess"));
+    await loadPlugins();
+  } catch (error: unknown) {
+    reportSensitiveActionError(error);
+  } finally {
+    busyID.value = null;
+  }
 }
 
 function hasEnabledBinding(plugin: PluginInstallation): boolean {
@@ -451,7 +677,8 @@ function hasEnabledBinding(plugin: PluginInstallation): boolean {
 
 function setRollout(id: number, event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
-  rolloutValues.value[id] = Math.min(100, Math.max(1, value));
+  const min = plugins.value.find(plugin => plugin.id === id)?.manifest.schema_version === 2 ? 0 : 1;
+  rolloutValues.value[id] = Math.min(100, Math.max(min, value));
 }
 
 async function enablePlugin(plugin: PluginInstallation): Promise<void> {
@@ -465,7 +692,7 @@ async function enablePlugin(plugin: PluginInstallation): Promise<void> {
     await pluginStepUp.run(() =>
       adminAPI.plugins.enable(
         plugin.id,
-        rolloutValues.value[plugin.id] || 100,
+        rolloutValues.value[plugin.id] ?? 100,
         acceptUntested,
       ),
     );

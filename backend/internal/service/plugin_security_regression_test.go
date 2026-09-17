@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +108,12 @@ func TestPluginReconcileFailsClosedWhenDesiredStateCannotBeRead(t *testing.T) {
 	})
 	require.True(t, handled)
 	require.ErrorContains(t, routeErr, "插件不可用")
+	_, preprocessErr := manager.PreprocessOpenAI(context.Background(), request, &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
+	require.Error(t, preprocessErr, "unknown binding state must not silently bypass API Key preprocessing")
+	manager.repo.(*pluginTokenRepository).listErr = nil
+	require.NoError(t, manager.reconcileOnce(context.Background()))
+	require.False(t, manager.ShouldPreprocess(&Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}),
+		"an authoritative empty binding list clears the unavailable guard")
 }
 
 type normalizingPluginClient struct {
@@ -192,6 +199,24 @@ func TestPluginRequestSentErrorDoesNotFailOver(t *testing.T) {
 	require.Same(t, transportErr, result)
 	var failover *UpstreamFailoverError
 	require.False(t, errors.As(result, &failover))
+}
+
+func TestPluginTerminalPolicyResponseIsCommitted(t *testing.T) {
+	for _, denied := range []bool{true, false} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+		err := &PluginPreprocessError{Denied: denied}
+		result := (&OpenAIGatewayService{}).handleOpenAIUpstreamTransportError(context.Background(), c, nil, err, false)
+		require.Same(t, err, result)
+		require.True(t, IsResponseCommitted(c), "outer gateway must not append SSE to terminal JSON")
+		require.True(t, json.Valid(recorder.Body.Bytes()))
+		if denied {
+			require.Equal(t, 403, recorder.Code)
+		} else {
+			require.Equal(t, 503, recorder.Code)
+		}
+	}
 }
 
 func TestPluginRPCAmbiguityPreventsReplayAfterMetadataDelivery(t *testing.T) {
