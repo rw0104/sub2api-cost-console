@@ -1,6 +1,12 @@
 # Sub2API 本地插件协议
 
-本目录是插件开发者可以依赖的公开契约。`v1/plugin.proto` 和 `v1/runtime.go` 定义进程协议，`v1/manifest.schema.json` 定义包清单，`docs/` 记录开发和发布规范。Provider 私有实现不应放入本目录。
+本目录是插件开发者可以依赖的公开契约。`v1/plugin.proto` 和 `v1/runtime.go` 定义现有传输插件协议，`v1/manifest.schema.json` 定义 v1 包清单；`v2/` 定义通用用户态扩展的能力模型和协议源文件，`docs/` 记录开发和发布规范。Provider 私有实现不应放入本目录。
+
+## 通用扩展契约 v2
+
+[`v2/`](v2/) 是与现有 v1 传输插件并行的通用能力契约。第一版定义 `request.preprocess.v1` 请求预处理能力，并统一描述能力类型、权限、超时、失败策略、脱敏请求上下文和 `pass`/`modify`/`deny`/`error` 决策。
+
+v2 当前是公共协议和 Go 适配接口，宿主路由仍使用 v1 实现。接入宿主时应先增加能力注册表和 `ExtensionDispatcher`，再逐步把具体业务入口接入 v2，确保已有 v1 插件可以继续运行。
 
 ## 开发文档
 
