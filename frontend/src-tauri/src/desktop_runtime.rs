@@ -2556,6 +2556,12 @@ mod tests {
         official
             .capabilities
             .push("account_economics_sampling.v1".into());
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official.capabilities.push("plugin_extensions.v2".into());
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official
+            .capabilities
+            .push("openai.oauth.protection_transport.v1".into());
         assert_eq!(effective_algorithm_version(&official), "1.6.0");
     }
 
