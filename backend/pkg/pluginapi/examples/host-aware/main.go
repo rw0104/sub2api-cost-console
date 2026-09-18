@@ -63,7 +63,7 @@ func (s *sample) Preprocess(ctx context.Context, _ pluginv2.PreprocessRequest) (
 	host := s.host
 	s.mu.RUnlock()
 	if host == nil {
-		return pluginv2.PreprocessResponse{}, errors.New("Host API not attached")
+		return pluginv2.PreprocessResponse{}, errors.New("host API not attached")
 	}
 	capability := pluginv2.CapabilityRequestPreprocess
 	if err := host.Log(ctx, capability, "info", "plugin.ready"); err != nil {

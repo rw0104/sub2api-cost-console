@@ -29,30 +29,6 @@ func hasProtectionCapability(manifest PluginManifest) bool {
 	return false
 }
 
-func applyStoredProtectionConfig(ctx context.Context, runtime *pluginRuntime, raw []byte) error {
-	validation, err := runtime.validateConfig(ctx, raw)
-	if err != nil {
-		return err
-	}
-	if validation == nil || !validation.Valid {
-		return errors.New("恢复保护配置校验失败")
-	}
-	if len(validation.NormalizedConfigJson) > 0 {
-		raw = validation.NormalizedConfigJson
-	}
-	result, err := runtime.applyConfig(ctx, raw)
-	if err != nil {
-		return err
-	}
-	if result == nil || !result.Applied {
-		return errors.New("恢复保护配置失败")
-	}
-	if runtime.host != nil {
-		runtime.host.setConfig(raw)
-	}
-	return nil
-}
-
 // restoreStoredProtectionConfig replays a previously persisted, already
 // validated snapshot. It must bypass revision normalization: the failed
 // candidate may have advanced the child process's in-memory revision, while
