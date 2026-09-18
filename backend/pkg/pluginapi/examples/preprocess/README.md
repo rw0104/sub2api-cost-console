@@ -4,11 +4,13 @@
 
 ## 构建和打包
 
-以下命令在仓库 `backend` 目录执行，需要本项目 Go 工具链。输出文件必须尚不存在，打包器不会覆盖已有包。
+以下命令在完整仓库或公开 SDK 开发包的 `backend` 目录执行，需要 Go 1.27.0。推荐先按[正式版开发指南](../../../../../docs/PLUGIN_DEVELOPMENT.md)生成自己的发布者密钥并签名。输出文件必须尚不存在，打包器不会覆盖已有包。
 
 ```powershell
+$keyPrefix = Join-Path $env:LOCALAPPDATA 'Sub2API-PluginKeys/preprocess-demo'
+go run ./pkg/pluginapi/tools/keygen -out $keyPrefix
 go build -o preprocess.exe ./pkg/pluginapi/examples/preprocess
-go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess.exe -out request-policy.s2plugin
+go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess.exe -signing-key "$keyPrefix.private" -key-id preprocess-demo -out request-policy.s2plugin
 ```
 
 Linux/macOS 将二进制输出名改为 `preprocess`。跨平台编译时，给打包器传相应 `-target`（例如 `linux-amd64`）；Windows 包内运行时保留 `.exe` 后缀。
@@ -17,10 +19,10 @@ Linux/macOS 将二进制输出名改为 `preprocess`。跨平台编译时，给�
 
 ```powershell
 go build -ldflags "-X main.accountType=apikey" -o preprocess-apikey.exe ./pkg/pluginapi/examples/preprocess
-go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-apikey.exe -account-type apikey -out request-policy-apikey.s2plugin
+go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-apikey.exe -account-type apikey -signing-key "$keyPrefix.private" -key-id preprocess-demo -out request-policy-apikey.s2plugin
 ```
 
-默认生成未签名开发包。仅在本地测试宿主配置 `plugins.allow_unsigned: true` 时安装。正式使用传入 `-signing-key`（Base64 Ed25519 私钥文件）和 `-key-id`（宿主配置中的可信发布者 ID），公钥放入 `plugins.trusted_publishers`。私钥不进入插件包。
+以上命令生成签名包。将 `.public` 文件交给部署管理员，按开发指南配置 `plugins.trusted_publishers`，私钥自己保管且不进入插件包。已有密钥时跳过 keygen。省略 `-signing-key` 和 `-key-id` 才会生成未签名调试包，此类包仅能在显式允许未签名插件的独立开发环境安装。
 
 安装后在“插件管理”查看权限、打开“配置”、保存并测试，再按账号灰度启用。示例清单未声明已测试发布版本，启用需要现有的未验证版本确认。
 
@@ -44,7 +46,7 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-apikey.exe -a
 go test ./internal/service -run '^TestPluginExtensionProcessIntegration$' -count=1
 ```
 
-测试会构建插件、生成临时签名包、验签安装、启动独立进程，向本机 HTTP 测试上游发送改写请求，再验证拒绝、超时和进程退出。无需提供外部插件、上游密钥或数据库；`go test -short` 会跳过此进程构建测试。
+此项需要完整宿主仓库，精简 SDK 开发包不包含 `internal/service`。测试会构建插件、生成临时签名包、验签安装、启动独立进程，向本机 HTTP 测试上游发送改写请求，再验证拒绝、超时和进程退出。无需提供外部插件、上游密钥或数据库；`go test -short` 会跳过此进程构建测试。
 
 完整能力边界及失败语义见 [v2 协议说明](../../v2/README.md)。
 
@@ -54,7 +56,7 @@ go test ./internal/service -run '^TestPluginExtensionProcessIntegration$' -count
 
 ```powershell
 go build -ldflags "-X main.pluginVersion=0.1.1" -o preprocess-0.1.1.exe ./pkg/pluginapi/examples/preprocess
-go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-0.1.1.exe -version 0.1.1 -out request-policy-0.1.1.s2plugin
+go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-0.1.1.exe -version 0.1.1 -signing-key "$keyPrefix.private" -key-id preprocess-demo -out request-policy-0.1.1.s2plugin
 ```
 
 在管理页点击已安装插件的“升级版本”，选择新包。配置和能力契约验证通过后切换；“版本记录”可恢复旧包及其配置。测试包签名规则与首次安装一致。

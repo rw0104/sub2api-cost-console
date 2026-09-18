@@ -43,7 +43,8 @@ async function save() {
 document.getElementById('save').addEventListener('click', () => run(save));
 document.getElementById('test').addEventListener('click', () => run(async () => {
   await save();
-  await send('config.test');
+  const response = await send('config.test');
+  if (!response.result?.success) throw new Error(response.result?.message || 'Configuration test failed');
   statusElement.textContent = 'Configuration test passed';
 }));
 if (token && parent !== window) {

@@ -27,4 +27,4 @@
 
 保护策略保存时宿主读取已持久化配置作为回滚依据，插件验证并归一化新配置后应用；数据库按安装 ID、二进制 SHA-256、原配置密文执行比较更新。竞争或写入失败恢复已持久化快照。持久化快照的重放调用 Apply，不重跑策略命令或递增修订号。
 
-开发包与复现说明位于工作区 `plugins/account-protection/README.md`。该目录按已有 `.gitignore` 作为独立插件保存；宿主源码不包含插件策略实现。
+开发者使用公开 `v2/transport.go` 的 `TransportHandler` 实现 `Forward`，并复用 `v1` 的请求/响应帧类型。宿主不分发私有保护策略实现；SDK 与签名打包步骤见[插件开发指南](../../../../docs/PLUGIN_DEVELOPMENT.md)。保护传输实现需要额外验证取消、SSE、凭据透传、证书校验及 `request_sent`，不能直接把预处理示例的业务函数改名为 `Forward`。

@@ -1,10 +1,20 @@
-# 插件对接指南
+# 插件开发指南 · 正式版 v0.2.39
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应插件扩展支线。当前桌面独立测试版 **0.2.39-plugin.3**，内核基线 **0.2.5**，扩展构建 **1.2.0-plugin.1**。旧正式版即使内核版本相同，也不代表已包含未合并的 v2 实现。已注册 `request.preprocess.v1` 和 `openai.oauth.protection_transport.v1`；阶段状态及剩余限制见 [近期开发日志](2026-09-18_plugin-development-phase-report.md)。
+> 本指南对应已发布的正式桌面 **0.2.39**、兼容内核 **0.2.5**、扩展 **1.2.0**。已注册 `request.preprocess.v1` 和 `openai.oauth.protection_transport.v1`，兼容 v1 传输。旧桌面版或官方原版内核即使显示 0.2.5，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
 >
 > 普通进程不是 OS 沙箱；签名证明来源，不保证代码安全。process 模式只安装可信插件，需要文件、网络和资源限制时启用 v2 container 模式。不要在正式数据库上试验新插件。
+
+开发者可自行实现、签名和分发插件，无需项目维护者代开发或代签。部署管理员一次性信任该开发者的公钥后，即可安装其签名包。当前正式版尚无图形化发布者授权入口，公钥配置步骤见第 3 节。
+
+## 0. 获取开发资料
+
+- 推荐下载 [v0.2.39 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.39/sub2api-plugin-devkit-v0.2.39.zip)，解压后先读根目录 `START_HERE.md`。
+- 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
+- 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.2.39` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
 
@@ -19,9 +29,9 @@
 
 ## 2. 构建签名示例包
 
-克隆仓库并切到包含本指南的支线，需要 Git 和 `backend/go.mod` 指定的 Go 工具链（本版 Go 1.27.0）。生成代码已提交，仅改 proto 时需要 protoc。示例 UI 是静态 HTML/JS，无需 Node 构建。
+以下命令既可在解压的开发包中执行，也可在本仓库执行。生成代码已提供，仅改 proto 时需要 protoc。示例 UI 是静态 HTML/JS，无需 Node 构建。
 
-以下 PowerShell 命令从仓库根目录执行，得到 **0.1.0 / Windows x64 / API Key** 示例：
+以下 PowerShell 命令从开发包或仓库根目录执行，得到 **0.1.0 / Windows x64 / API Key** 示例；密钥保存在项目目录外：
 
 ```powershell
 cd backend
@@ -51,9 +61,9 @@ Write-Output "  trusted_publishers:"
 Write-Output "    publisher-demo: '$publicKey'"
 ```
 
-不要覆盖整个配置文件或创建重复 YAML 键。桌面测试版配置在 `%APPDATA%\com.sub2api.plugin-preview\backend\config.yaml`，不要编辑正式版 `com.sub2api.cost-console` 目录。修改宿主配置后，从测试版托盘退出并重启。
+不要覆盖整个配置文件或创建重复 YAML 键。Windows 正式桌面的受管内核配置在 `%APPDATA%\com.sub2api.cost-console\backend\config.yaml`；如果连接的是外部宿主，应修改该宿主实际使用的配置文件。修改后退出并重启对应宿主。`.public` 文件中的公钥与清单签名 `key_id` 必须对应，插件包携带公钥并不会自动获得信任。
 
-1. 首次打开独立测试版，启动 Docker Desktop 后选择快速安装，创建独立管理员。测试版使用 PostgreSQL `25432`、Valkey `26379`、数据库 `sub2api_plugin_preview`，不能复用正式库。
+1. 安装正式桌面 v0.2.39，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
@@ -76,7 +86,7 @@ Write-Output "    publisher-demo: '$publicKey'"
 | `TestConfig` | 有界诊断，不泄漏秘密或请求正文 |
 | `Preprocess` | 遵守 context 截止时间和取消，返回明确决策及受限补丁 |
 
-SDK 尚未独立发布为可 `go get` 的版本，且此 fork 保留原上游 module 名。不要把本支线提交号传给 `go get github.com/Wei-Shaw/sub2api`。独立项目请固定一份本仓库源码，使用本地 replace。下面从宿主仓库根目录执行，在相邻目录创建一个新的插件工程（该目录应尚不存在）：
+SDK 以开发包中的源码快照提供，尚未发布为可直接 `go get` 的独立模块；本 fork 保留原上游 module 名。不要把本 fork 提交号传给 `go get github.com/Wei-Shaw/sub2api`。下面从开发包或宿主仓库根目录执行，在相邻目录创建独立工程（目录应尚不存在）：
 
 ```powershell
 $sdkBackend = (Resolve-Path backend).Path
@@ -90,7 +100,11 @@ go mod tidy
 go build -o preprocess.exe .
 ```
 
-CI 中也检出同一宿主提交，并更新 replace 到该目录；不要依赖开发机绝对路径。配置 UI、清单和打包器可继续复用宿主示例，通过打包器的 `-source` 指向自己的清单/UI 目录。其他语言除实现 [proto](../backend/pkg/pluginapi/v2/extension.proto) 外，还要兼容 go-plugin 握手、mTLS 和 broker，不是仅暴露普通 gRPC 服务。
+该段独立工程命令首次 `go mod tidy` 可能需要下载依赖；开发包内部的示例可直接使用随包 vendor。对外分享自己的工程时，应随项目固定 SDK 并使用相对 replace，或在 CI 中检出同一 SDK 提交，不能留下开发机绝对路径。
+
+开发自己的 ID（例如 `com.example.request-policy`）时，同步修改 `GetInfo.PluginID` 和清单 `id`；版本、能力、权限与作用域也必须一致。配置 UI、清单和打包器可继续复用公开示例，通过打包器的 `-source` 指向自己的清单/UI 目录。业务钩子的输入、输出类型可直接从示例 `Preprocess` 开始修改；先支持一项允许的行为，再添加配置和测试。
+
+其他语言除实现 [proto](../backend/pkg/pluginapi/v2/extension.proto) 外，还要兼容 go-plugin 握手、mTLS 和 broker，不是仅暴露普通 gRPC 服务。
 
 ### 权限与修改白名单
 
@@ -185,14 +199,19 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary dist/plugin-demo/preproc
 | `GET /:id/versions`、`POST /:id/rollback` | 历史；回滚传 `version_id`、`accept_untested` |
 | `GET /:id/host`、`GET/PUT/DELETE /:id/secret-grants` | 遥测、秘密授权/撤销 |
 
-字段以 [API 类型](../frontend/src/api/admin/plugins.ts) 和 [handler](../backend/internal/handler/admin/plugin_handler.go) 为准。
+字段以 [v0.2.39 API 类型](https://github.com/rw0104/sub2api-cost-console/blob/v0.2.39/frontend/src/api/admin/plugins.ts) 和 [handler](https://github.com/rw0104/sub2api-cost-console/blob/v0.2.39/backend/internal/handler/admin/plugin_handler.go) 为准。这些宿主实现不包含在精简开发包内。
 
 ## 10. 验收和排错
 
-在 `backend` 运行；最后一项需要 Docker，会自动创建并清理独立测试数据库：
+开发包中先在 `backend` 运行 SDK 测试：
 
 ```powershell
 go test ./pkg/pluginapi/... -count=1
+```
+
+以下集成检查需要检出完整宿主仓库，不能直接在精简开发包执行。最后一项需要 Docker，会自动创建并清理独立测试数据库：
+
+```powershell
 go test ./internal/service -run '^TestPluginExtensionProcessIntegration$' -count=1
 go test ./internal/service -run '^TestPluginV1ProcessCompatibility$' -count=1
 go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 -v -timeout=8m
@@ -209,7 +228,13 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | 503 extension_error | fail_closed、超时、并发、熔断、进程或绑定状态不可用 |
 | 未修改请求 | 检查作用域交集、优先级、灰度、权限和白名单 |
 | 容器启动失败 | 本地镜像、Docker Linux Engine、Linux 静态二进制与架构 |
-| 测试版拒绝数据库 | 仅本机 25432 的 sub2api_plugin_preview 及 26379 缓存，不复制正式配置 |
+| 找不到 Host API/能力 | 检查正式桌面 0.2.39、扩展 1.2.0，以及实际连接的宿主身份，不能只看内核 0.2.5 |
+
+### 向别人分发自己的插件
+
+交付 `.s2plugin`、发布者 `.public` 公钥、对应 `key_id`、SHA-256、兼容宿主版本、权限说明及变更记录。接收者使用正式主程序；管理员核实发布者后按第 3 节配置信任，然后上传、配置并按范围启用。无需接收者安装 Go、编译源码或安装测试版。
+
+不要沿用示例 ID 发布多个不同插件；不要把私钥放入包、SDK、源码仓库或宿主配置。升级沿用原插件 ID 和发布者；需要轮换发布者密钥时，应先让部署管理员配置新公钥。
 
 ### v1 维护说明
 
@@ -221,6 +246,6 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | --- | --- | --- |
 | `TestPluginExtensionProcessIntegration` | 签名、子进程、双实例、升级回滚可运行 | `backend/internal/service/plugin_extension_integration_test.go` |
 | `TestPluginProductionE2E`、`frontend/scripts/plugin-e2e.py` | UI/数据库/进程/网关闭环，拒绝不发上游不扣费 | `backend/cmd/server/plugin_e2e_test.go` |
-| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [验收记录](2026-09-17_plugin-system-extension-development-report.md) |
+| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [正式发布验收](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/2026-09-18_development-desktop-v0.2.39-release-report.md) |
 
 调用路径：核心认证/账号选择 → 准备 HTTP → 能力路由 → v2 子进程 → 宿主验证决策/补丁 → v1 或内置 HTTP → 核心响应/用量/计费。插件不能跳过核心直接改账本。

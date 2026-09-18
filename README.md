@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/rw0104/sub2api-cost-console?label=最新版本)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 [![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [插件开发](docs/PLUGIN_DEVELOPMENT.md) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
+[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [插件与开发者](#plugin-development) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
 
 </div>
 
@@ -20,6 +20,8 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
+**v0.2.39 已正式开放插件宿主能力。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.2.39 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.39) 下载配套 SDK 与示例。
+
 ## 你可以用它做什么
 
 - **每天看一眼运行情况。** 查看可用账号、请求量、调用成本、计费产出和延迟，发现异常后继续查看具体账号或请求。
@@ -28,6 +30,7 @@
 - **了解一个号池的投入与使用情况。** 看看哪些账号已经产生调用、当前采购费率是多少、历史损失有没有被计入。
 - **检查模型调用经过了哪里。** 同时查看你请求的模型、网关发往上游的模型，以及上游响应中声明的模型。
 - **少重复配置几次客户端。** 选择 API Key 和模型后生成接入配置，并从桌面启动已经安装的 Codex CLI、Claude Code 等工具。
+- **按需要扩展请求处理。** 安装第三方插件，设置独立配置、账号/用户/分组范围和灰度；不再使用时可以停用或卸载。
 
 
 无论是自己用几个账号，还是帮小团队维护一批上游，都可以从最简单的“接入一个账号、跑通一次调用”开始，再逐步用到成本和运维功能。
@@ -222,6 +225,26 @@
 上游接入包含 OpenAI / Codex、Claude、Gemini、Grok 等平台，也能通过相应兼容接口接入 DeepSeek、Kimi、智谱、MiniMax 等服务。具体可用模型、图片能力、授权方式和额度信息，取决于你的账号、分组配置以及服务提供方。
 
 部分管理入口需要管理员权限或在设置中启用。日常自用时，可以先完成账号、分组和 API Key 的配置，其余功能按需要使用。
+
+<a id="plugin-development"></a>
+
+## 插件与开发者
+
+从 **v0.2.39 / 内核 0.2.5 / 扩展 1.2.0** 开始，正式版提供插件管理和 v2 SDK。开发插件不需要修改或重新编译桌面程序；插件的静态配置页通过宿主 UI Bridge 加载。
+
+| 你想做什么 | 从这里开始 |
+| --- | --- |
+| 开发第一个插件 | [插件开发指南](docs/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装、调试和分发 |
+| 下载可以直接编译的 SDK 与示例 | [v0.2.39 开发包 ZIP](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.39/sub2api-plugin-devkit-v0.2.39.zip)：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
+| 限制生成参数或执行请求准入 | [v2 请求预处理示例](backend/pkg/pluginapi/examples/preprocess/README.md) |
+| 自行实现 OpenAI OAuth HTTP/TLS 传输 | [v2 保护传输接口](backend/pkg/pluginapi/docs/protection-transport.md) |
+| 添加配置界面或调用宿主服务 | [UI Bridge](backend/pkg/pluginapi/docs/ui-bridge.md)、[Host API](backend/pkg/pluginapi/docs/host-api.md) |
+
+开发者的流程是：**下载开发包 → 修改公开示例 → 编译自己的二进制 → 用自己的发布者密钥签名 → 分发 `.s2plugin` 和公钥**。不需要项目维护者代开发或代签名。当前版本由部署管理员在 `plugins.trusted_publishers` 中信任发布者公钥，同一发布者配置一次即可；尚未提供图形化的发布者授权入口。
+
+管理员在「系统设置」中显示「插件管理」菜单后，可以上传 `.s2plugin`，打开配置页，再选择路由范围并启用。安装后默认停用；**停用保留安装和配置，卸载移除该插件及其配置/历史**。升级支持保留最近 5 个版本快照，回滚窗口为 24 小时。
+
+目前公开能力包括 v2 请求预处理、v2 OpenAI OAuth 保护传输以及兼容的 v1 OAuth 传输。新 Provider、任意响应改写、后台任务尚未开放；同一能力的请求只选中首个匹配插件。具体权限、修改白名单、容器边界和故障行为见开发指南。
 
 ## 第一次看成本面板，先分清这几笔钱
 

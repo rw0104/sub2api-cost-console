@@ -121,6 +121,10 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-release.mjs --validate-notes-only
 
+      - name: Build and verify public plugin developer kit
+        working-directory: frontend
+        run: python scripts/prepare-plugin-devkit.py
+
       - name: Build and publish Tauri installer
         uses: tauri-apps/tauri-action@v1
         env:
@@ -139,6 +143,12 @@ jobs:
             - 包含 Tauri 签名更新清单、安装包签名与 SHA-256 校验文件。
 
             ${{ steps.release-meta.outputs.release_notes }}
+
+            ## 插件开发资料
+
+            - [插件开发指南](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装与分发。
+            - [SDK 与示例开发包](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/sub2api-plugin-devkit-v${{ steps.release-meta.outputs.version }}.zip)：公开 SDK、proto、Schema、示例 UI、打包器与依赖源码。
+            - [开发资料 SHA-256](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/PLUGIN_DEVKIT_SHA256SUMS.txt)。
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
@@ -161,6 +171,17 @@ jobs:
             (Resolve-Path release-assets/latest.json) `
             (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) `
             (Resolve-Path DESKTOP_RELEASE_NOTES.md) --clobber
+
+      - name: Publish plugin development guide and source kit
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.release-meta.outputs.tag }}" `
+            (Resolve-Path release-assets/plugin-devkit/PLUGIN_DEVELOPMENT.md) `
+            (Resolve-Path "release-assets/plugin-devkit/sub2api-plugin-devkit-v${{ steps.release-meta.outputs.version }}.zip") `
+            (Resolve-Path release-assets/plugin-devkit/PLUGIN_DEVKIT_SHA256SUMS.txt) --clobber
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7

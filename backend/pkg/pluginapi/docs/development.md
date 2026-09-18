@@ -1,8 +1,8 @@
-# 插件开发指南
+# v1 OAuth 传输插件开发指南
 
 ## 稳定边界
 
-当前宿主只支持 `openai.oauth.outbound_transport.v1`。插件负责建立实际上游 HTTP/TLS 连接，Sub2API 负责账号选择、OAuth Token 生命周期、下游协议、响应解析、SSE、错误映射、用量统计和计费。
+本页只描述 v1 `openai.oauth.outbound_transport.v1`。正式桌面 v0.2.39 / 扩展 1.2.0 同时提供 v2 请求预处理和保护传输；新开发者请先阅读[插件开发指南](../../../../docs/PLUGIN_DEVELOPMENT.md)。v1 插件负责建立实际上游 HTTP/TLS 连接，Sub2API 负责账号选择、OAuth Token 生命周期、下游协议、响应解析、SSE、错误映射、用量统计和计费。
 
 插件不应修改 API Key 路径，也不应自行刷新或持久化 OAuth Token。
 
