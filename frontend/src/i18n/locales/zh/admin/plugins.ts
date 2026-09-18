@@ -1,6 +1,17 @@
 export default {
   plugins: {
     title: '插件管理',
+    managementHelp: '安装与运行说明',
+    search: '搜索插件名称、ID 或发布者',
+    filterState: '筛选插件状态',
+    allStates: '全部状态',
+    pluginCount: '显示 {shown} / {total} 个插件',
+    noMatches: '没有匹配的插件，请调整搜索或筛选条件。',
+    showDetails: '详情与管理',
+    collapseDetails: '收起详情',
+    retryUI: '重新加载配置页',
+    uiReadyTimeout: '配置页面未响应。请重试；如果仍然无法显示，请检查插件资源与宿主版本是否匹配。',
+    uiLoadFailed: '配置页面加载失败，请重试。',
     description: '安装和管理独立进程插件，查看能力、权限和请求作用域。',
     upload: '安装插件',
     upgrade: '升级版本',

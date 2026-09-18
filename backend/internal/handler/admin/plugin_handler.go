@@ -398,11 +398,14 @@ func (h *PluginHandler) ServeUIAsset(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("X-Frame-Options", "SAMEORIGIN")
+	// Desktop UI is served from Tauri's asset origin, separately from the
+	// loopback backend. X-Frame-Options cannot express these exact ancestors;
+	// CSP below allows only our web origin and the known desktop origins.
+	c.Writer.Header().Del("X-Frame-Options")
 	// sandbox iframe 没有 allow-same-origin，会以不透明来源加载自己的 CSS/JS。
 	// 资源 URL 由短时随机能力 Token 保护，Bridge Token 只存在于 fragment 中。
 	c.Header("Cross-Origin-Resource-Policy", "cross-origin")
-	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; navigate-to 'none'")
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' tauri://localhost http://tauri.localhost https://tauri.localhost")
 	c.Data(http.StatusOK, contentType, data)
 }
 

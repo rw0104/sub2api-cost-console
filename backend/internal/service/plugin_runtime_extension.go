@@ -56,6 +56,15 @@ func (r *pluginRuntime) initializeAPI(ctx context.Context, dispensed any) error 
 			return errors.New("插件能力或权限与已校验清单不一致")
 		}
 		r.extension = api
+		for _, capability := range actual {
+			if capability.ID == pluginv2.CapabilityProtectionTransport {
+				transport, ok := dispensed.(pluginv2.TransportClient)
+				if !ok {
+					return errors.New("插件未实现保护传输客户端")
+				}
+				r.transport = transport
+			}
+		}
 		return nil
 	}
 	api, ok := dispensed.(pluginv1.TransportPluginClient)

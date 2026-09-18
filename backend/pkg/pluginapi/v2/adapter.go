@@ -88,6 +88,7 @@ func NewClient(conn grpc.ClientConnInterface) ExtensionHandler {
 
 type handlerClient struct {
 	api          wire.ExtensionPluginClient
+	transport    wire.ProtectionTransportClient
 	broker       *hcplugin.GRPCBroker
 	hostAttached atomic.Bool
 }

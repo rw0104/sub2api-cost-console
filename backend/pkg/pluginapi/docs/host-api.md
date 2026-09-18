@@ -4,6 +4,8 @@ Host API 通过 go-plugin multiplex broker 复用已认证的进程连接。在�
 
 ## 插件如何接入
 
+账号保护插件使用新增的 `openai.oauth.protection_transport.v1` 能力，详见[保护传输接口](protection-transport.md)。该能力显式授权当前出站请求的凭据转发和网络访问；普通 `request.preprocess.v1` 的脱敏边界不变。它只能在 process 模式运行，无网络容器不会自动放开网络。
+
 插件在对应能力的 `permissions` 中声明需要的权限，并实现 `pluginv2.HostAware.SetHost(HostClient)`。宿主验证运行时能力与签名清单一致后连接 Host API。配置尚未成功 Apply 时，读取配置返回 FailedPrecondition。
 
 完整可执行代码位于 [host-aware 示例](../examples/host-aware/main.go)。它依次发布固定日志代码、累计请求指标、读取已应用配置、按别名读取秘密、发布事件；从不将秘密值放入响应或日志。

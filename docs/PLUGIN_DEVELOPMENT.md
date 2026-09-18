@@ -2,7 +2,7 @@
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应插件扩展支线。桌面独立测试版 **0.2.39-plugin.1**，内核基线 **0.2.5**，扩展构建 **1.2.0-plugin.1**。旧正式版即使内核版本相同，也不代表已包含未合并的 v2 实现。当前实际注册的 v2 能力只有 `request.preprocess.v1`。
+> 本指南对应插件扩展支线。当前桌面独立测试版 **0.2.39-plugin.3**，内核基线 **0.2.5**，扩展构建 **1.2.0-plugin.1**。旧正式版即使内核版本相同，也不代表已包含未合并的 v2 实现。已注册 `request.preprocess.v1` 和 `openai.oauth.protection_transport.v1`；阶段状态及剩余限制见 [近期开发日志](2026-09-18_plugin-development-phase-report.md)。
 >
 > 普通进程不是 OS 沙箱；签名证明来源，不保证代码安全。process 模式只安装可信插件，需要文件、网络和资源限制时启用 v2 container 模式。不要在正式数据库上试验新插件。
 
@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | 请求准入、限制生成参数、调整 instructions | v2 `request.preprocess.v1` | OpenAI OAuth / API Key；Responses、Responses Compact、Chat Completions |
 | 自行实现 HTTP/TLS 上游传输 | v1 `openai.oauth.outbound_transport.v1` | OpenAI OAuth；插件负责网络传输 |
+| 身份/TLS 保护传输并接入 Host API | v2 `openai.oauth.protection_transport.v1` | OpenAI OAuth，显式授权当前请求凭据/网络/比较基线，process 模式；见 [保护传输接口](../backend/pkg/pluginapi/docs/protection-transport.md) |
 | 新 Provider、响应处理、业务事件订阅、后台任务 | 后续能力 | 尚未注册，单改清单不会增加功能 |
 
 新开发者优先从 v2 开始。Hook 在**账号选择和请求准备完成后、发出 HTTP 前**执行。认证、账号选择、模型、计费和重试决策仍由核心负责。公开 SDK 在 [`backend/pkg/pluginapi`](../backend/pkg/pluginapi/README.md)，插件不依赖宿主内部 Repository 或数据库连接。
@@ -101,7 +102,7 @@ CI 中也检出同一宿主提交，并更新 replace 到该目录；不要依�
 
 请求体允许修改：`temperature`、`top_p`、`max_tokens`、`max_output_tokens`、`presence_penalty`、`frequency_penalty`、`seed`、`stop`、`instructions`。设置 `BodyChanged=true`，提供完整新 JSON 对象，保留其余字段。宿主检查类型、范围、大小，非法补丁不会部分生效。
 
-禁止修改 `model`、`stream`、`service_tier`、messages/input、tools、身份、URL 或 HTTP 方法。上下文不提供 Authorization、Cookie、代理密码、数据库连接或宿主环境变量。用户/分组来自认证，不采信客户端伪造值。
+`request.preprocess.v1` 禁止修改 `model`、`stream`、`service_tier`、messages/input、tools、身份、URL 或 HTTP 方法。该预处理上下文不提供 Authorization、Cookie、代理密码、数据库连接或宿主环境变量。用户/分组来自认证，不采信客户端伪造值。保护传输的授权边界单独定义，不扩宽这里的预处理白名单。
 
 ### 决策与故障
 

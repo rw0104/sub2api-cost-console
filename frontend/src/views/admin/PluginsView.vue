@@ -58,11 +58,21 @@
         {{ t("admin.plugins.uploadHint") }}
       </p>
 
-      <div
-        class="border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200"
-      >
-        <p>{{ t("admin.plugins.runtimeNotice") }}</p>
+      <details class="text-xs text-gray-500 dark:text-gray-400">
+        <summary class="w-fit cursor-pointer font-medium">{{ t("admin.plugins.managementHelp") }}</summary>
+        <p class="mt-2">{{ t("admin.plugins.runtimeNotice") }}</p>
         <p class="mt-1">{{ t("admin.plugins.menuNotice") }}</p>
+      </details>
+
+      <div v-if="plugins.length" class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-gray-500" role="status">{{ t("admin.plugins.pluginCount", { shown: filteredPlugins.length, total: plugins.length }) }}</p>
+        <div class="flex flex-wrap gap-2">
+          <input v-model="searchQuery" type="search" class="input w-60 max-w-full" :placeholder="t('admin.plugins.search')" :aria-label="t('admin.plugins.search')" />
+          <select v-model="stateFilter" class="input w-36" :aria-label="t('admin.plugins.filterState')">
+            <option value="all">{{ t('admin.plugins.allStates') }}</option>
+            <option v-for="state in ['enabled', 'disabled', 'starting', 'error', 'incompatible']" :key="state" :value="state">{{ t(`admin.plugins.${state}`) }}</option>
+          </select>
+        </div>
       </div>
 
       <div
@@ -85,16 +95,18 @@
         </p>
       </div>
 
-      <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div v-else-if="filteredPlugins.length === 0" class="py-12 text-center text-sm text-gray-500">{{ t('admin.plugins.noMatches') }}</div>
+      <div v-else class="divide-y divide-gray-200 overflow-hidden rounded-xl border border-gray-200 bg-white dark:divide-dark-700 dark:border-dark-700 dark:bg-dark-800">
         <article
-          v-for="plugin in plugins"
+          v-for="plugin in filteredPlugins"
           :key="plugin.id"
-          class="card overflow-hidden border border-gray-200 dark:border-dark-700"
+          class="min-w-0"
+          :data-plugin-id="plugin.id"
         >
           <div
-            class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 p-5 dark:border-dark-700"
+            class="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
           >
-            <div class="min-w-0">
+            <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <h3
                   class="truncate text-base font-semibold text-gray-900 dark:text-white"
@@ -110,18 +122,23 @@
                 >
                   {{ t(`admin.plugins.${plugin.state}`) }}
                 </span>
+                <span v-if="!plugin.compatibility.compatible" class="text-xs text-red-600">{{ t('admin.plugins.incompatible') }}</span>
+                <span v-else-if="plugin.runtime_healthy" class="text-xs text-emerald-700 dark:text-emerald-300">{{ t('admin.plugins.healthy') }}</span>
               </div>
-              <p class="mt-1 text-xs text-gray-500">
+              <p class="mt-1 truncate text-xs text-gray-500" :title="plugin.plugin_key">
                 {{ plugin.plugin_key
                 }}<span v-if="plugin.author"> · {{ plugin.author }}</span>
               </p>
               <p
                 v-if="plugin.description"
-                class="mt-2 text-sm text-gray-600 dark:text-gray-300"
+                class="mt-1 truncate text-sm text-gray-600 dark:text-gray-300"
+                :title="plugin.description"
               >
                 {{ plugin.description }}
               </p>
+              <p v-if="plugin.last_error" class="mt-1 line-clamp-2 text-xs text-red-600 dark:text-red-400">{{ plugin.last_error }}</p>
             </div>
+            <div class="flex flex-shrink-0 flex-wrap items-center gap-2">
             <button
               type="button"
               class="btn btn-secondary btn-sm"
@@ -130,8 +147,19 @@
               <Icon name="cog" size="sm" />
               {{ t("admin.plugins.configure") }}
             </button>
+            <button v-if="hasEnabledBinding(plugin)" type="button" class="btn btn-secondary btn-sm" :disabled="busyID === plugin.id" @click="disablePlugin(plugin)">
+              <Icon name="ban" size="sm" />{{ t('admin.plugins.disable') }}
+            </button>
+            <button v-else type="button" class="btn btn-primary btn-sm" :disabled="busyID === plugin.id || plugin.state === 'starting' || !plugin.compatibility.compatible" @click="enablePlugin(plugin)">
+              <Icon name="play" size="sm" />{{ t('admin.plugins.enable') }}
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" :aria-expanded="expandedPlugins.has(plugin.id)" :aria-controls="`plugin-details-${plugin.id}`" @click="toggleDetails(plugin.id)">
+              {{ expandedPlugins.has(plugin.id) ? t('admin.plugins.collapseDetails') : t('admin.plugins.showDetails') }}
+            </button>
+            </div>
           </div>
 
+          <div v-show="expandedPlugins.has(plugin.id)" :id="`plugin-details-${plugin.id}`" class="border-t border-gray-100 bg-gray-50/60 dark:border-dark-700 dark:bg-dark-900/30">
           <div class="grid grid-cols-1 gap-x-6 gap-y-4 p-5 md:grid-cols-2">
             <div>
               <p class="text-xs font-medium uppercase text-gray-500">
@@ -292,30 +320,6 @@
               {{ t("admin.plugins.test") }}
             </button>
             <button
-              v-if="hasEnabledBinding(plugin)"
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="busyID === plugin.id"
-              @click="disablePlugin(plugin)"
-            >
-              <Icon name="ban" size="sm" />
-              {{ t("admin.plugins.disable") }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="btn btn-primary btn-sm"
-              :disabled="
-                busyID === plugin.id ||
-                plugin.state === 'starting' ||
-                !plugin.compatibility.compatible
-              "
-              @click="enablePlugin(plugin)"
-            >
-              <Icon name="play" size="sm" />
-              {{ t("admin.plugins.enable") }}
-            </button>
-            <button
               type="button"
               class="btn btn-danger btn-sm"
               :disabled="busyID === plugin.id || hasEnabledBinding(plugin)"
@@ -325,6 +329,7 @@
               {{ t("admin.plugins.uninstall") }}
             </button>
           </div>
+          </div>
         </article>
       </div>
 
@@ -333,28 +338,31 @@
         :title="
           t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
         "
-        width="full"
+        width="wide"
         @close="closeConfiguration"
       >
         <div
-          class="relative min-h-[520px] overflow-hidden bg-gray-50 dark:bg-dark-900"
-          :style="{ height: `${iframeHeight}px` }"
+          class="relative min-h-[min(480px,60dvh)] overflow-hidden bg-gray-50 dark:bg-dark-900"
+          :style="{ height: `min(${iframeHeight}px, calc(100dvh - 180px))` }"
         >
           <div
             v-if="uiLoading"
-            class="absolute inset-0 z-10 flex items-center justify-center text-sm text-gray-500"
+            class="absolute inset-0 z-10 flex items-center justify-center bg-white text-sm text-gray-500 dark:bg-dark-900"
+            role="status"
           >
             {{ t("admin.plugins.loadingUI") }}
           </div>
           <div
             v-if="uiError"
-            class="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 text-center"
+            class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white p-8 text-center dark:bg-dark-900"
+            role="alert"
           >
             <Icon name="exclamationTriangle" size="xl" class="text-amber-500" />
             <p class="mt-3 font-medium text-gray-800 dark:text-gray-200">
               {{ t("admin.plugins.uiUnavailable") }}
             </p>
             <p class="mt-1 max-w-xl text-sm text-gray-500">{{ uiError }}</p>
+            <button type="button" class="btn btn-secondary mt-4" @click="configPlugin && openConfiguration(configPlugin)">{{ t('admin.plugins.retryUI') }}</button>
           </div>
           <iframe
             v-if="uiSession"
@@ -367,6 +375,7 @@
               t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
             "
             @load="handlePluginFrameLoad"
+            @error="handlePluginFrameError"
           />
         </div>
       </BaseDialog>
@@ -398,7 +407,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   adminAPI,
@@ -410,6 +419,7 @@ import {
   type PluginUISession,
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
+import { buildApiUrl } from "@/api/url";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import Icon from "@/components/icons/Icon.vue";
@@ -438,6 +448,22 @@ const { t } = useI18n();
 const appStore = useAppStore();
 const pluginStepUp = useStepUp();
 const plugins = ref<PluginInstallation[]>([]);
+const searchQuery = ref("");
+const stateFilter = ref("all");
+const expandedPlugins = ref(new Set<number>());
+const filteredPlugins = computed(() => {
+  const query = searchQuery.value.trim().toLocaleLowerCase();
+  return plugins.value.filter(plugin =>
+    (stateFilter.value === "all" || plugin.state === stateFilter.value) &&
+    (!query || [plugin.name, plugin.plugin_key, plugin.author, plugin.description].join(" ").toLocaleLowerCase().includes(query)),
+  );
+});
+function toggleDetails(id: number): void {
+  const expanded = new Set(expandedPlugins.value);
+  if (expanded.has(id)) expanded.delete(id);
+  else expanded.add(id);
+  expandedPlugins.value = expanded;
+}
 const loading = ref(false);
 const uploading = ref(false);
 const busyID = ref<number | null>(null);
@@ -463,6 +489,20 @@ const uiError = ref("");
 const iframeHeight = ref(640);
 const pluginFrameLoaded = ref(false);
 const pendingBridgeRequests = new Map<string, number>();
+let frameGeneration = 0;
+let uiReadyTimeout: number | undefined;
+
+function clearUIReadyTimeout(): void {
+  if (uiReadyTimeout !== undefined) window.clearTimeout(uiReadyTimeout);
+  uiReadyTimeout = undefined;
+}
+function waitForUIReady(): void {
+  clearUIReadyTimeout();
+  uiReadyTimeout = window.setTimeout(() => {
+    uiLoading.value = false;
+    uiError.value = t("admin.plugins.uiReadyTimeout");
+  }, 15_000);
+}
 
 function errorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) {
@@ -750,6 +790,8 @@ async function testPlugin(plugin: PluginInstallation): Promise<void> {
 }
 
 async function openConfiguration(plugin: PluginInstallation): Promise<void> {
+  const generation = ++frameGeneration;
+  clearUIReadyTimeout();
   configPlugin.value = plugin;
   uiSession.value = null;
   pluginFrameLoaded.value = false;
@@ -758,14 +800,21 @@ async function openConfiguration(plugin: PluginInstallation): Promise<void> {
   uiError.value = "";
   iframeHeight.value = 640;
   try {
-    uiSession.value = await adminAPI.plugins.createUISession(plugin.id);
+    const session = await adminAPI.plugins.createUISession(plugin.id);
+    if (generation !== frameGeneration) return;
+    if (!session.url.startsWith('/api/v1/plugin-ui/')) throw new Error(t('admin.plugins.bridgeRejected'));
+    uiSession.value = { ...session, url: buildApiUrl(session.url) };
+    waitForUIReady();
   } catch (error: unknown) {
+    if (generation !== frameGeneration) return;
     uiLoading.value = false;
     uiError.value = errorMessage(error);
   }
 }
 
 function closeConfiguration(): void {
+  frameGeneration++;
+  clearUIReadyTimeout();
   clearPendingBridgeRequests();
   pluginFrameLoaded.value = false;
   configPlugin.value = null;
@@ -782,9 +831,21 @@ function clearPendingBridgeRequests(): void {
 function handlePluginFrameLoad(): void {
   // A load can also be caused by a plugin navigating its iframe. Drop all
   // outstanding responses so a late config response is never sent to the new document.
-  if (pluginFrameLoaded.value) clearPendingBridgeRequests();
+  if (pluginFrameLoaded.value) {
+    frameGeneration++;
+    clearPendingBridgeRequests();
+    uiLoading.value = true;
+    waitForUIReady();
+  }
   pluginFrameLoaded.value = true;
+  // load also fires for blocked/error documents. Only a validated ready
+  // message from this sandbox window proves that the plugin UI is usable.
+}
+
+function handlePluginFrameError(): void {
+  clearUIReadyTimeout();
   uiLoading.value = false;
+  uiError.value = t('admin.plugins.uiLoadFailed');
 }
 
 function registerBridgeRequest(requestID: string): void {
@@ -797,7 +858,9 @@ function registerBridgeRequest(requestID: string): void {
 function postBridgeResult(
   request: PluginBridgeMessage,
   payload: Record<string, unknown>,
+  generation: number,
 ): void {
+  if (generation !== frameGeneration) return;
   if (!pluginFrame.value?.contentWindow || !uiSession.value) return;
   const requestID = typeof request.request_id === "string" ? request.request_id.trim() : "";
   const timeout = pendingBridgeRequests.get(requestID);
@@ -826,6 +889,9 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
     event.origin !== "null"
   )
     return;
+
+  const generation = frameGeneration;
+  const pluginID = configPlugin.value.id;
   const message = event.data as PluginBridgeMessage;
   if (
     !message ||
@@ -847,11 +913,13 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
   try {
     switch (message.type) {
       case "sub2api.plugin.ready":
+        clearUIReadyTimeout();
         uiLoading.value = false;
+        uiError.value = "";
         break;
       case "config.load": {
-        const config = await adminAPI.plugins.getConfig(configPlugin.value.id);
-        postBridgeResult(message, { ok: true, config });
+        const config = await adminAPI.plugins.getConfig(pluginID);
+        postBridgeResult(message, { ok: true, config }, generation);
         break;
       }
       case "config.save": {
@@ -864,19 +932,19 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
         }
         const config = await pluginStepUp.run(() =>
           adminAPI.plugins.saveConfig(
-            configPlugin.value!.id,
+            pluginID,
             message.config as Record<string, unknown>,
           ),
         );
-        postBridgeResult(message, { ok: true, config });
+        postBridgeResult(message, { ok: true, config }, generation);
         appStore.showSuccess(t("common.saved"));
         break;
       }
       case "config.test": {
         const result = await pluginStepUp.run(() =>
-          adminAPI.plugins.test(configPlugin.value!.id),
+          adminAPI.plugins.test(pluginID),
         );
-        postBridgeResult(message, { ok: result.success, result });
+        postBridgeResult(message, { ok: result.success, result }, generation);
         if (result.success)
           appStore.showSuccess(
             result.message || t("admin.plugins.testSuccess"),
@@ -907,7 +975,7 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
     postBridgeResult(message, {
       ok: false,
       error: isStepUpCancelled(error) ? t("common.cancel") : errorMessage(error),
-    });
+    }, generation);
   }
 }
 
@@ -939,5 +1007,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("message", handleBridgeMessage);
   clearPendingBridgeRequests();
+  clearUIReadyTimeout();
+  frameGeneration++;
 });
 </script>

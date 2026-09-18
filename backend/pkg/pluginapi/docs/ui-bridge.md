@@ -10,6 +10,10 @@
 
 资源 Token 用于读取包内 `ui/` 文件，Bridge Token 只存在于 URL fragment，不会发送到服务器。iframe 使用 `sandbox="allow-scripts"`，不授予 `allow-same-origin`。
 
+桌面端须使用当前 API 后端地址解析这个相对 URL，不能相对于 Tauri 资源域名解析。资源响应的 CSP `frame-ancestors` 仅允许宿主同源及固定的 `tauri://localhost`、`http://tauri.localhost`、`https://tauri.localhost`；普通管理/API 页面的防嵌入策略不受影响。
+
+宿主收到来源窗口、`null` origin 和 Bridge Token 均匹配的 `sub2api.plugin.ready` 后才认为配置页就绪。iframe 的 `load` 事件也可能来自错误页面，不能作为就绪信号；15 秒未就绪时显示加载失败与重试入口。关闭或切换配置会话后，宿主丢弃旧会话迟到的请求结果。
+
 UI 只能加载包内、已在清单声明的资源。CSP 禁止外部网络连接、表单提交和外部 frame。
 
 ## 消息信封

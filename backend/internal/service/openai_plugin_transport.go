@@ -1,6 +1,11 @@
 package service
 
-import "net/http"
+import (
+	"io"
+	"net/http"
+
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -32,6 +37,19 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 	useTLSFallback bool,
 ) (*http.Response, error) {
 	if s.pluginManager != nil {
+		if s.pluginManager.hasProtectionTransport(account) && request.GetBody != nil {
+			// Account tests create synthetic requests; their prepared body is the baseline.
+			body, readErr := request.GetBody()
+			if readErr != nil {
+				return nil, readErr
+			}
+			raw, readErr := io.ReadAll(io.LimitReader(body, pluginv2.MaxRequestBodyBytes+1))
+			_ = body.Close()
+			if readErr != nil {
+				return nil, readErr
+			}
+			request = request.WithContext(withPluginProtectionOriginal(request.Context(), account, raw))
+		}
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
 			return response, err

@@ -29,6 +29,7 @@ type pluginRuntime struct {
 	installation *PluginInstallation
 	client       *hcplugin.Client
 	api          pluginv1.TransportPluginClient
+	transport    pluginv2.TransportClient
 	extension    pluginv2.ExtensionHandler
 	isolation    string
 	host         *pluginHostServices
@@ -45,6 +46,13 @@ func startPluginRuntime(ctx context.Context, installation *PluginInstallation, s
 func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig) (*pluginRuntime, error) {
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
+	}
+	if installation.Manifest.SchemaVersion == 2 && sandbox.WithDefaults().Mode == "container" {
+		for _, capability := range installation.Manifest.Capabilities {
+			if capability.ID == pluginv2.CapabilityProtectionTransport {
+				return nil, errors.New("账号保护传输需要 process 模式；无网络容器不支持出站连接")
+			}
+		}
 	}
 	checksum, err := hex.DecodeString(installation.BinarySHA256)
 	if err != nil || len(checksum) != sha256.Size {
@@ -122,6 +130,11 @@ func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInst
 }
 
 func (r *pluginRuntime) validateAndApplyConfig(ctx context.Context, configJSON []byte) error {
+	// Stored protection snapshots already passed validation on save. Replaying
+	// one must not increment its revision or execute its transition twice.
+	if r.transport != nil {
+		return restoreStoredProtectionConfig(ctx, r, configJSON)
+	}
 	_, err := r.validateAndApplyNormalizedConfig(ctx, configJSON)
 	return err
 }
@@ -234,25 +247,31 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		return nil, errors.New("插件出站请求参数不完整")
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := r.api.Forward(streamCtx)
+	forwarder := pluginv2.TransportClient(r.api)
+	if r.transport != nil {
+		forwarder = r.transport
+	}
+	stream, err := forwarder.Forward(streamCtx)
 	if err != nil {
 		cancel()
 		return nil, normalizePluginRPCError(ctx, "创建插件转发流", err, false)
 	}
 	requestID := strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatInt(account.ID, 36)
 	if err := stream.Send(&pluginv1.ForwardRequest{Frame: &pluginv1.ForwardRequest_Start{Start: &pluginv1.ForwardRequestStart{
-		RequestId:          requestID,
-		Method:             request.Method,
-		Url:                request.URL.String(),
-		Host:               request.Host,
-		Headers:            headersToPlugin(request.Header),
-		ProxyUrl:           proxyURL,
-		AccountId:          account.ID,
-		AccountConcurrency: int32(account.Concurrency),
-		Platform:           account.Platform,
-		AccountType:        account.Type,
-		ContentLength:      request.ContentLength,
-		HasBody:            request.Body != nil && request.Body != http.NoBody,
+		RequestId:           requestID,
+		Method:              request.Method,
+		Url:                 request.URL.String(),
+		Host:                request.Host,
+		Headers:             headersToPlugin(request.Header),
+		ProxyUrl:            proxyURL,
+		AccountId:           account.ID,
+		AccountConcurrency:  int32(account.Concurrency),
+		Platform:            account.Platform,
+		AccountType:         account.Type,
+		ContentLength:       request.ContentLength,
+		HasBody:             request.Body != nil && request.Body != http.NoBody,
+		OriginalBodyJson:    r.protectionOriginalBody(ctx, account),
+		AccountMetadataJson: r.protectionAccountMetadata(ctx, account),
 	}}}); err != nil {
 		cancel()
 		// gRPC Send 返回错误时无法证明服务端没有收到元数据，必须禁止自动重放。

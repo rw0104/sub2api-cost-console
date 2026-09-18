@@ -1,6 +1,17 @@
 export default {
   plugins: {
     title: 'Plugin Management',
+    managementHelp: 'Installation and runtime notes',
+    search: 'Search name, ID or publisher',
+    filterState: 'Filter plugin state',
+    allStates: 'All states',
+    pluginCount: 'Showing {shown} of {total} plugins',
+    noMatches: 'No matching plugins. Adjust your search or filter.',
+    showDetails: 'Details & management',
+    collapseDetails: 'Hide details',
+    retryUI: 'Reload configuration page',
+    uiReadyTimeout: 'The configuration page did not respond. Retry; if it still fails, check the plugin resources and host compatibility.',
+    uiLoadFailed: 'The configuration page could not load. Please retry.',
     description: 'Install and manage process plugins, with visibility into capabilities, permissions and request scope.',
     upload: 'Install plugin',
     upgrade: 'Upgrade',

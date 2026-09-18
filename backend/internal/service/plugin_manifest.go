@@ -252,6 +252,9 @@ func (c PluginCapability) ExtensionCapability() pluginv2.Capability {
 // supportedExtensionCapability is the host registry for executable v2 hooks.
 // Unknown capabilities remain installable, but cannot be enabled.
 func supportedExtensionCapability(c PluginCapability) error {
+	if c.ID == pluginv2.CapabilityProtectionTransport {
+		return validateProtectionTransportCapability(c)
+	}
 	if c.ID != pluginv2.CapabilityRequestPreprocess {
 		return fmt.Errorf("宿主尚未实现能力 %s", c.ID)
 	}

@@ -17,7 +17,9 @@
 3. `modify` 只能通过 `RequestPatch` 修改允许的请求字段；
 4. 认证、账号选择、计费、持久化和最终重试决策仍由宿主负责。
 
-插件不得接收 `authorization`、`proxy-authorization`、`cookie` 或 `set-cookie` 请求头。确实需要秘密时，使用已实现的 Host API `secrets.broker` 权限及管理员按实例授权的短期别名，详见 [Host API](../docs/host-api.md)。
+请求预处理插件不得接收 `authorization`、`proxy-authorization`、`cookie` 或 `set-cookie` 请求头。确实需要秘密时，使用已实现的 Host API `secrets.broker` 权限及管理员按实例授权的短期别名，详见 [Host API](../docs/host-api.md)。
+
+另有独立的 [账号保护传输能力](../docs/protection-transport.md) `openai.oauth.protection_transport.v1`，用于身份/TLS 传输插件。它显式声明凭据转发、网络和原请求权限，通过可选流式 RPC 接管当前 OpenAI OAuth 请求；原预处理白名单不变。
 
 ## 协议文件
 
@@ -43,7 +45,7 @@ protoc --proto_path=pkg/pluginapi/v2 --go_out=pkg/pluginapi/v2/wire --go_opt=pat
 
 ## 宿主执行边界
 
-当前注册的 v2 能力为 `request.preprocess.v1`，作用域必须为 `platform=openai`，账号类型为 `oauth` 或 `apikey`，清单单次超时 1–5000ms。每个能力实例默认最多同时调用 32 次，可配置为 1–256；连续 3 次失败后熔断 10 秒。计数是实例内状态，重启后归零。
+预处理能力 `request.preprocess.v1` 的作用域必须为 `platform=openai`，账号类型为 `oauth` 或 `apikey`，清单单次超时 1–5000ms。每个能力实例默认最多同时调用 32 次，可配置为 1–256；连续 3 次失败后熔断 10 秒。计数是实例内状态，重启后归零。
 
 调用发生在账号选择与 HTTP 请求准备完成后，匹配 POST Responses、Responses Compact 和 Chat Completions 出站请求；WebSocket 命中账号走现有 HTTP Bridge。账号灰度使用稳定分桶。每次上游尝试独立预处理，始终从该次原始请求创建副本，避免重试累计修改。
 

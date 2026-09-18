@@ -367,6 +367,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		SetOpsUpstreamModel(c, actualModel)
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		if s.pluginManager != nil && s.pluginManager.hasProtectionTransport(account) {
+			upstreamCtx = withPluginProtectionOriginal(upstreamCtx, account, body)
+		}
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 		releaseUpstreamCtx()
 		if buildErr != nil {

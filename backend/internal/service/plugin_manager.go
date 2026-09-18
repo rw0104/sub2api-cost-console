@@ -776,8 +776,24 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 		}
 		return nil, fmt.Errorf("加密插件配置: %w", err)
 	}
-	if err := m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256); err != nil {
+	if hasProtectionCapability(installation.Manifest) {
+		if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+			err = repo.UpdateConfigCAS(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted)
+		} else {
+			err = errors.New("宿主存储不支持保护配置的原子比较更新")
+		}
+	} else {
+		err = m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256)
+	}
+	if err != nil {
 		if !temporary {
+			if hasProtectionCapability(installation.Manifest) {
+				if latest, readErr := m.repo.GetByID(ctx, id); readErr == nil {
+					if latestConfig, decryptErr := m.decryptConfig(latest); decryptErr == nil {
+						previousConfig = latestConfig
+					}
+				}
+			}
 			err = errors.Join(err, m.restoreRuntimeConfig(id, runtime, previousConfig))
 		}
 		return nil, err
@@ -794,6 +810,13 @@ func (m *PluginManager) restoreRuntimeConfig(id int64, runtime *pluginRuntime, p
 	}
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if hasProtectionCapability(runtime.installation.Manifest) {
+		if err := restoreStoredProtectionConfig(rollbackCtx, runtime, previous); err != nil {
+			m.publishInstallationUnavailable(runtime.installation, "插件配置回滚失败")
+			return err
+		}
+		return nil
+	}
 	if err := runtime.validateAndApplyConfig(rollbackCtx, previous); err != nil {
 		if runtime.extension != nil {
 			m.publishInstallationUnavailable(runtime.installation, "插件配置回滚失败")
@@ -955,6 +978,9 @@ func (m *PluginManager) ReadUIAsset(ctx context.Context, id int64, relative stri
 }
 
 func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, bool, error) {
+	if response, handled, err := m.roundTripProtection(ctx, request, proxyURL, account); handled {
+		return response, true, err
+	}
 	if !m.ShouldRouteOpenAIOAuth(account) {
 		return nil, false, nil
 	}
@@ -993,6 +1019,9 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 func (m *PluginManager) ShouldRouteOpenAIOAuth(account *Account) bool {
 	if m == nil || account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return false
+	}
+	if m.hasProtectionTransport(account) {
+		return true
 	}
 	route := m.route.Load()
 	return route != nil && route.rolloutPercent > 0 && int(stablePluginBucket(account.ID)) < route.rolloutPercent

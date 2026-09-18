@@ -2,6 +2,8 @@
 
 日期：2026-09-17。分支：`codex/plugin-generic-interface`。
 
+后续保护传输、Preview `.2`/`.3` 和配置页修复记录见 [2026-09-18 阶段开发日志](2026-09-18_plugin-development-phase-report.md)。本文保留首版通用扩展的历史验收范围。
+
 本文记录基于 [扩展分析报告](2026-09-17_plugin-system-extension-analysis-report.md) 落地的代码与验收证据。已完成报告建议的第一种能力 `request.preprocess.v1` 的前后端、运行时、权限隔离及端到端闭环。报告列举的 Provider、响应处理、事件订阅和后台任务仍是后续能力方向，不属于本次已实现能力。
 
 ## 已落地的行为

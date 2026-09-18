@@ -2351,6 +2351,9 @@ func setDefaults() {
 	viper.SetDefault("plugins.data_dir", "")
 	viper.SetDefault("plugins.allow_unsigned", false)
 	viper.SetDefault("plugins.trusted_publishers", map[string]string{})
+	if PluginPreviewEnabled() {
+		viper.SetDefault("plugins.trusted_publishers", PreviewTrustedPublishers())
+	}
 	viper.SetDefault("plugins.max_upload_bytes", int64(128*1024*1024))
 	viper.SetDefault("plugins.max_uncompressed_bytes", int64(256*1024*1024))
 	viper.SetDefault("plugins.start_timeout_seconds", 15)

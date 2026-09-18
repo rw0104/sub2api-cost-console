@@ -18,3 +18,8 @@ func TestPluginPreviewRejectsProductionConnections(t *testing.T) {
 	t.Setenv("SUB2API_PLUGIN_PREVIEW", "")
 	require.NoError(t, ValidatePluginPreviewDatabase("production.example", 5432, "sub2api"))
 }
+
+func TestPreviewTrustedPublishersContainsCompanionKey(t *testing.T) {
+	trusted := PreviewTrustedPublishers()
+	require.Equal(t, PluginPreviewPublisherKeyBase64, trusted[PluginPreviewPublisherKeyID])
+}

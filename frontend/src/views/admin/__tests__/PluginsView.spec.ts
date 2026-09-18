@@ -67,6 +67,11 @@ vi.mock('@/api/admin', () => ({
   },
 }))
 
+vi.mock('@/api/url', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/url')>()),
+  buildApiUrl: (path: string) => `http://127.0.0.1:19765${path}`,
+}))
+
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
@@ -141,17 +146,21 @@ const plugin = {
   runtime_message: '',
 }
 
+const mountedViews: ReturnType<typeof mount>[] = []
 function mountView() {
-  return mount(PluginsView, {
+  const wrapper = mount(PluginsView, {
+    attachTo: document.body,
     global: {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
-        BaseDialog: { template: '<div><slot /></div>' },
+        BaseDialog: { name: 'BaseDialog', template: '<div><slot /></div>' },
         Icon: true,
         TotpStepUpDialog: true,
       },
     },
   })
+  mountedViews.push(wrapper)
+  return wrapper
 }
 
 describe('管理员插件页二次验证', () => {
@@ -187,7 +196,88 @@ describe('管理员插件页二次验证', () => {
     })
   })
 
-  afterEach(() => { vi.restoreAllMocks() })
+  afterEach(() => {
+    mountedViews.splice(0).forEach(wrapper => wrapper.unmount())
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('桌面配置 iframe 使用后端地址而不是桌面资源域名', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('iframe').attributes('src')).toBe('http://127.0.0.1:19765/api/v1/plugin-ui/token/index.html#bridge_token=bridge')
+    expect(wrapper.get('iframe').attributes('sandbox')).toBe('allow-scripts')
+    wrapper.unmount()
+  })
+
+  it('空白 iframe 的 load 事件不会被当作插件 ready', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    await wrapper.get('iframe').trigger('load')
+    expect(wrapper.text()).toContain('admin.plugins.loadingUI')
+    wrapper.unmount()
+  })
+
+  it('校验 ready 消息来源和 token，加载超时后可重试', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    vi.useFakeTimers()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    const frame = wrapper.get('iframe').element as HTMLIFrameElement
+    const data = { source: 'sub2api-plugin-ui', type: 'sub2api.plugin.ready', bridge_token: 'bridge' }
+    window.dispatchEvent(new MessageEvent('message', { origin: 'null', source: window, data }))
+    window.dispatchEvent(new MessageEvent('message', { origin: 'null', source: frame.contentWindow, data: { ...data, bridge_token: 'wrong' } }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.plugins.loadingUI')
+    await vi.advanceTimersByTimeAsync(15_001)
+    expect(wrapper.get('[role="alert"]').text()).toContain('admin.plugins.uiReadyTimeout')
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.retryUI')!.trigger('click')
+    await flushPromises()
+    expect(createUISession).toHaveBeenCalledTimes(2)
+    const retry = wrapper.get('iframe').element as HTMLIFrameElement
+    window.dispatchEvent(new MessageEvent('message', { origin: 'null', source: retry.contentWindow, data }))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('admin.plugins.loadingUI')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(16_000)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('关闭对话框后丢弃迟到的会话，避免重新创建 iframe', async () => {
+    let resolveSession!: (value: unknown) => void
+    createUISession.mockImplementationOnce(() => new Promise(resolve => { resolveSession = resolve }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    wrapper.getComponent({ name: 'BaseDialog' }).vm.$emit('close')
+    resolveSession({url:'/api/v1/plugin-ui/late/index.html#bridge_token=late',bridge_token:'late'})
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
+  it('多个插件默认折叠详情，可搜索和按状态筛选', async () => {
+    listPlugins.mockResolvedValue(Array.from({ length: 12 }, (_, index) => ({
+      ...plugin, id: index + 1, name: `Plugin ${index + 1}`, plugin_key: `example.plugin-${index + 1}`,
+      state: index % 2 ? 'enabled' : 'disabled',
+    })))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findAll('article')).toHaveLength(12)
+    expect(wrapper.get('#plugin-details-1').isVisible()).toBe(false)
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.showDetails')!.trigger('click')
+    expect(wrapper.get('#plugin-details-1').isVisible()).toBe(true)
+    expect(wrapper.get('#plugin-details-2').isVisible()).toBe(false)
+    await wrapper.get('input[type="search"]').setValue('example.plugin-12')
+    expect(wrapper.findAll('article')).toHaveLength(1)
+    await wrapper.get('select[aria-label="admin.plugins.filterState"]').setValue('disabled')
+    expect(wrapper.findAll('article')).toHaveLength(0)
+    expect(wrapper.text()).toContain('admin.plugins.noMatches')
+  })
 
   it('秘密授权经二次验证提交，清空输入且撤销只发送别名', async () => {
     listPlugins.mockResolvedValue([{

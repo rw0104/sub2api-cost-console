@@ -9,11 +9,20 @@ import { fileURLToPath } from 'node:url'
 
 const frontend = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repo = resolve(frontend, '..')
-const commit = process.argv[2]
+const workingTree = process.argv[2] === '--working-tree'
+const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', windowsHide: true })
+const commit = workingTree ? head.stdout.trim() : process.argv[2]
 assert.match(commit || '', /^[0-9a-f]{40}$/, 'Pass the full source commit used for this build')
 const changed = spawnSync('git', ['diff', '--name-only', commit, '--', 'backend', 'frontend/src', 'frontend/src-tauri', 'frontend/scripts/build-plugin-preview.mjs', 'frontend/scripts/prepare-desktop-sidecar.mjs'], { cwd: repo, encoding: 'utf8', windowsHide: true })
 assert.equal(changed.status, 0, changed.stderr)
-assert.equal(changed.stdout.trim(), '', 'Runtime source must match the stated build commit')
+if (!workingTree) assert.equal(changed.stdout.trim(), '', 'Runtime source must match the stated build commit')
+const sourceList = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', 'backend', 'frontend/src', 'frontend/src-tauri', 'frontend/scripts', 'frontend/PLUGIN_PREVIEW_NOTES.md', 'frontend/CORE_VERSION', 'frontend/CORE_CAPABILITIES', 'frontend/CORE_EXTENSION_VERSION'], { cwd: repo, encoding: 'utf8', windowsHide: true })
+assert.equal(sourceList.status, 0, sourceList.stderr)
+const sourceHash = createHash('sha256')
+for (const name of [...new Set(sourceList.stdout.trim().split(/\r?\n/))].sort()) {
+  const path = join(repo, name)
+  if (existsSync(path) && statSync(path).isFile()) sourceHash.update(name + '\0').update(readFileSync(path))
+}
 const profile = JSON.parse(readFileSync(join(frontend, 'src-tauri/tauri.plugin-preview.conf.json'), 'utf8'))
 const name = `${profile.productName}_${profile.version}_x64-setup.exe`
 const installer = join(frontend, 'src-tauri/target/release/bundle/nsis', name)
@@ -58,6 +67,7 @@ copyFileSync(installer, join(output, name))
 const sha256 = path => createHash('sha256').update(readFileSync(path)).digest('hex')
 const receipt = {
   desktop_version: profile.version, core_version: '0.2.5', extension_version: '1.2.0-plugin.1', source_commit: commit,
+  source_mode: workingTree ? 'working-tree' : 'commit', source_files_sha256: sourceHash.digest('hex'),
   product_name: profile.productName, app_identifier: profile.identifier, executable: profile.mainBinaryName + '.exe',
   backend_port: 19765, postgres_port: 25432, redis_port: 26379, database: 'sub2api_plugin_preview',
   stable_update_channels_enabled: false, installed_on_user_machine: false,

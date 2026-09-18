@@ -30,11 +30,16 @@ func (p *GRPCPlugin) GRPCServer(broker *hcplugin.GRPCBroker, server *grpc.Server
 		adapter.broker = broker
 	}
 	wire.RegisterExtensionPluginServer(server, p.Impl)
+	if adapter, ok := p.Impl.(*handlerServer); ok {
+		if transport, ok := adapter.handler.(TransportHandler); ok {
+			wire.RegisterProtectionTransportServer(server, &transportServer{handler: transport})
+		}
+	}
 	return nil
 }
 
 func (p *GRPCPlugin) GRPCClient(_ context.Context, broker *hcplugin.GRPCBroker, conn *grpc.ClientConn) (any, error) {
-	return &handlerClient{api: wire.NewExtensionPluginClient(conn), broker: broker}, nil
+	return &handlerClient{api: wire.NewExtensionPluginClient(conn), transport: wire.NewProtectionTransportClient(conn), broker: broker}, nil
 }
 
 func ClientPluginMap() map[string]hcplugin.Plugin {
