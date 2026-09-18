@@ -32,7 +32,7 @@ func publisherArchive(t *testing.T, private ed25519.PrivateKey, keyID string, in
 		}
 		var sig PluginSignature
 		require.NoError(t, json.Unmarshal(raw, &sig))
-		sig.PublicKey = base64.StdEncoding.EncodeToString(private.Public().(ed25519.PublicKey))
+		sig.PublicKey = base64.StdEncoding.EncodeToString(private[ed25519.SeedSize:])
 		out, err := json.Marshal(sig)
 		require.NoError(t, err)
 		return out
@@ -64,7 +64,7 @@ func TestPluginPublisherFirstImportRequiresExactApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "untrusted", preview.SignatureStatus)
 	require.Equal(t, "developer-one", preview.Publisher.KeyID)
-	require.Equal(t, publisherFingerprint(private.Public().(ed25519.PublicKey)), preview.Publisher.Fingerprint)
+	require.Equal(t, publisherFingerprint(private[ed25519.SeedSize:]), preview.Publisher.Fingerprint)
 	entries, err := os.ReadDir(cfg.Plugins.DataDir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "inspection neither extracts nor executes")
@@ -135,7 +135,7 @@ func TestPluginPublisherPinsCannotBeReplacedByAnEmbeddedKey(t *testing.T) {
 	require.ErrorIs(t, err, ErrPluginPublisherKeyChanged)
 	// Configured trust has precedence over database pins and embedded keys.
 	cfg.Plugins.TrustedPublishers["developer-one"] = base64.StdEncoding.EncodeToString(public)
-	installer.publishers = publisherTestLookup{"developer-one": {PublicKey: base64.StdEncoding.EncodeToString(replacement.Public().(ed25519.PublicKey))}}
+	installer.publishers = publisherTestLookup{"developer-one": {PublicKey: base64.StdEncoding.EncodeToString(replacement[ed25519.SeedSize:])}}
 	_, err = installer.Inspect(t.Context(), bytes.NewReader(data))
 	require.ErrorIs(t, err, ErrPluginPublisherKeyChanged)
 	_, err = installer.Inspect(t.Context(), bytes.NewReader(publisherArchive(t, private, builtInOpenAITransportPublisherKeyID, true)))
