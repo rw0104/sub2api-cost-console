@@ -295,6 +295,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
 
 	if account.UsesOpenAICodexProtocol() {
+		if s.pluginManager != nil && s.pluginManager.hasProtectionTransport(account) {
+			ctx = withPluginProtectionOriginal(ctx, account, responsesBody)
+		}
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
@@ -370,6 +373,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	cancelUpstream := func() {}
 	if clientStream {
 		upstreamCtx, cancelUpstream = context.WithCancel(upstreamCtx)
+	}
+	if s.pluginManager != nil && s.pluginManager.hasProtectionTransport(account) {
+		upstreamCtx = withPluginProtectionOriginal(upstreamCtx, account, responsesBody)
 	}
 	defer cancelUpstream()
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)

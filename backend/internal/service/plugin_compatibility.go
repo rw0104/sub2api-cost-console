@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 	"golang.org/x/mod/semver"
 )
 
@@ -20,14 +19,22 @@ func EvaluatePluginCompatibility(manifest PluginManifest, host PluginHostInfo) P
 		RecommendedSub2API: manifest.Requires.RecommendedSub2APIVersion,
 		PluginProtocol:     manifest.Requires.PluginProtocol,
 		TransportAPI:       manifest.Requires.TransportAPI,
+		ExtensionAPI:       manifest.Requires.ExtensionAPI,
 		UIBridge:           manifest.Requires.UIBridge,
 	}
-	if manifest.Requires.PluginProtocol != pluginv1.ProtocolVersion ||
-		manifest.Requires.TransportAPI != pluginv1.TransportAPIVersion ||
-		manifest.Requires.UIBridge != pluginv1.UIBridgeVersion {
+	if err := manifest.validateProtocol(); err != nil {
 		result.Status = "incompatible"
 		result.Message = "插件协议版本与当前 Sub2API 不兼容"
 		return result
+	}
+	if manifest.SchemaVersion == 2 {
+		for _, capability := range manifest.Capabilities {
+			if err := supportedExtensionCapability(capability); err != nil {
+				result.Status = "incompatible"
+				result.Message = err.Error()
+				return result
+			}
+		}
 	}
 	if !matchesSemverRange(host.Version, manifest.Requires.Sub2API) {
 		result.Status = "incompatible"

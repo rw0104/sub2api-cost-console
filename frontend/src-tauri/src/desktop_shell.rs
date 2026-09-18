@@ -38,7 +38,11 @@ pub fn setup_desktop_shell<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ICON_ID)
-        .tooltip("Sub2API Cost Console")
+        .tooltip(if crate::desktop_profile::PREVIEW {
+            "Sub2API Plugin Preview — 独立测试版"
+        } else {
+            "Sub2API Cost Console"
+        })
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match tray_menu_action(event.id().as_ref()) {

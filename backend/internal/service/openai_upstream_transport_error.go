@@ -101,11 +101,26 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 //     to a healthy account) for all non-canceled errors, or a plain error for
 //     context.Canceled (client gone — no failover, no eviction).
 //
-// It deliberately does NOT write to the response: the handler owns the response
-// (failover, or a protocol-correct error once failover is exhausted).
+// For transport faults it deliberately does NOT write to the response: the
+// handler owns failover and the final protocol-correct error. Extension policy
+// errors are terminal host decisions instead, and commit their own JSON response.
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	var extensionErr *PluginPreprocessError
+	if errors.As(err, &extensionErr) {
+		status := http.StatusServiceUnavailable
+		if extensionErr.Denied {
+			status = http.StatusForbidden
+		}
+		if c != nil && !c.Writer.Written() {
+			// This is a complete terminal policy response, not stream output.
+			// The outer handler otherwise appends a fallback SSE error to the JSON.
+			MarkResponseCommitted(c)
+			c.JSON(status, gin.H{"error": gin.H{"type": "extension_error", "message": extensionErr.Error()}})
+		}
+		return err
+	}
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

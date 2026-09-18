@@ -76,6 +76,9 @@ message ForwardRequestStart {
   string account_type = 10;
   int64 content_length = 11;
   bool has_body = 12;
+  // Populated only for the separately permissioned v2 protection transport.
+  bytes original_body_json = 13;
+  bytes account_metadata_json = 14;
 }
 
 message ForwardRequest {

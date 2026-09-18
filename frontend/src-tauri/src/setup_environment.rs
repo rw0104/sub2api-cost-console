@@ -10,10 +10,10 @@ use tokio::{
 
 const POSTGRES_IMAGE: &str = "postgres:16.14-alpine";
 const VALKEY_IMAGE: &str = "valkey/valkey:8.1.9-alpine";
-const POSTGRES_CONTAINER: &str = "sub2api-cost-postgres";
-const VALKEY_CONTAINER: &str = "sub2api-cost-valkey";
-const MANAGED_POSTGRES_PORT: u16 = 15_432;
-const MANAGED_REDIS_PORT: u16 = 16_379;
+use crate::desktop_profile::{DATABASE_NAME, MANAGED_LABEL, POSTGRES_CONTAINER, VALKEY_CONTAINER};
+use crate::desktop_profile::{
+    POSTGRES_PORT as MANAGED_POSTGRES_PORT, REDIS_PORT as MANAGED_REDIS_PORT,
+};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,8 +157,16 @@ async fn docker_probe() -> DockerProbe {
 async fn detect_environment() -> SetupEnvironment {
     let (docker, postgres, redis, managed_postgres, managed_redis) = tokio::join!(
         docker_probe(),
-        probe_port(5432),
-        probe_port(6379),
+        probe_port(if crate::desktop_profile::PREVIEW {
+            MANAGED_POSTGRES_PORT
+        } else {
+            5432
+        }),
+        probe_port(if crate::desktop_profile::PREVIEW {
+            MANAGED_REDIS_PORT
+        } else {
+            6379
+        }),
         probe_port(MANAGED_POSTGRES_PORT),
         probe_port(MANAGED_REDIS_PORT),
     );
@@ -250,8 +258,9 @@ pub async fn provision_quick_setup(app: AppHandle) -> Result<ManagedSetupConfig,
     let postgres_password = random_secret(32);
     let redis_password = random_secret(32);
     let suffix = random_secret(8).to_lowercase();
-    let postgres_volume = format!("sub2api-cost-postgres-data-{suffix}");
-    let valkey_volume = format!("sub2api-cost-valkey-data-{suffix}");
+    let postgres_volume = format!("{POSTGRES_CONTAINER}-data-{suffix}");
+    let valkey_volume = format!("{VALKEY_CONTAINER}-data-{suffix}");
+    let database_env = format!("POSTGRES_DB={DATABASE_NAME}");
     let postgres_publish = format!("127.0.0.1:{MANAGED_POSTGRES_PORT}:5432");
     let redis_publish = format!("127.0.0.1:{MANAGED_REDIS_PORT}:6379");
     let postgres_password_env = format!("POSTGRES_PASSWORD={postgres_password}");
@@ -285,7 +294,7 @@ pub async fn provision_quick_setup(app: AppHandle) -> Result<ManagedSetupConfig,
             "--name",
             POSTGRES_CONTAINER,
             "--label",
-            "com.sub2api.cost-console.managed=true",
+            MANAGED_LABEL,
             "--restart",
             "unless-stopped",
             "--publish",
@@ -293,7 +302,7 @@ pub async fn provision_quick_setup(app: AppHandle) -> Result<ManagedSetupConfig,
             "--env",
             "POSTGRES_USER=sub2api",
             "--env",
-            "POSTGRES_DB=sub2api",
+            &database_env,
             "--env",
             &postgres_password_env,
             "--volume",
@@ -316,7 +325,7 @@ pub async fn provision_quick_setup(app: AppHandle) -> Result<ManagedSetupConfig,
             "--name",
             VALKEY_CONTAINER,
             "--label",
-            "com.sub2api.cost-console.managed=true",
+            MANAGED_LABEL,
             "--restart",
             "unless-stopped",
             "--publish",
@@ -363,7 +372,7 @@ pub async fn provision_quick_setup(app: AppHandle) -> Result<ManagedSetupConfig,
             port: MANAGED_POSTGRES_PORT,
             user: "sub2api".into(),
             password: postgres_password,
-            dbname: "sub2api".into(),
+            dbname: DATABASE_NAME.into(),
             sslmode: "disable".into(),
         },
         redis: ManagedRedisConfig {

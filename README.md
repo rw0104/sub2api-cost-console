@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/rw0104/sub2api-cost-console?label=最新版本)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 [![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
+[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [插件开发](docs/PLUGIN_DEVELOPMENT.md) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
 
 </div>
 

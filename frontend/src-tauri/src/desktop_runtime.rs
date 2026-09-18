@@ -26,7 +26,7 @@ use tokio::{
 };
 
 const BACKEND_HOST: &str = "127.0.0.1";
-const BACKEND_PORT: u16 = 18_765;
+use crate::desktop_profile::BACKEND_PORT;
 const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
 const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest";
 const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
@@ -893,6 +893,8 @@ fn spawn_backend_process(
         // An owned orphan can be reclaimed; an unrelated listener is never killed.
         if stop_owned_listener(BACKEND_PORT, &executable).unwrap_or(false) {
             wait_for_backend_port_release_blocking()?;
+        } else if crate::desktop_profile::PREVIEW {
+            return Err("测试版端口 19765 已被其他进程占用；不会接管或连接已有服务。".into());
         } else {
             supervisor.update_status(|status| {
                 status.phase = BackendPhase::Starting;
@@ -909,9 +911,16 @@ fn spawn_backend_process(
         }
     }
 
-    let mut command = app
-        .shell()
-        .command(&executable)
+    let mut command = app.shell().command(&executable);
+    if crate::desktop_profile::PREVIEW {
+        command = command
+            .env_clear()
+            .envs(std::env::vars_os().filter(|(name, _)| {
+                crate::desktop_profile::allowed_preview_environment(&name.to_string_lossy())
+            }));
+        command = command.env("SUB2API_PLUGIN_PREVIEW", "1");
+    }
+    command = command
         .current_dir(&data_dir)
         .env("DATA_DIR", &data_dir)
         .env("SERVER_HOST", BACKEND_HOST)
@@ -1684,6 +1693,9 @@ pub async fn desktop_backend_stop(
 
 #[tauri::command]
 pub async fn check_core_update(app: AppHandle) -> Result<CoreUpdateCheck, String> {
+    if crate::desktop_profile::PREVIEW {
+        return Err("插件测试版不连接正式内核更新通道。请使用新的测试安装包升级。".into());
+    }
     let client = update_client()?;
     let manifest = fetch_compatible_core_manifest(&client).await?;
     let upstream_latest_version = fetch_upstream_manifest(&client)
@@ -1724,6 +1736,9 @@ pub async fn install_core_update(
     app: AppHandle,
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<CoreInstallResult, String> {
+    if crate::desktop_profile::PREVIEW {
+        return Err("插件测试版禁止从正式更新通道安装内核。".into());
+    }
     let _guard = supervisor.update_lock.lock().await;
     let client = update_client()?;
     emit_core_progress(&app, "checking", 0, None, "正在扫描扩展兼容内核更新");
@@ -2271,6 +2286,36 @@ mod tests {
     }
 
     #[test]
+    fn stable_plugin_release_replaces_same_upstream_core_without_plugin_capabilities() {
+        let current = CoreVersionRecord {
+            extension_version: "1.1.2".into(),
+            capabilities: vec![
+                "account_cost_loss_ledger.v1".into(),
+                "account_economics_sampling.v1".into(),
+            ],
+            ..core_record("0.2.5", "same-upstream", "old-core")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.2.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.5", "same-upstream", "plugin-core")
+        };
+        let required = required_capabilities();
+        assert!(required.iter().any(|value| value == "plugin_extensions.v2"));
+        assert!(required
+            .iter()
+            .any(|value| value == "openai.oauth.protection_transport.v1"));
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required),
+            CoreCompatibilityAction::InstallBundled
+        );
+        assert_eq!(
+            required_core_action(&bundled, &bundled, true, &required),
+            CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
     fn newer_upstream_core_is_never_downgraded_to_gain_a_missing_extension() {
         let current = core_record("0.1.174", "upstream174", "official-sha");
         let bundled = CoreVersionRecord {
@@ -2511,6 +2556,12 @@ mod tests {
         official
             .capabilities
             .push("account_economics_sampling.v1".into());
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official.capabilities.push("plugin_extensions.v2".into());
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official
+            .capabilities
+            .push("openai.oauth.protection_transport.v1".into());
         assert_eq!(effective_algorithm_version(&official), "1.6.0");
     }
 

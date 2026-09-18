@@ -95,7 +95,7 @@ async function refreshStatus() {
       phase: 'error',
       managed: true,
       pid: null,
-      port: 18765,
+      port: import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview' ? 19765 : 18765,
       data_dir: '',
       core_version: 'unknown',
       algorithm_version: 'unknown',

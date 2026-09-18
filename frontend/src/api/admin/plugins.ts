@@ -4,6 +4,11 @@ export interface PluginCapability {
   id: string
   platform: string
   account_type: string
+  kind?: 'hook' | 'provider' | 'event_sink' | 'worker'
+  permissions?: string[]
+  timeout_ms?: number
+  failure_mode?: 'fail_closed' | 'fail_open' | 'async'
+  synchronous?: boolean
 }
 
 export interface PluginRequirements {
@@ -11,7 +16,8 @@ export interface PluginRequirements {
   recommended_sub2api_version?: string
   tested_sub2api_versions?: string[]
   plugin_protocol: number
-  transport_api: number
+  transport_api?: number
+  extension_api?: number
   ui_bridge: number
 }
 
@@ -48,6 +54,59 @@ export interface PluginBinding {
   account_type: string
   enabled: boolean
   rollout_percent: number
+  priority?: number
+  account_ids?: number[]
+  user_ids?: number[]
+  group_ids?: number[]
+  max_concurrency?: number
+  timeout_ms?: number
+}
+
+export interface PluginRoutingPolicy {
+  capability: string
+  priority: number
+  account_ids: number[]
+  user_ids: number[]
+  group_ids: number[]
+  rollout_percent: number
+  max_concurrency: number
+  timeout_ms: number
+}
+
+export interface PluginSecretGrant {
+  plugin_id: number
+  capability: string
+  alias: string
+  expires_at: string
+  updated_at: string
+}
+export interface PluginHostSnapshot {
+  logs: number
+  metrics: Record<string, number>
+  events_accepted: number
+  events_dropped: number
+  recent_events: { sequence: number; capability: string; name: string; value: number; time: string }[]
+}
+export async function hostStats(id: number): Promise<PluginHostSnapshot> {
+  const { data } = await apiClient.get<PluginHostSnapshot>(`/admin/plugins/${id}/host`)
+  return data
+}
+export async function secretGrants(id: number): Promise<PluginSecretGrant[]> {
+  const { data } = await apiClient.get<PluginSecretGrant[]>(`/admin/plugins/${id}/secret-grants`)
+  return data
+}
+export async function putSecretGrant(id: number, capability: string, alias: string, value: string, ttlSeconds: number): Promise<void> {
+  await apiClient.put(`/admin/plugins/${id}/secret-grants`, { capability, alias, value, ttl_seconds: ttlSeconds })
+}
+export async function deleteSecretGrant(id: number, capability: string, alias: string): Promise<void> {
+  await apiClient.delete(`/admin/plugins/${id}/secret-grants`, { data: { capability, alias } })
+}
+
+export async function saveRouting(id: number, policies: PluginRoutingPolicy[], expectedUpdatedAt: string): Promise<PluginInstallation> {
+  const { data } = await apiClient.put<PluginInstallation>(`/admin/plugins/${id}/routing`, {
+    policies, expected_updated_at: expectedUpdatedAt
+  })
+  return data
 }
 
 export interface PluginInstallation {
@@ -68,13 +127,59 @@ export interface PluginInstallation {
   bindings: PluginBinding[]
   compatibility: PluginCompatibility
   runtime_healthy: boolean
+  runtime_version?: string
+  runtime_isolation?: 'process' | 'container'
   runtime_message: string
+  capability_runtime?: {
+    capability: string
+    healthy: boolean
+    message?: string
+    in_flight: number
+    calls: number
+    errors: number
+    denied: number
+    circuit_open: boolean
+    concurrency_limit: number
+  }[]
 }
 
 export interface PluginTestResult {
   success: boolean
   message: string
   latency_ms: number
+}
+
+export interface PluginVersion {
+  id: number
+  plugin_id: number
+  version: string
+  binary_sha256: string
+  saved_at: string
+  expires_at: string
+  manifest: PluginManifest
+  compatibility: PluginCompatibility
+}
+
+export async function versions(id: number): Promise<PluginVersion[]> {
+  const { data } = await apiClient.get<PluginVersion[]>(`/admin/plugins/${id}/versions`)
+  return data
+}
+
+export async function upgrade(id: number, file: File, acceptUntested: boolean): Promise<PluginInstallation> {
+  const form = new FormData()
+  form.append('plugin', file)
+  form.append('accept_untested', String(acceptUntested))
+  const { data } = await apiClient.post<PluginInstallation>(`/admin/plugins/${id}/upgrade`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
+  })
+  return data
+}
+
+export async function rollback(id: number, versionID: number, acceptUntested: boolean): Promise<PluginInstallation> {
+  const { data } = await apiClient.post<PluginInstallation>(`/admin/plugins/${id}/rollback`, {
+    version_id: versionID, accept_untested: acceptUntested
+  }, { timeout: 120000 })
+  return data
 }
 
 export interface PluginUISession {
@@ -89,6 +194,11 @@ export async function list(): Promise<PluginInstallation[]> {
   return data
 }
 
+export async function get(id: number): Promise<PluginInstallation> {
+  const { data } = await apiClient.get<PluginInstallation>(`/admin/plugins/${id}`)
+  return data
+}
+
 export async function upload(file: File): Promise<PluginInstallation> {
   const form = new FormData()
   form.append('plugin', file)
@@ -97,6 +207,10 @@ export async function upload(file: File): Promise<PluginInstallation> {
     timeout: 120000
   })
   return data
+}
+
+export async function authorizeUpload(): Promise<void> {
+  await apiClient.post('/admin/plugins/authorize-upload', {})
 }
 
 export async function enable(
@@ -144,6 +258,16 @@ export async function createUISession(id: number): Promise<PluginUISession> {
 }
 
 export default {
+  authorizeUpload,
+  hostStats,
+  secretGrants,
+  putSecretGrant,
+  deleteSecretGrant,
+  get,
+  saveRouting,
+  versions,
+  upgrade,
+  rollback,
   list,
   upload,
   enable,

@@ -1,5 +1,7 @@
 const DEFAULT_API_BASE_URL = '/api/v1'
-const DEFAULT_DESKTOP_API_BASE_URL = 'http://127.0.0.1:18765/api/v1'
+const DEFAULT_DESKTOP_API_BASE_URL = import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
+  ? 'http://127.0.0.1:19765/api/v1'
+  : 'http://127.0.0.1:18765/api/v1'
 
 export function isDesktopRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in (window as any)

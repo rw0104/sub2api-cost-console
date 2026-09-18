@@ -229,7 +229,8 @@ import {
   type NativeGatewayProfile,
 } from '@/api/nativeClientLauncher'
 
-const LOCAL_GATEWAY_BASE = 'http://127.0.0.1:18765/v1'
+const LOCAL_GATEWAY_BASE = import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
+  ? 'http://127.0.0.1:19765/v1' : 'http://127.0.0.1:18765/v1'
 
 type PresetId = 'chatgpt' | 'codex' | 'claude-code' | 'opencode' | 'cursor' | 'grok' | 'cline' | 'python' | 'node' | 'curl'
 

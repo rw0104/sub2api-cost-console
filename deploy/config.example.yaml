@@ -1055,6 +1055,15 @@ plugins:
   max_upload_bytes: 134217728
   max_uncompressed_bytes: 268435456
   start_timeout_seconds: 15
+  # Applies to v2 hooks only. "container" never falls back to an ordinary process.
+  # Build deploy/Dockerfile.plugin-sandbox locally first; images are never pulled automatically.
+  # Container mode requires a static Linux runtime in the uploaded package.
+  v2_sandbox:
+    mode: process
+    image: sub2api-plugin-sandbox:1
+    memory_mb: 256
+    cpu_milli: 1000
+    pids_limit: 64
 
 # =============================================================================
 # Pricing Data Source (Optional)

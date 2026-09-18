@@ -70,8 +70,24 @@ describe('DesktopUpdateCenter', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     vi.useRealTimers()
     vi.clearAllMocks()
+  })
+
+  it('plugin preview never checks or installs stable updates', async () => {
+    vi.stubEnv('VITE_DESKTOP_CHANNEL', 'plugin-preview')
+    mocks.getVersion.mockResolvedValue('0.2.39-plugin.1')
+    const wrapper = mount(DesktopUpdateCenter)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    await flushPromises()
+    await wrapper.get('button.desktop-update__trigger').trigger('click')
+    expect(wrapper.text()).toContain('不连接正式桌面或内核更新通道')
+    expect(mocks.check).not.toHaveBeenCalled()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('check_core_update')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('install_core_update')
+    wrapper.unmount()
   })
 
   it('keeps the Tauri Update instance unproxied while installing', async () => {

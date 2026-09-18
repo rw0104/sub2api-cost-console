@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sub2API Plugin Preview",
+  "mainBinaryName": "sub2api-plugin-preview",
+  "version": "0.2.39-plugin.3",
+  "identifier": "com.sub2api.plugin-preview",
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "Sub2API Plugin Preview 0.2.39-plugin.3 — 独立测试版",
+      "url": "index.html#/admin/plugins?desktop=1",
+      "width": 1600, "height": 980, "minWidth": 1180, "minHeight": 720,
+      "resizable": true, "decorations": false, "shadow": true, "center": true
+    }]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": ["../PLUGIN_PREVIEW_NOTES.md"],
+    "windows": { "nsis": { "startMenuFolder": "Sub2API Plugin Preview", "installMode": "currentUser" } }
+  },
+  "plugins": { "updater": { "endpoints": [] } }
+}

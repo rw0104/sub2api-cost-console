@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -55,6 +56,13 @@ func resolvePluginRootDir(cfg *config.Config) string {
 
 func (i *PluginPackageInstaller) RootDir() string {
 	return i.rootDir
+}
+
+func (i *PluginPackageInstaller) runtimeKey(manifest PluginManifest) string {
+	if manifest.SchemaVersion == 2 && i.cfg != nil && i.cfg.Plugins.V2Sandbox.WithDefaults().Mode == "container" {
+		return "linux-" + runtime.GOARCH
+	}
+	return manifest.RuntimeKey()
 }
 
 func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, installedBy *int64) (*PluginInstallation, error) {
@@ -168,7 +176,7 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 		_ = os.RemoveAll(installPath)
 		return nil, fmt.Errorf("读取已保存插件包: %w", err)
 	}
-	runtimeEntry := manifest.Runtimes[manifest.RuntimeKey()]
+	runtimeEntry := manifest.Runtimes[i.runtimeKey(manifest)]
 	return &PluginInstallation{
 		PluginKey:       manifest.ID,
 		Name:            manifest.Name,
@@ -234,7 +242,12 @@ func (i *PluginPackageInstaller) inspectArchive(archive *zip.Reader) (PluginMani
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return PluginManifest{}, nil, "", errors.New("插件清单只能包含一个 JSON 对象")
 	}
-	if err := manifest.Validate(); err != nil {
+	if manifest.SchemaVersion == 2 {
+		if err := i.cfg.Plugins.V2Sandbox.Validate(); err != nil {
+			return PluginManifest{}, nil, "", err
+		}
+	}
+	if err := manifest.ValidateForRuntime(i.runtimeKey(manifest)); err != nil {
 		return PluginManifest{}, nil, "", err
 	}
 	for path := range entries {
@@ -334,7 +347,7 @@ func (i *PluginPackageInstaller) extractArchive(ctx context.Context, archive *zi
 		}
 		hasher := sha256.New()
 		mode := os.FileMode(0o600)
-		if path == manifest.Runtimes[manifest.RuntimeKey()].Path {
+		if path == manifest.Runtimes[i.runtimeKey(manifest)].Path {
 			mode = 0o700
 		}
 		output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
