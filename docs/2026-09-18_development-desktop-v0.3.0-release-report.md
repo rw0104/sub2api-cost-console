@@ -2,6 +2,8 @@
 
 日期：2026-09-18。桌面版本 0.3.0，内核基线 0.2.5，本地扩展 1.3.0，成本算法 1.6.1。
 
+**已合并并正式发布，公开下载核验通过。** 最新正式版为 [v0.3.0](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.0)。最终核验时间：2026-09-18 11:49:23 UTC（04:49:23 PDT）。
+
 ## 问题与结果
 
 用户在正式 0.2.39 中导入已编译插件时遇到“插件发布者密钥不受信任”。复现确认原包的签名和二进制有效，问题是正式宿主只有配置文件信任入口，旧包也没有附带首次导入所需的公钥。让每个接收者编译或编辑配置不能满足成品插件分发。
@@ -31,4 +33,32 @@
 
 ## 发布状态
 
-本记录创建时正在准备正式构建、完整 CI 和签名发布。合并、发布产物及公开下载核验完成后在此补充，不将工作区构建表述为已经发布。
+功能提交 `9bf477dd5ee75ebc8d06a952103ff1f79699a0ec` 已通过两轮完整 CI（[35337929206](https://github.com/rw0104/sub2api-cost-console/actions/runs/35337929206)、[35337925825](https://github.com/rw0104/sub2api-cost-console/actions/runs/35337925825)）以及安全扫描。
+
+- 前端全量：315 个文件、2,411 项测试通过；类型检查与 ESLint 通过。
+- 本地正式 Web、Go sidecar 和桌面资源构建通过。
+- Rust：64 passed、0 failed、1 ignored；跳过的是原有需要操作本机 Docker 容器的测试。
+- SDK 开发包通过独立模块测试、离线编译、签名、mTLS 子进程与请求处理验证。
+- 私有回合状态插件 1.0.2 已内置公钥，在无预配信任的宿主中验证检查、显式确认、安装、记住发布者、配置与启停。
+- 原账号保护插件另生成仅补充公钥元数据的分享包，原清单、签名和运行程序保持一致，真实进程回归通过。两个私有插件包都未上传。
+
+[PR #30](https://github.com/rw0104/sub2api-cost-console/pull/30) 已合并至 `main`，合并提交为 `885a09db2296a7b659a5fbb1da4f1ceca5658d31`。标签 `v0.3.0` 指向该提交，与已验证的运行源码一致。
+
+[正式签名发布工作流 35338995598](https://github.com/rw0104/sub2api-cost-console/actions/runs/35338995598) 已成功完成。合并提交的 [main CI 35338926595](https://github.com/rw0104/sub2api-cost-console/actions/runs/35338926595) 也再次全部通过。
+
+## 发布与下载验收
+
+| 产物 | 大小（字节） | SHA-256 |
+| --- | --- | --- |
+| `Sub2API.Cost.Console_0.3.0_x64-setup.exe` | 31,457,062 | `8678c05e2c43c33c37b01c146c1b4b1834874cc3f3f4fe00717ed2d32e2e5ce4` |
+| `sub2api-core_0.2.5_1.3.0_windows_x86_64.zip` | 36,942,387 | `efdf0aeee8b061f5ee2cc0aef49cada188719e903fe7b676fabb85c25863ba86` |
+
+- [Windows 正式安装器](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.0/Sub2API.Cost.Console_0.3.0_x64-setup.exe) 已重新下载，FileVersion / ProductVersion 均为 0.3.0。
+- 安装器 SHA-256、GitHub 资产摘要、Tauri Ed25519 文件签名与可信注释签名均验证通过，独立 `.sig` 与更新清单一致。
+- 两个 Windows 升级条目指向同一安装器，匿名最新版本入口已返回 v0.3.0，发布说明与源码按规范化换行比较一致。
+- 稳定内核通道已更新至 0.2.5 / 扩展 1.3.0，重新下载的 ZIP 与本地已验证产物一致，内核报告全部五项必需能力。只取消了同一提交上的一次重复自动构建，定时更新仍启用，未覆盖更高版本。
+- 正式 Release 自动附带 `PLUGIN_DEVELOPMENT.md`、SDK 开发包及独立 SHA-256 文件，下载后的 SDK 全量文件摘要与源码基线核验通过。
+- 发布附件不包含本机私有插件。可分享私有包保存在本机，用户只发送对应 `.s2plugin` 即可，接收者不需要编译或 SDK。
+- 本次没有在用户现有桌面实例或正式数据库上执行原位安装升级。Tauri 更新签名与 Windows Authenticode 证书是不同机制。
+
+最终回执保存在 `frontend/release-assets/online-verify-v0.3.0/verification.json`，正式安装器的本机副本位于其 `desktop/` 子目录。
