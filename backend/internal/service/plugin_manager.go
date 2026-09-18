@@ -1189,16 +1189,6 @@ func (m *PluginManager) removeManagedPath(target string) error {
 	return os.RemoveAll(absTarget)
 }
 
-func hasEnabledOpenAIBinding(bindings []PluginBinding) bool {
-	for _, binding := range bindings {
-		if binding.Enabled && binding.Capability == PluginCapabilityOpenAIOAuthOutbound &&
-			binding.Platform == PlatformOpenAI && binding.AccountType == AccountTypeOAuth {
-			return true
-		}
-	}
-	return false
-}
-
 func bindingRollout(bindings []PluginBinding) int {
 	for _, binding := range bindings {
 		if binding.Capability == PluginCapabilityOpenAIOAuthOutbound {

@@ -138,7 +138,7 @@ func (c *Container) Start(ctx context.Context) (err error) {
 	}
 	c.id = strings.TrimSpace(string(created))
 	if !dockerIDPattern.MatchString(c.id) {
-		return errors.New("Docker returned an invalid container identifier")
+		return errors.New("docker returned an invalid container identifier")
 	}
 	c.attach = c.command(c.ctx, "start", "--attach", c.id)
 	c.stdout, err = c.attach.StdoutPipe()
@@ -170,7 +170,7 @@ func (c *Container) stageBinary() error {
 	if err != nil {
 		return err
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 	target, err := os.OpenFile(filepath.Join(c.options.WorkDir, "runtime"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0555)
 	if err != nil {
 		return err

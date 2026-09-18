@@ -14,7 +14,7 @@ func (r *pluginRepository) ListVersions(ctx context.Context, id int64) ([]servic
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	versions := make([]service.PluginVersion, 0)
 	for rows.Next() {
 		var v service.PluginVersion
@@ -51,7 +51,7 @@ func (r *pluginRepository) SwapVersion(ctx context.Context, expected, replacemen
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	current, err := scanPlugin(tx.QueryRowContext(ctx, pluginSelectSQL+" WHERE id=$1 FOR UPDATE", expected.ID))
 	if err != nil {
 		return nil, err

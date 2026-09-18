@@ -38,10 +38,10 @@ type HostConnector interface {
 
 func (c *handlerClient) AttachHost(ctx context.Context, server wire.HostServicesServer) error {
 	if c.broker == nil {
-		return errors.New("Host API requires a go-plugin broker")
+		return errors.New("host API requires a go-plugin broker")
 	}
 	if !c.hostAttached.CompareAndSwap(false, true) {
-		return errors.New("Host API already attached")
+		return errors.New("host API already attached")
 	}
 	id := c.broker.NextId()
 	go c.broker.AcceptAndServe(id, func(options []grpc.ServerOption) *grpc.Server {

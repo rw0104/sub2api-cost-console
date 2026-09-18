@@ -2286,6 +2286,36 @@ mod tests {
     }
 
     #[test]
+    fn stable_plugin_release_replaces_same_upstream_core_without_plugin_capabilities() {
+        let current = CoreVersionRecord {
+            extension_version: "1.1.2".into(),
+            capabilities: vec![
+                "account_cost_loss_ledger.v1".into(),
+                "account_economics_sampling.v1".into(),
+            ],
+            ..core_record("0.2.5", "same-upstream", "old-core")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.2.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.5", "same-upstream", "plugin-core")
+        };
+        let required = required_capabilities();
+        assert!(required.iter().any(|value| value == "plugin_extensions.v2"));
+        assert!(required
+            .iter()
+            .any(|value| value == "openai.oauth.protection_transport.v1"));
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required),
+            CoreCompatibilityAction::InstallBundled
+        );
+        assert_eq!(
+            required_core_action(&bundled, &bundled, true, &required),
+            CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
     fn newer_upstream_core_is_never_downgraded_to_gain_a_missing_extension() {
         let current = core_record("0.1.174", "upstream174", "official-sha");
         let bundled = CoreVersionRecord {

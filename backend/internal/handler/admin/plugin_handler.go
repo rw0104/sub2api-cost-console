@@ -236,7 +236,7 @@ func (h *PluginHandler) Upgrade(c *gin.Context) {
 		response.BadRequest(c, "请选择有效的 .s2plugin 文件")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if !strings.HasSuffix(strings.ToLower(header.Filename), ".s2plugin") {
 		response.BadRequest(c, "插件包扩展名必须是 .s2plugin")
 		return

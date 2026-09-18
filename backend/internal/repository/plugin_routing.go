@@ -11,7 +11,7 @@ func (r *pluginRepository) UpdateRouting(ctx context.Context, expected *service.
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `UPDATE sub2api_plugin_installations SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond')
 		WHERE id=$1 AND binary_sha256=$2 AND updated_at=$3 AND state=$4 AND state<>'starting'`,
 		expected.ID, expected.BinarySHA256, expected.UpdatedAt, expected.State)

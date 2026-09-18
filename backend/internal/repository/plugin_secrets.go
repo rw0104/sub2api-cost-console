@@ -18,7 +18,7 @@ func (r *pluginRepository) ListSecretGrants(ctx context.Context, id int64) ([]se
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	grants := make([]service.PluginSecretGrant, 0)
 	for rows.Next() {
 		var grant service.PluginSecretGrant
@@ -34,7 +34,7 @@ func (r *pluginRepository) PutSecretGrant(ctx context.Context, grant service.Plu
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var id int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM sub2api_plugin_installations p WHERE id=$1 AND
 		(p.manifest->>'schema_version')='2' AND EXISTS (

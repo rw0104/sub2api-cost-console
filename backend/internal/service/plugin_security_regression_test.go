@@ -110,7 +110,9 @@ func TestPluginReconcileFailsClosedWhenDesiredStateCannotBeRead(t *testing.T) {
 	require.ErrorContains(t, routeErr, "插件不可用")
 	_, preprocessErr := manager.PreprocessOpenAI(context.Background(), request, &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
 	require.Error(t, preprocessErr, "unknown binding state must not silently bypass API Key preprocessing")
-	manager.repo.(*pluginTokenRepository).listErr = nil
+	repo, ok := manager.repo.(*pluginTokenRepository)
+	require.True(t, ok)
+	repo.listErr = nil
 	require.NoError(t, manager.reconcileOnce(context.Background()))
 	require.False(t, manager.ShouldPreprocess(&Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}),
 		"an authoritative empty binding list clears the unavailable guard")

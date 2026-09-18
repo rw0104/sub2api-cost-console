@@ -40,11 +40,13 @@ func bridge(socket string) error {
 	if path.Clean(socket) != socket || !strings.HasPrefix(socket, "/rpc/") || len(socket) > 108 {
 		return errors.New("invalid RPC socket")
 	}
-	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+	// Only a canonical container-local /rpc/ Unix socket is accepted above;
+	// this cannot select a network host or scheme.
+	conn, err := net.DialTimeout("unix", socket, 5*time.Second) // #nosec G704 -- restricted Unix-domain IPC, not an outbound network request.
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
 		if unix, ok := conn.(*net.UnixConn); ok {
