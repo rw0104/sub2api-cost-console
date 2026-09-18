@@ -143,6 +143,36 @@ export interface PluginInstallation {
   }[]
 }
 
+export interface PluginPackageInspection {
+  manifest: PluginManifest
+  compatibility: PluginCompatibility
+  package_sha256: string
+  signature_status: 'trusted' | 'unsigned' | 'untrusted'
+  publisher?: { key_id: string; fingerprint: string }
+  runtime_isolation: 'process' | 'container'
+}
+
+export interface PluginPublisherApproval {
+  package_sha256: string
+  publisher_fingerprint: string
+}
+
+function appendPublisherApproval(form: FormData, approval?: PluginPublisherApproval): void {
+  if (!approval) return
+  form.append('trust_publisher', 'true')
+  form.append('package_sha256', approval.package_sha256)
+  form.append('publisher_fingerprint', approval.publisher_fingerprint)
+}
+
+export async function inspect(file: File): Promise<PluginPackageInspection> {
+  const form = new FormData()
+  form.append('plugin', file)
+  const { data } = await apiClient.post<PluginPackageInspection>('/admin/plugins/inspect', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
+  })
+  return data
+}
+
 export interface PluginTestResult {
   success: boolean
   message: string
@@ -165,10 +195,11 @@ export async function versions(id: number): Promise<PluginVersion[]> {
   return data
 }
 
-export async function upgrade(id: number, file: File, acceptUntested: boolean): Promise<PluginInstallation> {
+export async function upgrade(id: number, file: File, acceptUntested: boolean, approval?: PluginPublisherApproval): Promise<PluginInstallation> {
   const form = new FormData()
   form.append('plugin', file)
   form.append('accept_untested', String(acceptUntested))
+  appendPublisherApproval(form, approval)
   const { data } = await apiClient.post<PluginInstallation>(`/admin/plugins/${id}/upgrade`, form, {
     headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
   })
@@ -199,9 +230,10 @@ export async function get(id: number): Promise<PluginInstallation> {
   return data
 }
 
-export async function upload(file: File): Promise<PluginInstallation> {
+export async function upload(file: File, approval?: PluginPublisherApproval): Promise<PluginInstallation> {
   const form = new FormData()
   form.append('plugin', file)
+  appendPublisherApproval(form, approval)
   const { data } = await apiClient.post<PluginInstallation>('/admin/plugins/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000
@@ -258,6 +290,7 @@ export async function createUISession(id: number): Promise<PluginUISession> {
 }
 
 export default {
+  inspect,
   authorizeUpload,
   hostStats,
   secretGrants,

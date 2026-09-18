@@ -72,7 +72,12 @@ func (h *PluginHandler) Upload(c *gin.Context) {
 		userID := subject.UserID
 		installedBy = &userID
 	}
-	plugin, err := h.manager.Install(c.Request.Context(), file, installedBy)
+	approval, err := pluginPublisherApproval(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	plugin, err := h.manager.InstallWithApproval(c.Request.Context(), file, installedBy, approval)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -85,6 +90,49 @@ func (h *PluginHandler) Upload(c *gin.Context) {
 // early 403 during multipart upload can otherwise close the HTTP connection.
 func (h *PluginHandler) AuthorizeUpload(c *gin.Context) {
 	response.Success(c, gin.H{"authorized": true})
+}
+
+// Inspect verifies all bytes before presenting a publisher consent screen. It
+// does not install files, execute plugin code or persist publisher trust.
+func (h *PluginHandler) Inspect(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.manager.MaxUploadBytes()+(1<<20))
+	file, header, err := c.Request.FormFile("plugin")
+	if err != nil {
+		response.BadRequest(c, "请选择有效的 .s2plugin 文件")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".s2plugin") {
+		response.BadRequest(c, "请选择已编译的 .s2plugin 安装包，不能安装源码或 SDK 压缩包")
+		return
+	}
+	inspection, err := h.manager.InspectPackage(c.Request.Context(), file)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, inspection)
+}
+
+func pluginPublisherApproval(c *gin.Context) (*service.PluginPublisherApproval, error) {
+	flag := c.PostForm("trust_publisher")
+	if flag == "" || flag == "false" {
+		return nil, nil
+	}
+	if flag != "true" {
+		return nil, errors.New("发布者确认参数无效")
+	}
+	packageSHA := c.PostForm("package_sha256")
+	fingerprint := c.PostForm("publisher_fingerprint")
+	decoded, err := hex.DecodeString(packageSHA)
+	if err != nil || len(decoded) != 32 || packageSHA != strings.ToLower(packageSHA) {
+		return nil, errors.New("请先检查插件包，再确认安装")
+	}
+	publicSHA, err := hex.DecodeString(strings.TrimPrefix(fingerprint, "sha256:"))
+	if err != nil || len(publicSHA) != 32 || !strings.HasPrefix(fingerprint, "sha256:") || fingerprint != strings.ToLower(fingerprint) {
+		return nil, errors.New("发布者签名指纹无效")
+	}
+	return &service.PluginPublisherApproval{PackageSHA256: packageSHA, Fingerprint: fingerprint}, nil
 }
 
 type pluginEnableRequest struct {
@@ -254,7 +302,12 @@ func (h *PluginHandler) Upgrade(c *gin.Context) {
 		userID := subject.UserID
 		installedBy = &userID
 	}
-	plugin, err := h.manager.Upgrade(c.Request.Context(), id, file, installedBy, acceptUntested)
+	approval, err := pluginPublisherApproval(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	plugin, err := h.manager.UpgradeWithApproval(c.Request.Context(), id, file, installedBy, acceptUntested, approval)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return

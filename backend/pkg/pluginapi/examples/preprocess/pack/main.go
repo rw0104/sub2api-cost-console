@@ -99,7 +99,12 @@ func run() error {
 		if err != nil || len(key) != ed25519.PrivateKeySize {
 			return errors.New("signing key must be a Base64 Ed25519 private key")
 		}
-		signature := map[string]string{"algorithm": "ed25519", "key_id": *keyID, "signature": base64.StdEncoding.EncodeToString(ed25519.Sign(ed25519.PrivateKey(key), raw))}
+		private := ed25519.PrivateKey(key)
+		public, validPublic := private.Public().(ed25519.PublicKey)
+		if !validPublic {
+			return errors.New("invalid Ed25519 public key")
+		}
+		signature := map[string]string{"algorithm": "ed25519", "key_id": *keyID, "public_key": base64.StdEncoding.EncodeToString(public), "signature": base64.StdEncoding.EncodeToString(ed25519.Sign(private, raw))}
 		files["signature.json"], err = json.Marshal(signature)
 		if err != nil {
 			return err

@@ -80,13 +80,17 @@ func (m *PluginManager) ListVersions(ctx context.Context, id int64) ([]PluginVer
 }
 
 func (m *PluginManager) Upgrade(ctx context.Context, id int64, reader io.Reader, installedBy *int64, acceptUntested bool) (*PluginInstallation, error) {
+	return m.UpgradeWithApproval(ctx, id, reader, installedBy, acceptUntested, nil)
+}
+
+func (m *PluginManager) UpgradeWithApproval(ctx context.Context, id int64, reader io.Reader, installedBy *int64, acceptUntested bool, approval *PluginPublisherApproval) (*PluginInstallation, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	current, err := m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	candidate, err := m.installer.Install(ctx, reader, installedBy)
+	candidate, err := m.installer.InstallWithApproval(ctx, reader, installedBy, approval)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +198,16 @@ func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *
 	}
 	// No route changes until the database has saved the old snapshot and
 	// atomically replaced the current package under its expected revision.
-	replaced, err := repo.SwapVersion(ctx, current, candidate)
+	var replaced *PluginInstallation
+	if candidate.PublisherToTrust != nil {
+		if publishers, ok := m.repo.(PluginPublisherVersionRepository); ok {
+			replaced, err = publishers.SwapVersionWithPublisher(ctx, current, candidate, candidate.PublisherToTrust)
+		} else {
+			err = errors.New("发布者信任存储不可用")
+		}
+	} else {
+		replaced, err = repo.SwapVersion(ctx, current, candidate)
+	}
 	if err != nil {
 		return nil, err
 	}

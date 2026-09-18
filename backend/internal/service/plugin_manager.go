@@ -62,12 +62,16 @@ type PluginManager struct {
 }
 
 func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo) *PluginManager {
+	installer := NewPluginPackageInstaller(cfg, hostInfo)
+	if publishers, ok := repo.(PluginPublisherLookup); ok {
+		installer.publishers = publishers
+	}
 	return &PluginManager{
 		repo:               repo,
 		encryptor:          encryptor,
 		cfg:                cfg,
 		hostInfo:           hostInfo,
-		installer:          NewPluginPackageInstaller(cfg, hostInfo),
+		installer:          installer,
 		runtimes:           make(map[int64]*pluginRuntime),
 		localInstallations: make(map[int64]*PluginInstallation),
 	}
@@ -193,9 +197,13 @@ func (m *PluginManager) Get(ctx context.Context, id int64) (*PluginInstallation,
 }
 
 func (m *PluginManager) Install(ctx context.Context, reader io.Reader, installedBy *int64) (*PluginInstallation, error) {
+	return m.InstallWithApproval(ctx, reader, installedBy, nil)
+}
+
+func (m *PluginManager) InstallWithApproval(ctx context.Context, reader io.Reader, installedBy *int64, approval *PluginPublisherApproval) (*PluginInstallation, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
-	packageInfo, err := m.installer.Install(ctx, reader, installedBy)
+	packageInfo, err := m.installer.InstallWithApproval(ctx, reader, installedBy, approval)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +228,16 @@ func (m *PluginManager) Install(ctx context.Context, reader io.Reader, installed
 			RolloutPercent: 100,
 		})
 	}
-	installed, err := m.repo.Install(ctx, packageInfo, bindings)
+	var installed *PluginInstallation
+	if packageInfo.PublisherToTrust != nil {
+		if publishers, ok := m.repo.(PluginPublisherRepository); ok {
+			installed, err = publishers.InstallWithPublisher(ctx, packageInfo, bindings, packageInfo.PublisherToTrust)
+		} else {
+			err = errors.New("发布者信任存储不可用")
+		}
+	} else {
+		installed, err = m.repo.Install(ctx, packageInfo, bindings)
+	}
 	if err != nil {
 		cleanupErr := m.cleanupInstallationFiles(packageInfo)
 		return nil, errors.Join(err, cleanupErr)

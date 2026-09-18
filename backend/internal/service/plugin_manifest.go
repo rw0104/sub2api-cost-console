@@ -78,6 +78,7 @@ type PluginSignature struct {
 	Algorithm string `json:"algorithm"`
 	KeyID     string `json:"key_id"`
 	Signature string `json:"signature"`
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // PluginCompatibility 是管理页面展示和启用门禁共同使用的兼容性结论。
@@ -96,6 +97,9 @@ type PluginCompatibility struct {
 }
 
 type PluginInstallation struct {
+	// Set only after explicit approval of this exact verified upload; repositories
+	// persist the publisher pin in the same transaction as install/upgrade.
+	PublisherToTrust  *PluginPublisher          `json:"-"`
 	ID                int64                     `json:"id"`
 	PluginKey         string                    `json:"plugin_key"`
 	Name              string                    `json:"name"`

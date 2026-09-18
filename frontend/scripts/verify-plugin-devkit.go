@@ -72,6 +72,7 @@ func run() error {
 		Signature string `json:"signature"`
 		Algorithm string `json:"algorithm"`
 		KeyID     string `json:"key_id"`
+		PublicKey string `json:"public_key"`
 	}
 	if err := json.Unmarshal(files["signature.json"], &signature); err != nil {
 		return err
@@ -83,6 +84,9 @@ func run() error {
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(keyText)))
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return errors.New("invalid public key")
+	}
+	if signature.PublicKey != base64.StdEncoding.EncodeToString(key) {
+		return errors.New("shareable package must include the publisher public key")
 	}
 	sig, err := base64.StdEncoding.DecodeString(signature.Signature)
 	if err != nil || signature.Algorithm != "ed25519" || signature.KeyID != "devkit-verification" || !ed25519.Verify(key, files["manifest.json"], sig) {

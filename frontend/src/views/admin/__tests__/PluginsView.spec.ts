@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PluginsView from '../PluginsView.vue'
 import PluginRoutingDialog from '@/components/plugins/PluginRoutingDialog.vue'
 import PluginHostDialog from '@/components/plugins/PluginHostDialog.vue'
+import PluginInstallDialog from '@/components/plugins/PluginInstallDialog.vue'
 
 const {
   listPlugins,
   getPlugin,
   uploadPlugin,
+  inspectPlugin,
   authorizeUpload,
   enablePlugin,
   upgradePlugin,
@@ -26,6 +28,7 @@ const {
   listPlugins: vi.fn(),
   getPlugin: vi.fn(),
   uploadPlugin: vi.fn(),
+  inspectPlugin: vi.fn(),
   authorizeUpload: vi.fn(),
   enablePlugin: vi.fn(),
   upgradePlugin: vi.fn(),
@@ -47,6 +50,7 @@ vi.mock('@/api/admin', () => ({
       list: listPlugins,
       get: getPlugin,
       upload: uploadPlugin,
+      inspect: inspectPlugin,
       authorizeUpload,
       enable: enablePlugin,
       upgrade: upgradePlugin,
@@ -89,7 +93,7 @@ vi.mock('@/composables/useStepUp', () => ({
 
 vi.mock('vue-i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-i18n')>()),
-  useI18n: () => ({ t: (key: string) => key }),
+  useI18n: () => ({ t: (key: string) => key, te: () => false }),
 }))
 
 const plugin = {
@@ -170,6 +174,7 @@ describe('管理员插件页二次验证', () => {
     listPlugins.mockResolvedValue([plugin])
     getPlugin.mockImplementation(async () => (await listPlugins())[0])
     uploadPlugin.mockResolvedValue(plugin)
+    inspectPlugin.mockResolvedValue({ manifest: plugin.manifest, compatibility: plugin.compatibility, package_sha256: 'c'.repeat(64), signature_status: 'trusted', publisher: { key_id: 'known-publisher', fingerprint: `sha256:${'b'.repeat(64)}` } })
     authorizeUpload.mockResolvedValue(undefined)
     enablePlugin.mockResolvedValue(plugin)
     upgradePlugin.mockResolvedValue(plugin)
@@ -200,6 +205,57 @@ describe('管理员插件页二次验证', () => {
     mountedViews.splice(0).forEach(wrapper => wrapper.unmount())
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('首次发布者必须确认才安装，并把确认绑定到该包和公钥指纹', async () => {
+    const inspection = { manifest: plugin.manifest, compatibility: plugin.compatibility, package_sha256: 'c'.repeat(64), signature_status: 'untrusted', publisher: { key_id: 'new-publisher', fingerprint: `sha256:${'b'.repeat(64)}` } }
+    inspectPlugin.mockResolvedValueOnce(inspection)
+    const wrapper = mountView()
+    await flushPromises()
+    const file = new File(['compiled-package'], 'share.s2plugin')
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+    expect(inspectPlugin).toHaveBeenCalledWith(file)
+    expect(uploadPlugin).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('new-publisher')
+    expect(wrapper.get('[data-testid="confirm-publisher-install"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="publisher-consent"]').setValue(true)
+    await wrapper.get('[data-testid="confirm-publisher-install"]').trigger('click')
+    await flushPromises()
+    expect(uploadPlugin).toHaveBeenCalledWith(file, { package_sha256: inspection.package_sha256, publisher_fingerprint: inspection.publisher.fingerprint })
+    expect(authorizeUpload).toHaveBeenCalledTimes(2)
+    expect(wrapper.getComponent(PluginInstallDialog).props('inspection')).toBeNull()
+  })
+
+  it('取消首次发布者确认不会上传或建立信任', async () => {
+    inspectPlugin.mockResolvedValueOnce({ manifest: plugin.manifest, compatibility: plugin.compatibility, package_sha256: 'c'.repeat(64), signature_status: 'untrusted', publisher: { key_id: 'new-publisher', fingerprint: `sha256:${'b'.repeat(64)}` } })
+    const wrapper = mountView()
+    await flushPromises()
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [new File(['package'], 'share.s2plugin')], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+    wrapper.getComponent(PluginInstallDialog).vm.$emit('close')
+    await flushPromises()
+    expect(uploadPlugin).not.toHaveBeenCalled()
+    expect(wrapper.getComponent(PluginInstallDialog).props('inspection')).toBeNull()
+  })
+
+  it('页面卸载后丢弃迟到的包检查，不继续安装', async () => {
+    let resolveInspection!: (value: unknown) => void
+    inspectPlugin.mockImplementationOnce(() => new Promise(resolve => { resolveInspection = resolve }))
+    const wrapper = mountView()
+    await flushPromises()
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [new File(['package'], 'share.s2plugin')] })
+    await input.trigger('change')
+    await flushPromises()
+    wrapper.unmount()
+    resolveInspection({ manifest: plugin.manifest, compatibility: plugin.compatibility, package_sha256: 'c'.repeat(64), signature_status: 'trusted' })
+    await flushPromises()
+    expect(uploadPlugin).not.toHaveBeenCalled()
   })
 
   it('桌面配置 iframe 使用后端地址而不是桌面资源域名', async () => {

@@ -400,6 +400,14 @@
       </BaseDialog>
 
       <TotpStepUpDialog :controller="pluginStepUp" />
+      <PluginInstallDialog
+        :inspection="pendingInstall?.inspection ?? null"
+        :file-name="pendingInstall?.file.name ?? ''"
+        :busy="uploading"
+        :upgrade="!!pendingInstall?.target"
+        @close="closePublisherReview"
+        @confirm="confirmPublisherInstall"
+      />
       <PluginRoutingDialog :plugin="routingPlugin" :busy="routingPlugin !== null && busyID === routingPlugin.id" @close="routingPlugin = null" @save="savePluginRouting" />
       <PluginHostDialog :plugin="hostPlugin" :stats="hostSnapshot" :grants="hostGrants" :loading="hostLoading" :busy="hostPlugin !== null && busyID === hostPlugin.id" :error="hostError" @close="hostPlugin = null" @refresh="refreshHostServices" @grant="grantHostSecret" @revoke="revokeHostSecret" />
     </div>
@@ -417,6 +425,8 @@ import {
   type PluginHostSnapshot,
   type PluginSecretGrant,
   type PluginUISession,
+  type PluginPackageInspection,
+  type PluginPublisherApproval,
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
 import { buildApiUrl } from "@/api/url";
@@ -425,6 +435,7 @@ import BaseDialog from "@/components/common/BaseDialog.vue";
 import Icon from "@/components/icons/Icon.vue";
 import PluginRoutingDialog from "@/components/plugins/PluginRoutingDialog.vue";
 import PluginHostDialog from "@/components/plugins/PluginHostDialog.vue";
+import PluginInstallDialog from "@/components/plugins/PluginInstallDialog.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import {
   isStepUpBlocked,
@@ -466,6 +477,8 @@ function toggleDetails(id: number): void {
 }
 const loading = ref(false);
 const uploading = ref(false);
+const pendingInstall = ref<{ file: File; inspection: PluginPackageInspection; target: PluginInstallation | null } | null>(null);
+let packageGeneration = 0;
 const busyID = ref<number | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const upgradeFileInput = ref<HTMLInputElement | null>(null);
@@ -548,18 +561,76 @@ async function handleFileSelected(event: Event): Promise<void> {
     appStore.showError(t("admin.plugins.fileRequired"));
     return;
   }
+  await inspectAndInstall(file, null);
+}
+
+async function writePluginPackage(file: File, target: PluginInstallation | null, approval?: PluginPublisherApproval): Promise<void> {
+  if (target) {
+    if (approval) await adminAPI.plugins.upgrade(target.id, file, true, approval);
+    else await adminAPI.plugins.upgrade(target.id, file, true);
+    closeConfiguration();
+  } else if (approval) await adminAPI.plugins.upload(file, approval);
+  else await adminAPI.plugins.upload(file);
+}
+
+async function installSucceeded(target: PluginInstallation | null): Promise<void> {
+  appStore.showSuccess(t(target ? "admin.plugins.upgradeSuccess" : "admin.plugins.uploadSuccess"));
+  await loadPlugins();
+}
+
+async function inspectAndInstall(file: File, target: PluginInstallation | null): Promise<void> {
+  const generation = ++packageGeneration;
+  pendingInstall.value = null;
   uploading.value = true;
+  busyID.value = target?.id ?? null;
+  try {
+    const installed = await pluginStepUp.run(async () => {
+      await adminAPI.plugins.authorizeUpload();
+      const inspection = await adminAPI.plugins.inspect(file);
+      if (generation !== packageGeneration) return false;
+      if (inspection.signature_status === "untrusted") {
+        pendingInstall.value = { file, inspection, target };
+        return false;
+      }
+      await writePluginPackage(file, target);
+      return true;
+    });
+    if (installed && generation === packageGeneration) await installSucceeded(target);
+  } catch (error: unknown) {
+    if (generation === packageGeneration) reportSensitiveActionError(error);
+  } finally {
+    if (generation === packageGeneration) { uploading.value = false; busyID.value = null; }
+  }
+}
+
+function closePublisherReview(): void {
+  if (uploading.value) return;
+  packageGeneration++;
+  pendingInstall.value = null;
+}
+
+async function confirmPublisherInstall(): Promise<void> {
+  const pending = pendingInstall.value;
+  if (!pending?.inspection.publisher || uploading.value) return;
+  const generation = packageGeneration;
+  uploading.value = true;
+  busyID.value = pending.target?.id ?? null;
   try {
     await pluginStepUp.run(async () => {
       await adminAPI.plugins.authorizeUpload();
-      return adminAPI.plugins.upload(file);
+      await writePluginPackage(pending.file, pending.target, {
+        package_sha256: pending.inspection.package_sha256,
+        publisher_fingerprint: pending.inspection.publisher!.fingerprint,
+      });
     });
-    appStore.showSuccess(t("admin.plugins.uploadSuccess"));
-    await loadPlugins();
+    if (generation === packageGeneration) {
+      pendingInstall.value = null;
+      await installSucceeded(pending.target);
+    }
   } catch (error: unknown) {
-    reportSensitiveActionError(error);
+    if (generation === packageGeneration) reportSensitiveActionError(error);
   } finally {
-    uploading.value = false;
+    if (generation === packageGeneration) { uploading.value = false; busyID.value = null; }
   }
 }
 
@@ -661,20 +732,7 @@ async function handleUpgradeFile(event: Event): Promise<void> {
     return;
   }
   if (!window.confirm(t("admin.plugins.confirmUpgrade"))) return;
-  busyID.value = plugin.id;
-  try {
-    await pluginStepUp.run(async () => {
-      await adminAPI.plugins.authorizeUpload();
-      return adminAPI.plugins.upgrade(plugin.id, file, true);
-    });
-    closeConfiguration();
-    appStore.showSuccess(t("admin.plugins.upgradeSuccess"));
-    await loadPlugins();
-  } catch (error: unknown) {
-    reportSensitiveActionError(error);
-  } finally {
-    busyID.value = null;
-  }
+  await inspectAndInstall(file, plugin);
 }
 
 async function openVersions(plugin: PluginInstallation): Promise<void> {
@@ -1005,6 +1063,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  packageGeneration++;
+  pendingInstall.value = null;
   window.removeEventListener("message", handleBridgeMessage);
   clearPendingBridgeRequests();
   clearUIReadyTimeout();

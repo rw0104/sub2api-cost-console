@@ -67,6 +67,11 @@ func TestPluginProductionE2E(t *testing.T) {
 	keyFile := filepath.Join(root, "publisher.key")
 	require.NoError(t, os.WriteFile(keyFile, []byte(base64.StdEncoding.EncodeToString(private)), 0600))
 	packages := map[string]string{}
+	browserPackages := map[string]string{}
+	_, browserPrivate, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	browserKeyFile := filepath.Join(root, "browser-publisher.key")
+	require.NoError(t, os.WriteFile(browserKeyFile, []byte(base64.StdEncoding.EncodeToString(browserPrivate)), 0600))
 	for _, version := range []string{"0.1.0", "0.1.1"} {
 		binary := filepath.Join(root, "preprocess-"+version)
 		if runtime.GOOS == "windows" {
@@ -75,6 +80,8 @@ func TestPluginProductionE2E(t *testing.T) {
 		runPluginE2EGo(t, "build", "-ldflags", "-X main.accountType=apikey -X main.pluginVersion="+version, "-o", binary, "./pkg/pluginapi/examples/preprocess")
 		packages[version] = filepath.Join(root, "request-policy-"+version+".s2plugin")
 		runPluginE2EGo(t, "run", "./pkg/pluginapi/examples/preprocess/pack", "-binary", binary, "-out", packages[version], "-version", version, "-account-type", "apikey", "-signing-key", keyFile, "-key-id", "e2e")
+		browserPackages[version] = filepath.Join(root, "request-policy-browser-"+version+".s2plugin")
+		runPluginE2EGo(t, "run", "./pkg/pluginapi/examples/preprocess/pack", "-binary", binary, "-out", browserPackages[version], "-version", version, "-account-type", "apikey", "-signing-key", browserKeyFile, "-key-id", "e2e-browser")
 	}
 
 	var upstreamMu sync.Mutex
@@ -124,7 +131,7 @@ func TestPluginProductionE2E(t *testing.T) {
 		"jwt":      map[string]any{"secret": strings.Repeat("plugin-e2e-only-", 4)},
 		"totp":     map[string]any{"encryption_key": strings.Repeat("a", 64)},
 		"pricing":  map[string]any{"remote_url": upstream.URL + "/pricing", "hash_url": "", "data_dir": filepath.Join(root, "pricing"), "fallback_file": ""},
-		"plugins":  map[string]any{"data_dir": filepath.Join(root, "plugins"), "trusted_publishers": map[string]string{"e2e": base64.StdEncoding.EncodeToString(public)}},
+		"plugins":  map[string]any{"data_dir": filepath.Join(root, "plugins"), "trusted_publishers": map[string]string{}},
 		// The test provider is plain HTTP on loopback. Production allowlist mode
 		// requires HTTPS; this isolated config does not change deployment defaults.
 		"security": map[string]any{"url_allowlist": map[string]any{"enabled": false, "allow_private_hosts": true, "allow_insecure_http": true}},
@@ -167,7 +174,21 @@ func TestPluginProductionE2E(t *testing.T) {
 	account := client.json("POST", "/api/v1/admin/accounts", map[string]any{"name": "plugin-e2e", "platform": "openai", "type": "apikey", "credentials": map[string]any{"api_key": "isolated-upstream-key", "base_url": upstream.URL + "/v1"}, "concurrency": 16, "priority": 1, "rate_multiplier": 1, "group_ids": []any{group["id"]}, "upstream_billing_probe_enabled": false}, 200)
 	key := client.json("POST", "/api/v1/keys", map[string]any{"name": "plugin-e2e", "group_id": group["id"]}, 200)
 	apiKey := key["key"].(string)
-	installed := client.upload("/api/v1/admin/plugins/upload", packages["0.1.0"], 201)
+	inspection := client.upload("/api/v1/admin/plugins/inspect", packages["0.1.0"], 200)
+	require.Equal(t, "untrusted", inspection["signature_status"])
+	publisher := inspection["publisher"].(map[string]any)
+	client.upload("/api/v1/admin/plugins/upload", packages["0.1.0"], 400)
+	var trustCount int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM sub2api_plugin_publishers`).Scan(&trustCount))
+	require.Zero(t, trustCount)
+	installed := client.uploadWithFields("/api/v1/admin/plugins/upload", packages["0.1.0"], 201, map[string]string{
+		"trust_publisher": "true", "package_sha256": inspection["package_sha256"].(string), "publisher_fingerprint": publisher["fingerprint"].(string),
+	})
+	var savedPublic string
+	require.NoError(t, db.QueryRow(`SELECT public_key FROM sub2api_plugin_publishers WHERE key_id='e2e'`).Scan(&savedPublic))
+	require.Equal(t, base64.StdEncoding.EncodeToString(public), savedPublic)
+	knownInspection := client.upload("/api/v1/admin/plugins/inspect", packages["0.1.1"], 200)
+	require.Equal(t, "trusted", knownInspection["signature_status"], "later packages from this publisher do not need repeated trust")
 	pluginPath := fmt.Sprintf("/api/v1/admin/plugins/%.0f", installed["id"].(float64))
 	client.json("PUT", pluginPath+"/config", map[string]any{"max_output_tokens": 12}, 200)
 	client.json("POST", pluginPath+"/enable", map[string]any{"rollout_percent": 100, "accept_untested": true}, 200)
@@ -286,7 +307,7 @@ func TestPluginProductionE2E(t *testing.T) {
 	// Optional local browser harness. The private fixture contains only synthetic
 	// credentials for these temporary containers. A bounded wait always cleans up.
 	if fixture := os.Getenv("SUB2API_PLUGIN_E2E_FIXTURE"); fixture != "" {
-		data, _ := json.Marshal(map[string]any{"backend_url": server.URL, "email": email, "password": password, "totp_secret": secret, "packages": packages, "plugin_id": installed["id"], "admin_id": adminID, "group_id": group["id"], "account_id": account["id"], "api_key": apiKey, "done_file": filepath.Join(root, "browser.done")})
+		data, _ := json.Marshal(map[string]any{"backend_url": server.URL, "email": email, "password": password, "totp_secret": secret, "packages": browserPackages, "plugin_id": installed["id"], "admin_id": adminID, "group_id": group["id"], "account_id": account["id"], "api_key": apiKey, "done_file": filepath.Join(root, "browser.done")})
 		require.NoError(t, os.WriteFile(fixture, data, 0600))
 		t.Cleanup(func() { _ = os.Remove(fixture) })
 		t.Logf("Browser fixture ready: %s", fixture)
@@ -332,9 +353,16 @@ func (c *pluginE2EClient) json(method, path string, body any, status int) map[st
 	return c.request(method, path, "application/json", bytes.NewReader(data), status)
 }
 func (c *pluginE2EClient) upload(path, file string, status int) map[string]any {
+	return c.uploadWithFields(path, file, status, nil)
+}
+
+func (c *pluginE2EClient) uploadWithFields(path, file string, status int, fields map[string]string) map[string]any {
 	c.t.Helper()
 	var data bytes.Buffer
 	w := multipart.NewWriter(&data)
+	for key, value := range fields {
+		require.NoError(c.t, w.WriteField(key, value))
+	}
 	part, err := w.CreateFormFile("plugin", filepath.Base(file))
 	require.NoError(c.t, err)
 	raw, err := os.ReadFile(file)

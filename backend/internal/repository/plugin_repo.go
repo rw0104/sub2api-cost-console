@@ -64,6 +64,14 @@ func (r *pluginRepository) GetByKey(ctx context.Context, key string) (*service.P
 }
 
 func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding) (*service.PluginInstallation, error) {
+	return r.installWithPublisher(ctx, plugin, bindings, nil)
+}
+
+func (r *pluginRepository) InstallWithPublisher(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
+	return r.installWithPublisher(ctx, plugin, bindings, publisher)
+}
+
+func (r *pluginRepository) installWithPublisher(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
 	manifestJSON, err := json.Marshal(plugin.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件清单: %w", err)
@@ -73,6 +81,11 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if publisher != nil {
+		if err := trustPluginPublisher(ctx, tx, publisher, plugin.InstalledBy); err != nil {
+			return nil, err
+		}
+	}
 	row := tx.QueryRowContext(ctx, `
 			INSERT INTO sub2api_plugin_installations (
 				plugin_key, name, version, description, author, manifest, artifact_data,

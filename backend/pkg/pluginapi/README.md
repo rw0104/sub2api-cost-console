@@ -8,7 +8,7 @@
 
 v2 已接入宿主进程管理、清单校验、能力路由、管理页和 OpenAI HTTP 出站预处理。可运行的 [请求策略示例](examples/preprocess/README.md) 包含运行时、配置 UI 和打包器。具体权限和修改白名单见 [v2 说明](v2/README.md)。
 
-**正式桌面 v0.2.39 / 扩展 1.2.0 已包含这些能力。** 另提供 [v2 OpenAI OAuth 保护传输](docs/protection-transport.md)。完整的 SDK、proto、Schema、示例、打包器及依赖源码可从 [v0.2.39 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.39) 的 `sub2api-plugin-devkit-v0.2.39.zip` 下载。
+**正式桌面 v0.3.0 / 扩展 1.3.0 已包含这些能力。** 另提供 [v2 OpenAI OAuth 保护传输](docs/protection-transport.md)。完整的 SDK、proto、Schema、示例、打包器及依赖源码可从 [v0.3.0 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.0) 的 `sub2api-plugin-devkit-v0.3.0.zip` 下载。
 
 ## 开发文档
 
@@ -54,7 +54,7 @@ ui/index.html
 ui/assets/...
 ```
 
-`manifest.json` 必须声明所有运行时和 UI 文件的 SHA-256。`signature.json` 使用受信任发布者的 Ed25519 私钥对 `manifest.json` 原始字节签名。官方 OpenAI Transport 公钥由宿主内置，第三方发布者公钥由部署者追加到 `plugins.trusted_publishers`。文件哈希由已签名清单保护。
+`manifest.json` 必须声明所有运行时和 UI 文件的 SHA-256。`signature.json` 使用发布者 Ed25519 私钥对 `manifest.json` 原始字节签名，并附上 `public_key`。正式桌面 0.3.0 会在首次导入时展示发布者并要求确认，确认后保存公钥，普通用户无需编辑配置。官方内置公钥及 `plugins.trusted_publishers` 预配置仍受优先保护。文件哈希由已签名清单保护。
 
 插件默认保持停用。未签名包默认拒绝安装；`plugins.allow_unsigned` 只应用于开发者自己构建的本地调试包。
 

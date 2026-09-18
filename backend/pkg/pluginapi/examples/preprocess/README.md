@@ -22,7 +22,7 @@ go build -ldflags "-X main.accountType=apikey" -o preprocess-apikey.exe ./pkg/pl
 go run ./pkg/pluginapi/examples/preprocess/pack -binary preprocess-apikey.exe -account-type apikey -signing-key "$keyPrefix.private" -key-id preprocess-demo -out request-policy-apikey.s2plugin
 ```
 
-以上命令生成签名包。将 `.public` 文件交给部署管理员，按开发指南配置 `plugins.trusted_publishers`，私钥自己保管且不进入插件包。已有密钥时跳过 keygen。省略 `-signing-key` 和 `-key-id` 才会生成未签名调试包，此类包仅能在显式允许未签名插件的独立开发环境安装。
+以上命令生成已编译、内置公钥的签名包。分享 `.s2plugin` 后，用户在正式桌面 0.3.0 首次导入时确认发布者即可安装，不需要 Go 或修改配置。可额外交付 `.public` 公钥供核对；私钥自己保管且不进入插件包。已有密钥时跳过 keygen。省略签名参数只会生成独立开发环境使用的未签名调试包。
 
 安装后在“插件管理”查看权限、打开“配置”、保存并测试，再按账号灰度启用。示例清单未声明已测试发布版本，启用需要现有的未验证版本确认。
 

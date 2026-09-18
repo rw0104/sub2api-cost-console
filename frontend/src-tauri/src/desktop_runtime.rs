@@ -2286,6 +2286,31 @@ mod tests {
     }
 
     #[test]
+    fn publisher_installation_requires_replacing_the_0_2_39_core() {
+        let current = CoreVersionRecord {
+            extension_version: "1.2.0".into(),
+            capabilities: required_capabilities()
+                .into_iter()
+                .filter(|capability| capability != "plugin_publisher_trust.v1")
+                .collect(),
+            ..core_record("0.2.5", "same-upstream", "old-core")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.3.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.5", "same-upstream", "new-core")
+        };
+        assert!(bundled
+            .capabilities
+            .iter()
+            .any(|capability| capability == "plugin_publisher_trust.v1"));
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
     fn stable_plugin_release_replaces_same_upstream_core_without_plugin_capabilities() {
         let current = CoreVersionRecord {
             extension_version: "1.1.2".into(),
@@ -2562,6 +2587,10 @@ mod tests {
         official
             .capabilities
             .push("openai.oauth.protection_transport.v1".into());
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        official
+            .capabilities
+            .push("plugin_publisher_trust.v1".into());
         assert_eq!(effective_algorithm_version(&official), "1.6.0");
     }
 
