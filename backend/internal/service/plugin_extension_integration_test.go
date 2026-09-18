@@ -194,7 +194,11 @@ func runPluginExtensionProcessIntegration(t *testing.T, isolated bool) {
 
 	t.Run("hot upgrade and rollback", func(t *testing.T) {
 		upgradeBinary := filepath.Join(root, "preprocess-upgrade.exe")
-		command := exec.CommandContext(buildCtx, "go", "build", "-ldflags", "-X main.pluginVersion=0.1.1", "-o", upgradeBinary, "./pkg/pluginapi/examples/preprocess")
+		// Give this compilation its own deadline; the initial build's budget
+		// also elapsed during process, routing and reconciliation checks.
+		upgradeBuildCtx, cancelUpgradeBuild := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancelUpgradeBuild()
+		command := exec.CommandContext(upgradeBuildCtx, "go", "build", "-ldflags", "-X main.pluginVersion=0.1.1", "-o", upgradeBinary, "./pkg/pluginapi/examples/preprocess")
 		command.Dir = filepath.Join("..", "..")
 		if isolated {
 			command.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
