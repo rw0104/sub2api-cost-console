@@ -93,9 +93,14 @@ def main():
             # through the visible upload control to cover UI -> multipart -> DB.
             page.locator('input[type="file"]').first.set_input_files(fixture["packages"]["0.1.0"])
             enter_otp()  # fresh browser session has no step-up grant
+            expect(page.get_by_text("First installation from this publisher", exact=True)).to_be_visible()
+            expect(page.get_by_test_id("confirm-publisher-install")).to_be_disabled()
+            snapshot("03-publisher-review")
+            page.get_by_test_id("publisher-consent").check()
+            response_action("/upload", lambda: page.get_by_test_id("confirm-publisher-install").click())
             expect(page.get_by_text("Plugin installed and kept disabled", exact=True)).to_be_visible()
             response_action("/enable", lambda: card.get_by_role("button", name="Enable", exact=True).click())
-            expect(card.get_by_text("Healthy", exact=True)).to_be_visible()
+            expect(card.get_by_text("Enabled", exact=True)).to_be_visible()
 
             card.get_by_role("button", name="Configure", exact=True).click()
             frame = page.frame_locator("iframe")
@@ -106,6 +111,8 @@ def main():
             expect(frame.get_by_role("status")).to_have_text("Configuration test passed")
             page.get_by_role("button", name="Close modal", exact=True).click()
 
+            card.get_by_role("button", name="Details & management", exact=True).click()
+            expect(card.get_by_text("Healthy", exact=True).first).to_be_visible()
             card.get_by_role("button", name="Routing policy", exact=True).click()
             dialog = page.get_by_role("dialog")
             snapshot("04-routing")
@@ -132,7 +139,7 @@ def main():
             response_action("/disable", lambda: card.get_by_role("button", name="Disable", exact=True).click())
             snapshot("06-complete")
             assert not errors, errors
-            (out / "result.json").write_text(json.dumps({"passed": True, "checks": ["login_totp", "install_stepup", "enable", "iframe_config_test", "routing_cas", "hot_upgrade", "rollback", "disable"], "snapshots": evidence, "page_errors": errors}, indent=2), encoding="utf-8")
+            (out / "result.json").write_text(json.dumps({"passed": True, "checks": ["login_totp", "install_stepup", "first_publisher_consent", "compiled_package_install", "remembered_publisher_upgrade", "enable", "iframe_config_test", "routing_cas", "hot_upgrade", "rollback", "disable"], "snapshots": evidence, "page_errors": errors}, indent=2), encoding="utf-8")
             done = Path(fixture["done_file"])
             pending = done.with_suffix('.tmp')
             pending.write_text('{"passed":true}', encoding="utf-8")

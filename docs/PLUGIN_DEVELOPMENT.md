@@ -1,19 +1,19 @@
-# 插件开发指南 · 正式版 v0.2.39
+# 插件开发指南 · 正式版 v0.3.0
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应已发布的正式桌面 **0.2.39**、兼容内核 **0.2.5**、扩展 **1.2.0**。已注册 `request.preprocess.v1` 和 `openai.oauth.protection_transport.v1`，兼容 v1 传输。旧桌面版或官方原版内核即使显示 0.2.5，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+> 本指南对应已发布的正式桌面 **0.3.0**、兼容内核 **0.2.5**、扩展 **1.3.0**。已注册 `request.preprocess.v1` 和 `openai.oauth.protection_transport.v1`，兼容 v1 传输。旧桌面版或官方原版内核即使显示 0.2.5，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
 >
 > 普通进程不是 OS 沙箱；签名证明来源，不保证代码安全。process 模式只安装可信插件，需要文件、网络和资源限制时启用 v2 container 模式。不要在正式数据库上试验新插件。
 
-开发者可自行实现、签名和分发插件，无需项目维护者代开发或代签。部署管理员一次性信任该开发者的公钥后，即可安装其签名包。当前正式版尚无图形化发布者授权入口，公钥配置步骤见第 3 节。
+开发者自行实现、编译一次并签名分发 `.s2plugin`，接收者不需要编译。正式桌面 0.3.0 可以在首次导入时显示发布者、声明权限和签名指纹，由管理员勾选信任后安装；无需编辑公钥配置。信任记录与安装事务一起保存，失败不会留下新授权。
 
 ## 0. 获取开发资料
 
-- 推荐下载 [v0.2.39 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.39/sub2api-plugin-devkit-v0.2.39.zip)，解压后先读根目录 `START_HERE.md`。
+- 推荐下载 [v0.3.0 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.0/sub2api-plugin-devkit-v0.3.0.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
-- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.2.39` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.0` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
 - 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
@@ -49,9 +49,22 @@ Get-FileHash dist/plugin-demo/request-policy-0.1.0-windows-amd64.s2plugin -Algor
 
 `.s2plugin` 是插件包，须在管理页上传；`x64-setup.exe` 是宿主安装器。不要混淆二者。
 
-## 3. 配置公钥并安装
+## 3. 普通用户直接导入成品包
 
-向部署者交付 `.public` 公钥、签名包、版本说明和 SHA-256，不交付私钥。以下命令输出配置片段，合并到宿主 `config.yaml` 的既有 `plugins` 节点：
+新版打包器自动在 `signature.json` 中附上 `public_key`。向用户交付 `.s2plugin`、版本说明和 SHA-256 即可；可额外提供公钥指纹供用户核对，私钥永不交付。用户安装正式桌面 0.3.0（扩展 1.3.0）后：
+
+1. 打开「插件管理」→「安装插件」，选择 `.s2plugin`，不用解压。
+2. 宿主校验签名、文件哈希和兼容性，不执行插件代码。首次遇到的发布者会显示确认窗口。
+3. 查看来源和权限，勾选「我信任此发布者」，点击「信任并安装」。取消不会建立信任；同名发布者若更换了公钥会被拒绝，不能覆盖已有信任。
+4. 安装后打开配置并测试，设置路由范围，然后启用。停用保留配置，卸载移除插件与其历史。
+
+信任保存在宿主数据库，重启和多实例共享均可使用；同一发布者以后的包不重复要求确认。普通用户不需要 SDK、Go、Rust 或 Node.js。`allow_unsigned` 默认仍为 false。
+
+### 兼容预配置与旧包
+
+已有 `plugins.trusted_publishers` 配置继续生效且优先于界面保存的信任，内置官方公钥仍不能覆盖。未内置公钥的旧签名包可在已信任其发布者时继续安装；首次安装时应由作者用新版打包器重新提供成品包，不要求接收者编译。
+
+需要集中预置信任的部署者仍可使用下面的配置片段，合并到既有 `config.yaml`；普通桌面用户优先使用上面的导入确认流程：
 
 ```powershell
 $publicKey = (Get-Content "$keyPrefix.public" -Raw).Trim()
@@ -61,9 +74,11 @@ Write-Output "  trusted_publishers:"
 Write-Output "    publisher-demo: '$publicKey'"
 ```
 
-不要覆盖整个配置文件或创建重复 YAML 键。Windows 正式桌面的受管内核配置在 `%APPDATA%\com.sub2api.cost-console\backend\config.yaml`；如果连接的是外部宿主，应修改该宿主实际使用的配置文件。修改后退出并重启对应宿主。`.public` 文件中的公钥与清单签名 `key_id` 必须对应，插件包携带公钥并不会自动获得信任。
+不要覆盖整个配置文件或创建重复 YAML 键。Windows 正式桌面的受管内核配置在 `%APPDATA%\com.sub2api.cost-console\backend\config.yaml`；如果连接的是外部宿主，应修改该宿主实际使用的配置文件。修改配置文件后重启对应宿主；界面导入确认不需要重启。公钥与签名 `key_id` 必须对应，包携带公钥并不等于自动获得信任。
 
-1. 安装正式桌面 v0.2.39，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
+### 开发环境验收
+
+1. 安装正式桌面 v0.3.0，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
@@ -134,6 +149,8 @@ go build -o preprocess.exe .
 
 v2 使用 `schema_version=2`、`plugin_protocol=2`、`extension_api=1`、`ui_bridge=1`；v1 保留 `transport_api=1`，不要混填。`requires.sub2api` 对比**内核版本**，不是桌面版本。`tested_sub2api_versions` 只写实测版本，范围内未声明测试时管理员需确认。清单与 GetInfo 不一致会拒绝启动；未知能力只能显示不兼容。
 
+签名元数据包含 `algorithm=ed25519`、`key_id`、Base64 `signature` 和 Base64 `public_key`。公钥只用于验签和确认指纹，不包含私钥。首次信任确认绑定上传包的 SHA-256 和公钥指纹；重新选择不同文件后必须重新确认。公钥轮换应使用新的发布者 key_id，不能让新包覆盖同名已有公钥。
+
 参考 [v2 Schema](../backend/pkg/pluginapi/v2/manifest.schema.json) 和 [包格式](../backend/pkg/pluginapi/docs/package-format.md)。
 
 ### 配置 UI
@@ -190,6 +207,7 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary dist/plugin-demo/preproc
 | --- | --- |
 | `GET` 前缀本身、`GET /:id` | 清单、兼容、绑定、运行状态 |
 | `POST /authorize-upload` | 轻量权限/step-up 校验，不安装文件 |
+| `POST /inspect` | multipart `plugin`；验证文件与签名，返回清单、兼容性、包 SHA-256、发布者指纹和 `trusted/untrusted/unsigned` 状态；不安装、不执行、不保存信任 |
 | `POST /upload` | multipart `plugin`，仍再次校验权限 |
 | `GET/PUT /:id/config`、`POST /:id/test` | 配置读写、已保存配置诊断 |
 | `POST /:id/enable` | `rollout_percent`、`accept_untested` |
@@ -199,7 +217,9 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary dist/plugin-demo/preproc
 | `GET /:id/versions`、`POST /:id/rollback` | 历史；回滚传 `version_id`、`accept_untested` |
 | `GET /:id/host`、`GET/PUT/DELETE /:id/secret-grants` | 遥测、秘密授权/撤销 |
 
-字段以 [v0.2.39 API 类型](https://github.com/rw0104/sub2api-cost-console/blob/v0.2.39/frontend/src/api/admin/plugins.ts) 和 [handler](https://github.com/rw0104/sub2api-cost-console/blob/v0.2.39/backend/internal/handler/admin/plugin_handler.go) 为准。这些宿主实现不包含在精简开发包内。
+字段以 [v0.3.0 API 类型](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.0/frontend/src/api/admin/plugins.ts) 和 [handler](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.0/backend/internal/handler/admin/plugin_handler.go) 为准。这些宿主实现不包含在精简开发包内。
+
+自建管理 UI 首次确认发布者时，在 `/upload` 或 `/:id/upgrade` 的 multipart 中附 `trust_publisher=true`、检查结果的 `package_sha256` 和 `publisher_fingerprint`。安装接口重新验签和计算摘要，两者不匹配就拒绝；这些写入仍受管理员认证与 step-up 保护。没有确认参数的未知发布者仍被拒绝。
 
 ## 10. 验收和排错
 
@@ -221,18 +241,18 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 
 | 问题 | 排查 |
 | --- | --- |
-| 签名不受信任 | key_id、Base64 公钥、宿主配置键是否一致；重启宿主 |
+| 签名不受信任 | 首次导入需主程序 0.3.0 / 扩展 1.3.0，并使用作者提供的内置公钥成品包；不要上传 SDK ZIP |
 | 不兼容/身份失败 | 宿主是否包含 v2；版本、能力、权限、超时是否与 GetInfo 一致 |
 | UI 拒绝 localStorage/网络 | sandbox 正常边界，改用包内资源和 Bridge |
 | 403 extension_error | 策略 deny，不是上游凭据错误，不要切账号重试 |
 | 503 extension_error | fail_closed、超时、并发、熔断、进程或绑定状态不可用 |
 | 未修改请求 | 检查作用域交集、优先级、灰度、权限和白名单 |
 | 容器启动失败 | 本地镜像、Docker Linux Engine、Linux 静态二进制与架构 |
-| 找不到 Host API/能力 | 检查正式桌面 0.2.39、扩展 1.2.0，以及实际连接的宿主身份，不能只看内核 0.2.5 |
+| 找不到 Host API/能力 | 检查正式桌面 0.3.0、扩展 1.3.0，以及实际连接的宿主身份，不能只看内核 0.2.5 |
 
 ### 向别人分发自己的插件
 
-交付 `.s2plugin`、发布者 `.public` 公钥、对应 `key_id`、SHA-256、兼容宿主版本、权限说明及变更记录。接收者使用正式主程序；管理员核实发布者后按第 3 节配置信任，然后上传、配置并按范围启用。无需接收者安装 Go、编译源码或安装测试版。
+交付已编译的 `.s2plugin`、SHA-256、兼容宿主版本、权限说明及变更记录。接收者使用正式主程序 0.3.0，在导入窗口确认发布者后安装、配置并按范围启用。无需接收者安装 Go、编译源码、手动填写公钥或安装测试版。开发者可额外提供 `.public` 公钥或指纹供用户核对。
 
 不要沿用示例 ID 发布多个不同插件；不要把私钥放入包、SDK、源码仓库或宿主配置。升级沿用原插件 ID 和发布者；需要轮换发布者密钥时，应先让部署管理员配置新公钥。
 
@@ -246,6 +266,6 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | --- | --- | --- |
 | `TestPluginExtensionProcessIntegration` | 签名、子进程、双实例、升级回滚可运行 | `backend/internal/service/plugin_extension_integration_test.go` |
 | `TestPluginProductionE2E`、`frontend/scripts/plugin-e2e.py` | UI/数据库/进程/网关闭环，拒绝不发上游不扣费 | `backend/cmd/server/plugin_e2e_test.go` |
-| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [正式发布验收](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/2026-09-18_development-desktop-v0.2.39-release-report.md) |
+| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [正式发布验收](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/2026-09-18_development-desktop-v0.3.0-release-report.md) |
 
 调用路径：核心认证/账号选择 → 准备 HTTP → 能力路由 → v2 子进程 → 宿主验证决策/补丁 → v1 或内置 HTTP → 核心响应/用量/计费。插件不能跳过核心直接改账本。

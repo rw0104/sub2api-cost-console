@@ -44,6 +44,14 @@ func (r *pluginRepository) GetVersion(ctx context.Context, id, versionID int64) 
 	return p, nil
 }
 func (r *pluginRepository) SwapVersion(ctx context.Context, expected, replacement *service.PluginInstallation) (*service.PluginInstallation, error) {
+	return r.swapVersionWithPublisher(ctx, expected, replacement, nil)
+}
+
+func (r *pluginRepository) SwapVersionWithPublisher(ctx context.Context, expected, replacement *service.PluginInstallation, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
+	return r.swapVersionWithPublisher(ctx, expected, replacement, publisher)
+}
+
+func (r *pluginRepository) swapVersionWithPublisher(ctx context.Context, expected, replacement *service.PluginInstallation, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
 	if expected.ID != replacement.ID || expected.PluginKey != replacement.PluginKey {
 		return nil, errors.New("插件版本切换身份无效")
 	}
@@ -52,6 +60,11 @@ func (r *pluginRepository) SwapVersion(ctx context.Context, expected, replacemen
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if publisher != nil {
+		if err := trustPluginPublisher(ctx, tx, publisher, replacement.InstalledBy); err != nil {
+			return nil, err
+		}
+	}
 	current, err := scanPlugin(tx.QueryRowContext(ctx, pluginSelectSQL+" WHERE id=$1 FOR UPDATE", expected.ID))
 	if err != nil {
 		return nil, err

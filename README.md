@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.2.39 已正式开放插件宿主能力。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.2.39 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.39) 下载配套 SDK 与示例。
+**v0.3.0 已正式开放插件宿主能力。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.0 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.0) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
@@ -230,17 +230,19 @@
 
 ## 插件与开发者
 
-从 **v0.2.39 / 内核 0.2.5 / 扩展 1.2.0** 开始，正式版提供插件管理和 v2 SDK。开发插件不需要修改或重新编译桌面程序；插件的静态配置页通过宿主 UI Bridge 加载。
+从 **v0.3.0 / 内核 0.2.5 / 扩展 1.3.0** 开始，正式版提供插件管理和 v2 SDK。开发插件不需要修改或重新编译桌面程序；插件的静态配置页通过宿主 UI Bridge 加载。
 
 | 你想做什么 | 从这里开始 |
 | --- | --- |
 | 开发第一个插件 | [插件开发指南](docs/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装、调试和分发 |
-| 下载可以直接编译的 SDK 与示例 | [v0.2.39 开发包 ZIP](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.39/sub2api-plugin-devkit-v0.2.39.zip)：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
+| 下载可以直接编译的 SDK 与示例 | [v0.3.0 开发包 ZIP](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.0/sub2api-plugin-devkit-v0.3.0.zip)：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
 | 限制生成参数或执行请求准入 | [v2 请求预处理示例](backend/pkg/pluginapi/examples/preprocess/README.md) |
 | 自行实现 OpenAI OAuth HTTP/TLS 传输 | [v2 保护传输接口](backend/pkg/pluginapi/docs/protection-transport.md) |
 | 添加配置界面或调用宿主服务 | [UI Bridge](backend/pkg/pluginapi/docs/ui-bridge.md)、[Host API](backend/pkg/pluginapi/docs/host-api.md) |
 
-开发者的流程是：**下载开发包 → 修改公开示例 → 编译自己的二进制 → 用自己的发布者密钥签名 → 分发 `.s2plugin` 和公钥**。不需要项目维护者代开发或代签名。当前版本由部署管理员在 `plugins.trusted_publishers` 中信任发布者公钥，同一发布者配置一次即可；尚未提供图形化的发布者授权入口。
+普通用户只需要开发者提供的**已编译 `.s2plugin` 安装包**：导入后，首次遇到发布者时会显示插件权限和签名信息，确认信任后即可安装，再按需配置并启用。同一发布者后续无需重复确认，不需要 Go、SDK 或手动修改公钥配置。SDK ZIP 是给开发者的源码资料，不能作为插件导入。
+
+开发者的流程是：**下载开发包 → 修改公开示例 → 编译自己的二进制 → 用自己的发布者密钥签名 → 分发 `.s2plugin`**。打包器会把公钥附在签名元数据中，私钥仍由开发者自己保管；不需要项目维护者代开发或代签名。宿主先验证签名和文件，再由安装者确认来源，不会自动信任包内任意公钥。
 
 管理员在「系统设置」中显示「插件管理」菜单后，可以上传 `.s2plugin`，打开配置页，再选择路由范围并启用。安装后默认停用；**停用保留安装和配置，卸载移除该插件及其配置/历史**。升级支持保留最近 5 个版本快照，回滚窗口为 24 小时。
 
