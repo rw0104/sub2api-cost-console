@@ -927,6 +927,11 @@ fn spawn_backend_process(
         .env("SERVER_PORT", BACKEND_PORT.to_string())
         .env("ZONEINFO", &zoneinfo_path)
         .env("SUB2API_DESKTOP", "1")
+        .env("SUB2API_DESKTOP_CONTROL", "stdin-v1")
+        .env(
+            "SUB2API_DESKTOP_VERSION",
+            app.package_info().version.to_string(),
+        )
         .env(
             "SUB2API_DESKTOP_RETURN_URL",
             "http://tauri.localhost/index.html#/admin/cost-center?desktop=1",
@@ -1199,7 +1204,7 @@ fn stop_backend_generation(
         inner.child.take()
     };
     if let Some(child) = child {
-        child.kill()?;
+        child.stop()?;
     }
     Ok(true)
 }
@@ -1212,7 +1217,12 @@ pub async fn desktop_backend_prepare_relaunch(
     supervisor: tauri::State<'_, BackendSupervisor>,
 ) -> Result<(), String> {
     let _update = supervisor.update_lock.lock().await;
+    let managed = supervisor.snapshot().managed;
     stop_backend_internal(&supervisor, false)?;
+    // An external API service is not owned by this desktop installer.
+    if !managed {
+        return Ok(());
+    }
     if wait_for_backend_port_release().await.is_ok() {
         return Ok(());
     }

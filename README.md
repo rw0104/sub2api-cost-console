@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.3.1 已同步上游 v0.2.7 内核。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.1 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.1) 下载配套 SDK 与示例。
+**v0.3.2 修复桌面更新后的插件停止与恢复。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.2 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.2) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
@@ -230,12 +230,12 @@
 
 ## 插件与开发者
 
-从 **v0.3.1 / 内核 0.2.7 / 扩展 1.3.0** 开始，正式版提供插件管理和 v2 SDK，并包含上游通用插件宿主服务。开发插件不需要修改或重新编译桌面程序；插件的静态配置页通过宿主 UI Bridge 加载。
+从 **v0.3.0 / 内核 0.2.5 / 扩展 1.3.0** 开始，正式版提供插件管理和 v2 SDK，并包含上游通用插件宿主服务。开发插件不需要修改或重新编译桌面程序；插件的静态配置页通过宿主 UI Bridge 加载。
 
 | 你想做什么 | 从这里开始 |
 | --- | --- |
 | 开发第一个插件 | [插件开发指南](docs/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装、调试和分发 |
-| 下载可以直接编译的 SDK 与示例 | [v0.3.1 开发包 ZIP](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.1/sub2api-plugin-devkit-v0.3.1.zip)：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
+| 下载可以直接编译的 SDK 与示例 | [v0.3.2 开发包 ZIP](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.2/sub2api-plugin-devkit-v0.3.2.zip)：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
 | 限制生成参数或执行请求准入 | [v2 请求预处理示例](backend/pkg/pluginapi/examples/preprocess/README.md) |
 | 自行实现 OpenAI OAuth HTTP/TLS 传输 | [v2 保护传输接口](backend/pkg/pluginapi/docs/protection-transport.md) |
 | 添加配置界面或调用宿主服务 | [UI Bridge](backend/pkg/pluginapi/docs/ui-bridge.md)、[Host API](backend/pkg/pluginapi/docs/host-api.md) |
@@ -265,6 +265,8 @@
 <a id="updates"></a>
 
 ## 更新与日常使用
+
+桌面 v0.3.2 起，桌面或兼容内核升级后的首次启动会自动停用旧插件并保留配置。请在插件管理中检查兼容性后重新启用；普通重启不重复停用。导入提示不认识 `failure_mode` 时，请检查实际连接的服务是否为本项目的 v2 兼容内核。
 
 ### 桌面和内核可以分别更新
 
@@ -361,7 +363,7 @@
 
 ## 版本说明与反馈
 
-这份介绍按 **桌面 v0.3.1** 的功能整理，内置兼容内核基线为 **v0.2.7**；可下载安装的版本以发布页为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+这份介绍按 **桌面 v0.3.2** 的功能整理，内置兼容内核基线为 **v0.2.7**；可下载安装的版本以发布页为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)

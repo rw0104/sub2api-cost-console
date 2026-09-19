@@ -24,6 +24,7 @@ const {
   savePluginConfig,
   createUISession,
   stepUpRun,
+  showError,
 } = vi.hoisted(() => ({
   listPlugins: vi.fn(),
   getPlugin: vi.fn(),
@@ -42,6 +43,7 @@ const {
   savePluginConfig: vi.fn(),
   createUISession: vi.fn(),
   stepUpRun: vi.fn((action: () => Promise<unknown>) => action()),
+  showError: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -78,7 +80,7 @@ vi.mock('@/api/url', async (importOriginal) => ({
 
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError,
     showSuccess: vi.fn(),
     showInfo: vi.fn(),
   }),
@@ -302,6 +304,19 @@ describe('管理员插件页二次验证', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     await vi.advanceTimersByTimeAsync(16_000)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('解释 v2 字段不被当前内核识别并保留插件包校验', async () => {
+    inspectPlugin.mockRejectedValueOnce(new Error('解析插件清单: json: unknown field "failure_mode"'))
+    const wrapper = mountView()
+    await flushPromises()
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [new File(['package'], 'example.s2plugin')] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(showError).toHaveBeenCalledWith('admin.plugins.v2HostRequired')
+    expect(uploadPlugin).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('关闭对话框后丢弃迟到的会话，避免重新创建 iframe', async () => {

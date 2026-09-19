@@ -358,6 +358,8 @@ async function checkAll(silent = true) {
 
 async function installDesktop() {
   if (!appUpdate.value) return
+  const update = appUpdate.value
+  let stopping = false
   operation.value = 'desktop'
   errorMessage.value = ''
   progressStage.value = 'downloading'
@@ -365,20 +367,29 @@ async function installDesktop() {
   progressDownloaded.value = 0
   progressTotal.value = null
   try {
-    await appUpdate.value.downloadAndInstall((event) => {
+    await update.download((event) => {
       if (event.event === 'Started') {
         progressTotal.value = event.data.contentLength ?? null
       } else if (event.event === 'Progress') {
         progressDownloaded.value += event.data.chunkLength
       } else if (event.event === 'Finished') {
-        progressStage.value = 'finished'
-        progressMessage.value = '桌面更新已验签安装，正在安全重启'
+        progressStage.value = 'stopping'
+        progressMessage.value = '安装包已下载，正在停止本地内核和插件'
       }
     })
+    stopping = true
     await invoke('desktop_backend_prepare_relaunch')
+    await update.install()
     await relaunch()
   } catch (error) {
     errorMessage.value = messageOf(error)
+    if (stopping) {
+      try {
+        await invoke('desktop_backend_start')
+      } catch (restartError) {
+        errorMessage.value += '；恢复本地内核失败：' + messageOf(restartError)
+      }
+    }
     progressStage.value = ''
   } finally {
     operation.value = null

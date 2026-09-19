@@ -42,11 +42,12 @@ type pluginRoute struct {
 
 // PluginManager 管理插件安装、配置、进程生命周期和 OpenAI OAuth 能力绑定。
 type PluginManager struct {
-	repo      PluginRepository
-	encryptor SecretEncryptor
-	cfg       *config.Config
-	hostInfo  PluginHostInfo
-	installer *PluginPackageInstaller
+	repo           PluginRepository
+	encryptor      SecretEncryptor
+	cfg            *config.Config
+	hostInfo       PluginHostInfo
+	installer      *PluginPackageInstaller
+	desktopUpgrade *pluginDesktopUpgrade
 	// kvStore 为运行中的插件提供通用宿主键值存储；为 nil 时不向插件暴露宿主服务。
 	kvStore PluginKVStore
 	// accountDirectory 为声明了对应能力的插件提供账号目录与出站身份解析（敏感能力）；
@@ -81,6 +82,7 @@ func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *con
 		cfg:                cfg,
 		hostInfo:           hostInfo,
 		installer:          installer,
+		desktopUpgrade:     newPluginDesktopUpgrade(installer.RootDir(), hostInfo),
 		kvStore:            kvStore,
 		runtimes:           make(map[int64]*pluginRuntime),
 		localInstallations: make(map[int64]*PluginInstallation),
@@ -311,6 +313,11 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 		m.publishUnavailableExtensions("插件启用状态暂时无法读取")
 		m.publishUnavailableRoute(0, 100, "插件启用状态暂时无法读取")
 		return fmt.Errorf("读取插件启用状态: %w", err)
+	}
+	if err := m.prepareDesktopPlugins(ctx, installations); err != nil {
+		m.publishUnavailableExtensions("桌面升级后的插件停用尚未完成")
+		m.publishUnavailableRoute(0, 100, "桌面升级后的插件停用尚未完成")
+		return err
 	}
 	m.cleanupStaleLocalInstallations(installations)
 	if secrets, ok := m.repo.(PluginSecretRepository); ok {

@@ -21,10 +21,21 @@ class PrivateFieldUpdate {
   version = '0.2.7'
   body = 'signed desktop update'
   #downloads = 0
+  events: string[] = []
 
   async downloadAndInstall(onEvent: (event: { event: string; data: Record<string, never> }) => void) {
+    await this.download(onEvent)
+    await this.install()
+  }
+
+  async download(onEvent: (event: { event: string; data: Record<string, never> }) => void) {
+    this.events.push('download')
     this.#downloads += 1
     onEvent({ event: 'Finished', data: {} })
+  }
+
+  async install() {
+    this.events.push('install')
   }
 
   get downloads() {
@@ -93,6 +104,11 @@ describe('DesktopUpdateCenter', () => {
   it('keeps the Tauri Update instance unproxied while installing', async () => {
     const update = new PrivateFieldUpdate()
     mocks.check.mockResolvedValue(update)
+    const invoke = mocks.invoke.getMockImplementation()!
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'desktop_backend_prepare_relaunch') update.events.push('stop')
+      return invoke(command)
+    })
 
     const wrapper = mount(DesktopUpdateCenter)
     await flushPromises()
@@ -108,12 +124,41 @@ describe('DesktopUpdateCenter', () => {
     await flushPromises()
 
     expect(update.downloads).toBe(1)
+    expect(update.events).toEqual(['download', 'stop', 'install'])
     expect(mocks.invoke).toHaveBeenCalledWith('desktop_backend_prepare_relaunch')
     expect(mocks.relaunch).toHaveBeenCalledOnce()
     expect(wrapper.text()).not.toContain('Cannot read private member')
 
     wrapper.unmount()
   })
+
+  for (const failure of ['download', 'stop', 'install'] as const) {
+    it('recovers safely when desktop update fails at ' + failure, async () => {
+      const update = new PrivateFieldUpdate()
+      const install = vi.spyOn(update, 'install')
+      if (failure === 'download') vi.spyOn(update, 'download').mockRejectedValueOnce(new Error('download failed'))
+      if (failure === 'install') install.mockRejectedValueOnce(new Error('install failed'))
+      const invoke = mocks.invoke.getMockImplementation()!
+      mocks.invoke.mockImplementation(async (command: string) => {
+        if (failure === 'stop' && command === 'desktop_backend_prepare_relaunch') throw new Error('stop failed')
+        return invoke(command)
+      })
+      mocks.check.mockResolvedValue(update)
+      const wrapper = mount(DesktopUpdateCenter)
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(1_800)
+      await flushPromises()
+      await wrapper.get('button.desktop-update__trigger').trigger('click')
+      await wrapper.findAll('button').find(b => b.text().includes('安装桌面更新'))!.trigger('click')
+      await flushPromises()
+      expect(mocks.relaunch).not.toHaveBeenCalled()
+      if (failure !== 'install') expect(install).not.toHaveBeenCalled()
+      if (failure === 'download') expect(mocks.invoke).not.toHaveBeenCalledWith('desktop_backend_prepare_relaunch')
+      else expect(mocks.invoke).toHaveBeenCalledWith('desktop_backend_start')
+      expect(wrapper.text()).toContain(failure + ' failed')
+      wrapper.unmount()
+    })
+  }
 
   it('offers the same-upstream compatible core when the active core lacks required capabilities', async () => {
     mocks.check.mockResolvedValue(null)
