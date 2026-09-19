@@ -228,7 +228,8 @@
               </div>
               <p
                 v-if="plugin.last_error"
-                class="mt-3 break-words text-xs text-red-600 dark:text-red-400"
+                class="mt-3 break-words text-xs"
+                :class="plugin.state === 'disabled' ? 'text-amber-700 dark:text-amber-300' : 'text-red-600 dark:text-red-400'"
               >
                 {{ plugin.last_error }}
               </p>
@@ -519,9 +520,13 @@ function waitForUIReady(): void {
 
 function errorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) {
-    return String(
+    const message = String(
       (error as { message?: unknown }).message || t("common.unknownError"),
     );
+    if (/json:\s*unknown field "(failure_mode|extension_api|permissions|synchronous)"/.test(message)) {
+      return t("admin.plugins.v2HostRequired");
+    }
+    return message;
   }
   return t("common.unknownError");
 }

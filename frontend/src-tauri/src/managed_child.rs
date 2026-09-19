@@ -19,10 +19,23 @@ impl ManagedChild {
     pub fn pid(&self) -> u32 {
         self.child.pid()
     }
-    pub fn kill(self) -> Result<(), String> {
-        let Self { child, lifetime } = self;
+    pub fn stop(self) -> Result<(), String> {
+        let Self {
+            mut child,
+            lifetime,
+        } = self;
+        // Windows cannot deliver SIGTERM to the Go sidecar. Its inherited
+        // stdin requests the normal server/plugin cleanup path instead.
+        #[cfg(windows)]
+        if child.write(b"sub2api:desktop:shutdown:v1\n").is_ok()
+            && lifetime.wait_for_exit_with_timeout(15_000).is_ok()
+        {
+            return lifetime.terminate_tree();
+        }
         // The process may have exited before its termination event was consumed.
         let result = child.kill();
+        #[cfg(windows)]
+        lifetime.terminate_tree()?;
         lifetime
             .wait_for_exit()
             .map_err(|error| format!("无法确认内核已退出：{error}；终止结果：{result:?}"))
@@ -81,13 +94,52 @@ impl ProcessLifetime {
         }
     }
     fn wait_for_exit(&self) -> Result<(), String> {
+        self.wait_for_exit_with_timeout(5_000)
+    }
+    fn wait_for_exit_with_timeout(&self, milliseconds: u32) -> Result<(), String> {
         use windows_sys::Win32::{
             Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject,
         };
-        if unsafe { WaitForSingleObject(self.process as _, 5_000) } == WAIT_OBJECT_0 {
+        if unsafe { WaitForSingleObject(self.process as _, milliseconds) } == WAIT_OBJECT_0 {
             Ok(())
         } else {
-            Err("内核进程未在 5 秒内退出".into())
+            Err("内核进程未在等待期限内退出".into())
+        }
+    }
+
+    fn terminate_tree(&self) -> Result<(), String> {
+        use windows_sys::Win32::System::JobObjects::*;
+        unsafe {
+            if TerminateJobObject(self.job as _, 1) == 0 {
+                return Err(format!(
+                    "无法停止内核和插件进程：{}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+                if QueryInformationJobObject(
+                    self.job as _,
+                    JobObjectBasicAccountingInformation,
+                    &mut info as *mut _ as *mut _,
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                ) == 0
+                {
+                    return Err(format!(
+                        "无法确认插件进程已退出：{}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                if info.ActiveProcesses == 0 {
+                    return Ok(());
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err("内核或插件进程尚未退出，无法安全更新".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
         }
     }
 }
@@ -158,5 +210,41 @@ mod tests {
         child.kill().unwrap();
         guard.wait_for_exit().unwrap();
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn stopping_job_waits_for_plugin_descendants_too() {
+        use std::io::{BufRead, BufReader, Write};
+        use windows_sys::Win32::{
+            Foundation::{CloseHandle, WAIT_OBJECT_0},
+            System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+        };
+        let mut parent = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                "$null = [Console]::ReadLine(); $p = Start-Process ping.exe -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru; [Console]::WriteLine($p.Id); Wait-Process -Id $p.Id"])
+            .creation_flags(0x0800_0000)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().unwrap();
+        let guard = ProcessLifetime::attach(parent.id()).unwrap();
+        // Spawn the descendant only after the supervisor job owns its parent.
+        parent.stdin.take().unwrap().write_all(b"spawn\n").unwrap();
+        let output = parent.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            BufReader::new(output).read_line(&mut line).unwrap();
+            let _ = tx.send(line.trim().parse::<u32>().unwrap());
+        });
+        let plugin_pid = rx.recv_timeout(Duration::from_secs(30)).unwrap();
+        let plugin = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, plugin_pid) };
+        assert!(!plugin.is_null());
+        let stopped = guard.terminate_tree();
+        let exited = unsafe { WaitForSingleObject(plugin, 0) };
+        unsafe {
+            CloseHandle(plugin);
+        }
+        stopped.unwrap();
+        assert_eq!(exited, WAIT_OBJECT_0, "plugin descendant survived stop");
+        parent.wait().unwrap();
     }
 }

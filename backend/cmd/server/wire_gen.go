@@ -386,8 +386,9 @@ func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
 
 func providePluginHostInfo(buildInfo handler.BuildInfo) service.PluginHostInfo {
 	return service.PluginHostInfo{
-		Version:   buildInfo.Version,
-		BuildType: buildInfo.BuildType,
+		Version:          buildInfo.Version,
+		BuildType:        buildInfo.BuildType,
+		ExtensionVersion: CoreExtensionVersion,
 	}
 }
 

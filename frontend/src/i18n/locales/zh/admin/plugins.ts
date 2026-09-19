@@ -135,6 +135,7 @@ export default {
     confirmUninstall: '确定卸载此插件吗？插件必须先停用。此操作会移除安装文件和配置。',
     confirmUntested: '该插件兼容当前版本范围，但未声明已测试当前 Sub2API 版本。确定承担风险并启用吗？',
     fileRequired: '请选择已编译的 .s2plugin 安装包；源码或 SDK 压缩包不能直接安装。',
+    v2HostRequired: '当前连接的内核无法识别 v2 插件字段。请在「版本与更新」启用本项目的兼容内核，并确认没有连接旧版或上游原版服务；不要删除 failure_mode 等字段或修改已签名安装包。',
     bridgeRejected: '插件 UI 消息校验失败',
     onlyOpenAI: '支持 OpenAI OAuth 传输与 v2 请求预处理',
     noAccountCoupling: '作用域为平台与账号类型，不修改账号数据，也不需要在账号页逐个开启。'
