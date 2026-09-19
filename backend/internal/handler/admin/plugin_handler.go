@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -383,6 +384,42 @@ func (h *PluginHandler) SaveConfig(c *gin.Context) {
 		return
 	}
 	saved, err := h.manager.SaveConfig(c.Request.Context(), id, raw)
+	if err != nil {
+		if infraerrors.Reason(err) == service.PluginConfigUnreadableReason {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.BadRequest(c, err.Error())
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", saved)
+}
+
+func (h *PluginHandler) RecoverConfig(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Config         json.RawMessage `json:"config"`
+		ExpectedDigest string          `json:"expected_config_digest"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4*1024*1024+1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		response.BadRequest(c, "重新配置请求无效")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		response.BadRequest(c, "重新配置请求只能包含一个 JSON 对象")
+		return
+	}
+	var recoveredBy *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		userID := subject.UserID
+		recoveredBy = &userID
+	}
+	saved, err := h.manager.RecoverConfig(c.Request.Context(), id, request.Config, request.ExpectedDigest, recoveredBy)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return

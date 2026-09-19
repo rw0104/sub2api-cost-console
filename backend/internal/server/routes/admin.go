@@ -776,6 +776,7 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		plugins.GET("/:id/config", h.Admin.Plugin.GetConfig)
 		plugins.GET("/:id/status", h.Admin.Plugin.Status)
 		plugins.PUT("/:id/config", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveConfig)
+		plugins.POST("/:id/config/recover", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.RecoverConfig)
 		plugins.POST("/:id/test", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Test)
 		plugins.POST("/:id/ui-session", h.Admin.Plugin.CreateUISession)
 	}

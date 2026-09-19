@@ -342,6 +342,13 @@
         width="wide"
         @close="closeConfiguration"
       >
+        <div v-if="configRecoveryDigest" class="border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100" role="alert">
+          <p>{{ t('admin.plugins.configUnreadable') }}</p>
+          <label class="mt-2 flex items-start gap-2">
+            <input v-model="configRecoveryConfirmed" type="checkbox" data-testid="confirm-config-recovery" :disabled="configPlugin?.state !== 'disabled' || hasEnabledBinding(configPlugin)" />
+            <span>{{ t('admin.plugins.confirmConfigRecovery') }}</span>
+          </label>
+        </div>
         <div
           class="relative min-h-[min(480px,60dvh)] overflow-hidden bg-gray-50 dark:bg-dark-900"
           :style="{ height: `min(${iframeHeight}px, calc(100dvh - 180px))` }"
@@ -496,6 +503,8 @@ const hostLoading = ref(false);
 const hostError = ref("");
 const rolloutValues = ref<Record<number, number>>({});
 const configPlugin = ref<PluginInstallation | null>(null);
+const configRecoveryDigest = ref("");
+const configRecoveryConfirmed = ref(false);
 const uiSession = ref<PluginUISession | null>(null);
 const pluginFrame = ref<HTMLIFrameElement | null>(null);
 const uiLoading = ref(false);
@@ -774,8 +783,8 @@ async function rollbackPlugin(version: PluginVersion): Promise<void> {
   }
 }
 
-function hasEnabledBinding(plugin: PluginInstallation): boolean {
-  return plugin.bindings.some((binding) => binding.enabled);
+function hasEnabledBinding(plugin: PluginInstallation | null): boolean {
+  return plugin?.bindings.some((binding) => binding.enabled) ?? false;
 }
 
 function setRollout(id: number, event: Event): void {
@@ -856,6 +865,8 @@ async function openConfiguration(plugin: PluginInstallation): Promise<void> {
   const generation = ++frameGeneration;
   clearUIReadyTimeout();
   configPlugin.value = plugin;
+  configRecoveryDigest.value = "";
+  configRecoveryConfirmed.value = false;
   uiSession.value = null;
   pluginFrameLoaded.value = false;
   clearPendingBridgeRequests();
@@ -881,6 +892,8 @@ function closeConfiguration(): void {
   clearPendingBridgeRequests();
   pluginFrameLoaded.value = false;
   configPlugin.value = null;
+  configRecoveryDigest.value = "";
+  configRecoveryConfirmed.value = false;
   uiSession.value = null;
   uiLoading.value = false;
   uiError.value = "";
@@ -994,12 +1007,20 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
         ) {
           throw new Error(t("admin.plugins.bridgeRejected"));
         }
-        const config = await pluginStepUp.run(() =>
-          adminAPI.plugins.saveConfig(
-            pluginID,
-            message.config as Record<string, unknown>,
-          ),
-        );
+        const digest = configRecoveryDigest.value;
+        const config = await pluginStepUp.run(() => {
+          if (generation !== frameGeneration) throw new Error(t('common.cancel'));
+          if (digest) {
+            if (!configRecoveryConfirmed.value || configPlugin.value?.state !== 'disabled' || hasEnabledBinding(configPlugin.value)) {
+              throw new Error(t('admin.plugins.confirmConfigRecovery'));
+            }
+            return adminAPI.plugins.recoverConfig(pluginID, message.config as Record<string, unknown>, digest);
+          }
+          return adminAPI.plugins.saveConfig(pluginID, message.config as Record<string, unknown>);
+        });
+        if (generation !== frameGeneration) break;
+        configRecoveryDigest.value = "";
+        configRecoveryConfirmed.value = false;
         postBridgeResult(message, { ok: true, config }, generation);
         appStore.showSuccess(t("common.saved"));
         break;
@@ -1044,6 +1065,14 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
       }
     }
   } catch (error: unknown) {
+    if (generation === frameGeneration && typeof error === "object" && error !== null && "reason" in error &&
+        error.reason === "PLUGIN_CONFIG_UNREADABLE" && "metadata" in error) {
+      const metadata = error.metadata as { config_digest?: unknown } | undefined;
+      if (typeof metadata?.config_digest === "string" && /^[a-f0-9]{64}$/.test(metadata.config_digest)) {
+        configRecoveryDigest.value = metadata.config_digest;
+        configRecoveryConfirmed.value = false;
+      }
+    }
     if (isStepUpBlocked(error)) reportSensitiveActionError(error);
     postBridgeResult(message, {
       ok: false,
