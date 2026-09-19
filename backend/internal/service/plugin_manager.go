@@ -745,7 +745,17 @@ func (m *PluginManager) GetConfig(ctx context.Context, id int64) (json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	return m.decryptConfig(installation)
+	config, err := m.decryptConfig(installation)
+	if err == nil {
+		return config, nil
+	}
+	// A changed encryption key makes the old ciphertext permanently
+	// unverifiable. Clear only that ciphertext and let the admin save a fresh
+	// config; keeping it here prevents the plugin from ever starting.
+	if resetErr := m.resetInvalidPluginConfig(ctx, installation); resetErr != nil {
+		return nil, errors.Join(err, resetErr)
+	}
+	return json.RawMessage([]byte("{}")), nil
 }
 
 func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMessage) (json.RawMessage, error) {
@@ -760,7 +770,10 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 	}
 	previousConfig, err := m.decryptConfig(installation)
 	if err != nil {
-		return nil, err
+		previousConfig = json.RawMessage([]byte("{}"))
+		if resetErr := m.resetInvalidPluginConfig(ctx, installation); resetErr != nil {
+			return nil, errors.Join(err, resetErr)
+		}
 	}
 	var normalized any
 	if err := json.Unmarshal(raw, &normalized); err != nil {
@@ -874,6 +887,9 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 		return nil, err
 	}
 	configJSON, err := m.decryptConfig(installation)
+	if err != nil {
+		configJSON, err = m.recoverInvalidPluginConfig(ctx, installation)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1259,6 +1275,27 @@ func (m *PluginManager) decryptConfig(installation *PluginInstallation) (json.Ra
 		return nil, errors.New("已保存的插件配置不是有效 JSON")
 	}
 	return json.RawMessage(plaintext), nil
+}
+
+const invalidPluginConfigNotice = "插件旧配置无法解密，已重置为默认配置；请在配置页重新保存"
+
+func (m *PluginManager) resetInvalidPluginConfig(ctx context.Context, installation *PluginInstallation) error {
+	if installation == nil || strings.TrimSpace(installation.ConfigEncrypted) == "" {
+		return nil
+	}
+	if err := m.repo.UpdateConfig(ctx, installation.ID, "", installation.BinarySHA256); err != nil {
+		return fmt.Errorf("清除无法解密的插件配置: %w", err)
+	}
+	installation.ConfigEncrypted = ""
+	installation.LastError = invalidPluginConfigNotice
+	return nil
+}
+
+func (m *PluginManager) recoverInvalidPluginConfig(ctx context.Context, installation *PluginInstallation) (json.RawMessage, error) {
+	if err := m.resetInvalidPluginConfig(ctx, installation); err != nil {
+		return nil, errors.Join(errors.New(invalidPluginConfigNotice), err)
+	}
+	return json.RawMessage([]byte("{}")), nil
 }
 
 func (m *PluginManager) removeManagedPath(target string) error {
