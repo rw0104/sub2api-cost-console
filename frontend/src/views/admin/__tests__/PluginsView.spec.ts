@@ -22,6 +22,8 @@ const {
   putSecretGrant,
   deleteSecretGrant,
   savePluginConfig,
+  loadPluginConfig,
+  recoverPluginConfig,
   createUISession,
   stepUpRun,
   showError,
@@ -41,6 +43,8 @@ const {
   putSecretGrant: vi.fn(),
   deleteSecretGrant: vi.fn(),
   savePluginConfig: vi.fn(),
+  loadPluginConfig: vi.fn(),
+  recoverPluginConfig: vi.fn(),
   createUISession: vi.fn(),
   stepUpRun: vi.fn((action: () => Promise<unknown>) => action()),
   showError: vi.fn(),
@@ -65,8 +69,9 @@ vi.mock('@/api/admin', () => ({
       deleteSecretGrant,
       disable: vi.fn(),
       remove: vi.fn(),
-      getConfig: vi.fn().mockResolvedValue({}),
+      getConfig: loadPluginConfig,
       saveConfig: savePluginConfig,
+      recoverConfig: recoverPluginConfig,
       test: vi.fn().mockResolvedValue({ success: true, message: 'ok', latency_ms: 1 }),
       createUISession,
     },
@@ -195,6 +200,8 @@ describe('管理员插件页二次验证', () => {
       expires_at: '2026-09-18T12:00:00Z', manifest: plugin.manifest, compatibility: plugin.compatibility,
     }])
     savePluginConfig.mockResolvedValue({ enabled: true })
+    loadPluginConfig.mockResolvedValue({})
+    recoverPluginConfig.mockResolvedValue({ enabled: true })
     createUISession.mockResolvedValue({
       url: '/api/v1/plugin-ui/token/index.html#bridge_token=bridge',
       bridge_token: 'bridge',
@@ -317,6 +324,50 @@ describe('管理员插件页二次验证', () => {
     expect(showError).toHaveBeenCalledWith('admin.plugins.v2HostRequired')
     expect(uploadPlugin).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+
+  it('旧分享包通过宿主确认重新配置，读取失败不自动保存或恢复', async () => {
+    loadPluginConfig.mockRejectedValueOnce({reason:'PLUGIN_CONFIG_UNREADABLE',message:'原配置已保留',metadata:{config_digest:'a'.repeat(64)}})
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    const frame = wrapper.get('iframe').element as HTMLIFrameElement
+    const send = async (type: string, id: string, config?: object) => {
+      window.dispatchEvent(new MessageEvent('message', {origin:'null',source:frame.contentWindow,
+        data:{source:'sub2api-plugin-ui',bridge_token:'bridge',type,request_id:id,config}}))
+      await flushPromises()
+    }
+    await send('config.load', 'load-original')
+    expect(wrapper.text()).toContain('admin.plugins.configUnreadable')
+    expect(savePluginConfig).not.toHaveBeenCalled()
+    expect(recoverPluginConfig).not.toHaveBeenCalled()
+    await send('config.save', 'unconfirmed', {enabled:true})
+    expect(recoverPluginConfig).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="confirm-config-recovery"]').setValue(true)
+    await send('config.save', 'confirmed', {enabled:true})
+    expect(recoverPluginConfig).toHaveBeenCalledWith(7, {enabled:true}, 'a'.repeat(64))
+    expect(savePluginConfig).not.toHaveBeenCalled()
+    expect(stepUpRun).toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('admin.plugins.configUnreadable')
+  })
+
+  it('切换插件时丢弃迟到的配置解密失败和确认', async () => {
+    let rejectLoad!: (error: unknown) => void
+    loadPluginConfig.mockImplementationOnce(() => new Promise((_,reject) => {rejectLoad=reject}))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    const frame=wrapper.get('iframe').element as HTMLIFrameElement
+    window.dispatchEvent(new MessageEvent('message',{origin:'null',source:frame.contentWindow,
+      data:{source:'sub2api-plugin-ui',bridge_token:'bridge',type:'config.load',request_id:'late-load'}}))
+    await flushPromises()
+    wrapper.getComponent({name:'BaseDialog'}).vm.$emit('close')
+    rejectLoad({reason:'PLUGIN_CONFIG_UNREADABLE',metadata:{config_digest:'a'.repeat(64)}})
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('admin.plugins.configUnreadable')
+    expect(recoverPluginConfig).not.toHaveBeenCalled()
   })
 
   it('关闭对话框后丢弃迟到的会话，避免重新创建 iframe', async () => {

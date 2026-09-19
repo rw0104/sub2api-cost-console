@@ -291,6 +291,17 @@ export async function test(id: number): Promise<PluginTestResult> {
   return data
 }
 
+export async function recoverConfig(
+  id: number,
+  config: Record<string, unknown>,
+  expectedConfigDigest: string
+): Promise<Record<string, unknown>> {
+  const { data } = await apiClient.post<Record<string, unknown>>('/admin/plugins/' + id + '/config/recover', {
+    config, expected_config_digest: expectedConfigDigest
+  })
+  return data
+}
+
 export async function status(id: number): Promise<PluginStatusResult> {
   const { data } = await apiClient.get<PluginStatusResult>(`/admin/plugins/${id}/status`)
   return data
@@ -320,6 +331,7 @@ export default {
   remove,
   getConfig,
   saveConfig,
+  recoverConfig,
   test,
   status,
   createUISession
