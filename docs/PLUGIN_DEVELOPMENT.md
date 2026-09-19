@@ -1,8 +1,8 @@
-# 插件开发指南 · 正式版 v0.3.2
+# 插件开发指南 · 正式版 v0.3.3
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应正式桌面 **0.3.2**、兼容内核 **0.2.7**、扩展 **1.3.1**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1` 及上游通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.7，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+> 本指南对应正式桌面 **0.3.3**、兼容内核 **0.2.7**、扩展 **1.3.2**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1` 及上游通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.7，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
 >
 > 普通进程不是 OS 沙箱；签名证明来源，不保证代码安全。process 模式只安装可信插件，需要文件、网络和资源限制时启用 v2 container 模式。不要在正式数据库上试验新插件。
 
@@ -10,10 +10,10 @@
 
 ## 0. 获取开发资料
 
-- 推荐下载 [v0.3.2 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.2/sub2api-plugin-devkit-v0.3.2.zip)，解压后先读根目录 `START_HERE.md`。
+- 推荐下载 [v0.3.3 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.3/sub2api-plugin-devkit-v0.3.3.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
-- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.2` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.3` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
 - 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
@@ -78,7 +78,7 @@ Write-Output "    publisher-demo: '$publicKey'"
 
 ### 开发环境验收
 
-1. 安装正式桌面 v0.3.2，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
+1. 安装正式桌面 v0.3.3，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
@@ -217,7 +217,7 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary dist/plugin-demo/preproc
 | `GET /:id/versions`、`POST /:id/rollback` | 历史；回滚传 `version_id`、`accept_untested` |
 | `GET /:id/host`、`GET/PUT/DELETE /:id/secret-grants` | 遥测、秘密授权/撤销 |
 
-字段以 [v0.3.2 API 类型](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.2/frontend/src/api/admin/plugins.ts) 和 [handler](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.2/backend/internal/handler/admin/plugin_handler.go) 为准。这些宿主实现不包含在精简开发包内。
+字段以 [v0.3.3 API 类型](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.3/frontend/src/api/admin/plugins.ts) 和 [handler](https://github.com/rw0104/sub2api-cost-console/blob/v0.3.3/backend/internal/handler/admin/plugin_handler.go) 为准。这些宿主实现不包含在精简开发包内。
 
 自建管理 UI 首次确认发布者时，在 `/upload` 或 `/:id/upgrade` 的 multipart 中附 `trust_publisher=true`、检查结果的 `package_sha256` 和 `publisher_fingerprint`。安装接口重新验签和计算摘要，两者不匹配就拒绝；这些写入仍受管理员认证与 step-up 保护。没有确认参数的未知发布者仍被拒绝。
 
@@ -266,13 +266,13 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | --- | --- | --- |
 | `TestPluginExtensionProcessIntegration` | 签名、子进程、双实例、升级回滚可运行 | `backend/internal/service/plugin_extension_integration_test.go` |
 | `TestPluginProductionE2E`、`frontend/scripts/plugin-e2e.py` | UI/数据库/进程/网关闭环，拒绝不发上游不扣费 | `backend/cmd/server/plugin_e2e_test.go` |
-| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [正式发布验收](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/2026-09-18_development-desktop-v0.3.2-release-report.md) |
+| Host API、秘密和隔离测试 | 权限、加密、无网络与资源限额有执行证据 | [正式发布验收](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/2026-09-18_development-desktop-v0.3.3-release-report.md) |
 
 调用路径：核心认证/账号选择 → 准备 HTTP → 能力路由 → v2 子进程 → 宿主验证决策/补丁 → v1 或内置 HTTP → 核心响应/用量/计费。插件不能跳过核心直接改账本。
 
 ## 桌面更新后插件停用与导入问题
 
-从桌面 v0.3.2 / 扩展 1.3.1 起，桌面、兼容内核或扩展版本变化后的首次启动会关闭旧插件的启用绑定并将状态设为停用。配置、已签名原包、发布者信任和路由作用域保留；在插件管理中确认兼容性后重新启用。同版本普通重启不会重复停用。
+从桌面 v0.3.3 / 扩展 1.3.2 起，桌面、兼容内核或扩展版本变化后的首次启动会关闭旧插件的启用绑定并将状态设为停用。配置、已签名原包、发布者信任和路由作用域保留；在插件管理中确认兼容性后重新启用。同版本普通重启不会重复停用。旧配置密文无法验证时会自动清除，配置页可重新保存默认配置。
 
 若旧版本显示插件错误且 Codex 请求被阻断，先在插件管理中点击停用，使路由绑定真正关闭，再检查兼容性并重新启用。无须卸载插件来清理绑定。直接覆盖安装新版桌面也会在首次启动修复此类遗留启用状态。
 
