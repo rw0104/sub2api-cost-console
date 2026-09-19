@@ -142,6 +142,7 @@ vite.config.js
 docs/*
 !docs/2026-08-15_native-client-launcher-report.md
 !docs/2026-08-15_core-sync-conflict-repair.md
+!docs/ANTIGRAVITY_ATTRIBUTION_429.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

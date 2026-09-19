@@ -962,7 +962,8 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
   const expectsResponse =
     message.type === "config.load" ||
     message.type === "config.save" ||
-    message.type === "config.test";
+    message.type === "config.test" ||
+    message.type === "plugin.status";
   if (expectsResponse) {
     if (!requestID || pendingBridgeRequests.has(requestID)) return;
     registerBridgeRequest(requestID);
@@ -1008,6 +1009,15 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
             result.message || t("admin.plugins.testSuccess"),
           );
         else appStore.showError(result.message || t("common.error"));
+        break;
+      }
+      case "plugin.status": {
+        // Read-only runtime status (the plugin's Health snapshot). It has no side
+        // effects, so it is intentionally NOT step-up gated and never raises a host
+        // toast — the plugin UI renders it however it likes. This is the generic
+        // channel for any plugin to surface live state without abusing config.test.
+        const result = await adminAPI.plugins.status(configPlugin.value!.id);
+        postBridgeResult(message, { ok: true, result }, generation);
         break;
       }
       case "ui.resize": {
