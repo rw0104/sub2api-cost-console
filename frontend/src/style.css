@@ -420,6 +420,14 @@
     @apply flex-1 overflow-y-auto;
   }
 
+  .modal-body.plugin-dialog-body {
+    @apply min-h-0 overflow-hidden p-0;
+  }
+
+  .plugin-config-frame {
+    min-height: min(520px, calc(100dvh - 180px));
+  }
+
   .modal-footer {
     @apply border-t border-gray-200 px-4 py-3 dark:border-dark-700;
     @apply sm:px-6 sm:py-4;

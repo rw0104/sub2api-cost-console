@@ -338,11 +338,12 @@
         :title="
           t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
         "
-        width="wide"
+        width="extra-wide"
+        body-class="plugin-dialog-body"
         @close="closeConfiguration"
       >
         <div
-          class="relative min-h-[min(480px,60dvh)] overflow-hidden bg-gray-50 dark:bg-dark-900"
+          class="plugin-config-frame relative flex min-h-0 w-full overflow-hidden bg-gray-50 dark:bg-dark-900"
           :style="{ height: `min(${iframeHeight}px, calc(100dvh - 180px))` }"
         >
           <div

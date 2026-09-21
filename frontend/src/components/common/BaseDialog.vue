@@ -28,7 +28,7 @@
           </div>
 
           <!-- Body -->
-          <div ref="modalBodyRef" class="modal-body">
+          <div ref="modalBodyRef" :class="['modal-body', bodyClass]">
             <slot></slot>
           </div>
 
@@ -63,6 +63,7 @@ type DialogWidth = 'narrow' | 'normal' | 'wide' | 'extra-wide' | 'full'
 interface Props {
   show: boolean
   title: string
+  bodyClass?: string
   width?: DialogWidth
   closeOnEscape?: boolean
   closeOnClickOutside?: boolean
