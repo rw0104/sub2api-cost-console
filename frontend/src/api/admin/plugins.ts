@@ -285,8 +285,13 @@ export async function saveConfig(
   config: Record<string, unknown>,
   expectedRevision?: number
 ): Promise<Record<string, unknown>> {
-  const headers = expectedRevision && expectedRevision > 0 ? { 'If-Match': String(expectedRevision) } : undefined
-  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config, { headers })
+  if (expectedRevision && expectedRevision > 0) {
+    const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config, {
+      headers: { 'If-Match': String(expectedRevision) },
+    })
+    return data
+  }
+  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config)
   return data
 }
 

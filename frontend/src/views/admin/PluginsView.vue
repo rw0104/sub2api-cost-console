@@ -663,7 +663,9 @@ async function savePluginRouting(policies: PluginRoutingPolicy[]): Promise<void>
   if (!plugin) return;
   busyID.value = plugin.id;
   try {
-    await pluginStepUp.run(() => adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at, plugin.revision));
+    await pluginStepUp.run(() => plugin.revision && plugin.revision > 0
+      ? adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at, plugin.revision)
+      : adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at));
     routingPlugin.value = null;
     appStore.showSuccess(t("admin.plugins.routingSaved"));
     await loadPlugins();
@@ -1017,11 +1019,13 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
             }
             return adminAPI.plugins.recoverConfig(pluginID, message.config as Record<string, unknown>, digest);
           }
-          const saved = await adminAPI.plugins.saveConfig(
-            pluginID,
-            message.config as Record<string, unknown>,
-            configPlugin.value?.revision,
-          );
+          const saved = configPlugin.value?.revision && configPlugin.value.revision > 0
+            ? await adminAPI.plugins.saveConfig(
+              pluginID,
+              message.config as Record<string, unknown>,
+              configPlugin.value.revision,
+            )
+            : await adminAPI.plugins.saveConfig(pluginID, message.config as Record<string, unknown>);
           // Refresh the installation metadata so the next bridge save uses
           // the newly issued revision instead of replaying a stale ETag.
           configPlugin.value = await adminAPI.plugins.get(pluginID);
