@@ -667,3 +667,29 @@ func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 	models := h.pricingService.ListModelNamesByProvider(provider)
 	response.Success(c, gin.H{"models": models})
 }
+
+// GetPricingStatus returns the current local pricing catalog state used by the
+// cost center. Keep this endpoint separate from model-name synchronization so
+// the UI can distinguish a readable cached catalog from a refresh operation.
+func (h *ChannelHandler) GetPricingStatus(c *gin.Context) {
+	if h == nil || h.pricingService == nil {
+		response.ErrorFrom(c, infraerrors.InternalServer("PRICING_SERVICE_UNAVAILABLE", "pricing service is not initialized"))
+		return
+	}
+	response.Success(c, h.pricingService.GetStatus())
+}
+
+// RefreshPricing forces a pricing catalog update and returns the resulting
+// status snapshot. Existing fallback data remains available when the refresh
+// fails; the error is surfaced so the UI can label the catalog as stale.
+func (h *ChannelHandler) RefreshPricing(c *gin.Context) {
+	if h == nil || h.pricingService == nil {
+		response.ErrorFrom(c, infraerrors.InternalServer("PRICING_SERVICE_UNAVAILABLE", "pricing service is not initialized"))
+		return
+	}
+	if err := h.pricingService.ForceUpdate(); err != nil {
+		response.ErrorFrom(c, infraerrors.InternalServer("PRICING_REFRESH_FAILED", "failed to refresh pricing catalog").WithCause(err))
+		return
+	}
+	response.Success(c, h.pricingService.GetStatus())
+}
