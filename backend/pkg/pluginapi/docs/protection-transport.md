@@ -17,6 +17,8 @@
 
 原始基线绑定请求上下文和账号 ID，失败切换不得读取其它账号的基线。未知账号字段、token、完整模型映射、任意 `extra` 及旧快照不随账号元数据传递。宿主默认 instructions 只发送 SHA-256，用于比较默认追加内容。
 
+宿主可在 `account_metadata_json.subscription` 中提供当前账号的 `plan_type`、`source` 与可选 `workspace_id`。类型按固定名单规范化，未知值变成 `unknown`；来源仅为 `host_credentials` 或 `host_extra`。`workspace_id` 用于与请求选择的 ChatGPT 账号匹配，不能放入公开诊断。该字段不包含 access/refresh/id token，不新增账号列表权限。旧宿主省略字段，旧插件按 JSON 兼容规则忽略它。
+
 当前普通 Responses、透传和 Chat Completions 路径在出站构造前刷新比较基线，WS 使用准备 HTTP Bridge 请求后的内容。这里的 original 指本次传输的比较基线，不承诺保留最初客户端请求；不能用它证明宿主全部转换均未损失入站语义。
 
 路由使用 v2 的优先级、账号/用户/分组作用域和稳定灰度，选择第一个匹配保护传输。若同时启用旧 v1 传输，保护传输命中的请求优先，未命中继续既有路径。并发计数覆盖完整响应流；路由超时控制等待响应头，收到响应头后保留 SSE 流。进程退出或拒绝不回退到较低优先级传输。WebSocket 命中的账号走宿主 HTTP Bridge。

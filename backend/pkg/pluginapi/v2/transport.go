@@ -16,15 +16,16 @@ const PermissionOriginalRequest Permission = "request.original.read"
 
 // ProtectionAccount exposes only the protection-owned state, never credentials.
 type ProtectionAccount struct {
-	ID                        int64          `json:"id"`
-	Platform                  string         `json:"platform"`
-	Type                      string         `json:"type"`
-	Concurrency               int            `json:"concurrency"`
-	RandomProxy               bool           `json:"random_proxy"`
-	Shadow                    bool           `json:"shadow"`
-	Extra                     map[string]any `json:"extra"`
-	MappedModel               string         `json:"mapped_model,omitempty"`
-	DefaultInstructionsDigest string         `json:"default_instructions_digest,omitempty"`
+	Subscription              *AccountSubscription `json:"subscription,omitempty"`
+	ID                        int64                `json:"id"`
+	Platform                  string               `json:"platform"`
+	Type                      string               `json:"type"`
+	Concurrency               int                  `json:"concurrency"`
+	RandomProxy               bool                 `json:"random_proxy"`
+	Shadow                    bool                 `json:"shadow"`
+	Extra                     map[string]any       `json:"extra"`
+	MappedModel               string               `json:"mapped_model,omitempty"`
+	DefaultInstructionsDigest string               `json:"default_instructions_digest,omitempty"`
 }
 
 func DecodeProtectionAccount(raw []byte) (ProtectionAccount, error) {

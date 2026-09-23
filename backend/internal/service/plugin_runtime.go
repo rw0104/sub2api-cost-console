@@ -201,6 +201,17 @@ func (r *pluginRuntime) validateAndApplyConfig(ctx context.Context, configJSON [
 }
 
 func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, configJSON []byte) ([]byte, error) {
+	normalized, err := r.validateNormalizedConfig(ctx, configJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.applyNormalizedConfig(ctx, normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func (r *pluginRuntime) validateNormalizedConfig(ctx context.Context, configJSON []byte) ([]byte, error) {
 	validation, err := r.validateConfig(ctx, configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("插件配置校验失败: %w", err)
@@ -228,17 +239,21 @@ func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, co
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件规范化配置: %w", err)
 	}
+	return configJSON, nil
+}
+
+func (r *pluginRuntime) applyNormalizedConfig(ctx context.Context, configJSON []byte) error {
 	applied, err := r.applyConfig(ctx, configJSON)
 	if err != nil {
-		return nil, fmt.Errorf("应用插件配置失败: %w", err)
+		return fmt.Errorf("应用插件配置失败: %w", err)
 	}
-	if !applied.Applied {
-		return nil, fmt.Errorf("插件拒绝应用配置: %s", applied.Message)
+	if applied == nil || !applied.Applied {
+		return errors.New("插件拒绝应用已保存配置")
 	}
 	if r.host != nil {
 		r.host.setConfig(configJSON)
 	}
-	return configJSON, nil
+	return nil
 }
 
 func (r *pluginRuntime) checkHealth(ctx context.Context) error {
@@ -263,8 +278,21 @@ func (r *pluginRuntime) checkHealth(ctx context.Context) error {
 // blob it exposes for the config UI. It performs no config apply and no upstream
 // call, so it is safe to serve from a lightweight, ungated status endpoint.
 func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, error) {
-	if r == nil || r.api == nil || r.client == nil || r.client.Exited() {
+	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
 		return nil, errors.New("插件进程已退出")
+	}
+	if r.extension != nil {
+		result, err := r.extension.Health(ctx)
+		if err != nil {
+			return nil, safeExtensionRPCError("扩展状态查询失败", err)
+		}
+		health := &pluginv1.HealthResponse{Healthy: result.Healthy, Message: "扩展运行状态"}
+		// v2 has a bounded Health message; structured display data is forwarded
+		// through the existing status_json channel, never interpreted as commands.
+		if len(result.Message) <= pluginConfigMaxBytes && json.Valid([]byte(result.Message)) {
+			health.StatusJson = result.Message
+		}
+		return health, nil
 	}
 	health, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
 	if err != nil {

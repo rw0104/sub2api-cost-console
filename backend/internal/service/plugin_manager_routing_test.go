@@ -122,14 +122,13 @@ func (r *statusStubRepository) GetByID(context.Context, int64) (*PluginInstallat
 }
 
 // Status is the read-only, ungated runtime-status channel: when the plugin is not
-// running it must report "not running" with no status blob and never error or start
-// a runtime (that side-effecting behaviour belongs to Test, not Status).
+// running it returns a structured empty report and never starts a runtime.
 func TestPluginManagerStatusReportsNotRunningWithoutRuntime(t *testing.T) {
 	manager := &PluginManager{repo: &statusStubRepository{}}
 	resp, err := manager.Status(context.Background(), 7)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Healthy)
-	assert.Equal(t, "插件未运行", resp.Message)
-	assert.Empty(t, resp.StatusJson)
+	assert.Contains(t, resp.Message, "尚无运行会话")
+	assert.Contains(t, resp.StatusJson, "PLUGIN_NOT_RUNNING")
 }

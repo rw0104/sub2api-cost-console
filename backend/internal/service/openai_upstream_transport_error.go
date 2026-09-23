@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -117,7 +118,15 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 			// This is a complete terminal policy response, not stream output.
 			// The outer handler otherwise appends a fallback SSE error to the JSON.
 			MarkResponseCommitted(c)
-			c.JSON(status, gin.H{"error": gin.H{"type": "extension_error", "message": extensionErr.Error()}})
+			detail := gin.H{"type": "extension_error", "message": extensionErr.Error()}
+			if extensionErr.DiagnosticCode == "all_routes_cooling" || extensionErr.DiagnosticCode == "fixed_route_cooling" {
+				detail["code"] = extensionErr.DiagnosticCode
+				c.Header("X-Sleep-State-Error-Source", "local")
+				if extensionErr.RetryAfterSeconds > 0 {
+					c.Header("Retry-After", strconv.Itoa(min(86400, extensionErr.RetryAfterSeconds)))
+				}
+			}
+			c.JSON(status, gin.H{"error": detail})
 		}
 		return err
 	}

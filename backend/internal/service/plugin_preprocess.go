@@ -21,9 +21,16 @@ import (
 
 // PluginPreprocessError is a terminal host policy decision, never an upstream
 // authentication/network failure and never a reason to replay on another account.
-type PluginPreprocessError struct{ Denied bool }
+type PluginPreprocessError struct {
+	Denied            bool
+	DiagnosticCode    string
+	RetryAfterSeconds int
+}
 
 func (e *PluginPreprocessError) Error() string {
+	if e.DiagnosticCode == "all_routes_cooling" || e.DiagnosticCode == "fixed_route_cooling" {
+		return e.DiagnosticCode + ": route temporarily cooling"
+	}
 	if e.Denied {
 		return "Request rejected by extension policy"
 	}

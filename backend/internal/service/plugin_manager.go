@@ -790,7 +790,7 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 	}
 	if runtime != nil {
 		applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		canonical, err = runtime.validateAndApplyNormalizedConfig(applyCtx, canonical)
+		canonical, err = runtime.validateNormalizedConfig(applyCtx, canonical)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -798,9 +798,6 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 	}
 	encrypted, err := m.encryptor.Encrypt(string(canonical))
 	if err != nil {
-		if !temporary {
-			err = errors.Join(err, m.restoreRuntimeConfig(id, runtime, previousConfig))
-		}
 		return nil, fmt.Errorf("加密插件配置: %w", err)
 	}
 	if hasProtectionCapability(installation.Manifest) {
@@ -813,17 +810,28 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 		err = m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256)
 	}
 	if err != nil {
-		if !temporary {
-			if hasProtectionCapability(installation.Manifest) {
-				if latest, readErr := m.repo.GetByID(ctx, id); readErr == nil {
-					if latestConfig, decryptErr := m.decryptConfig(latest); decryptErr == nil {
-						previousConfig = latestConfig
-					}
-				}
-			}
-			err = errors.Join(err, m.restoreRuntimeConfig(id, runtime, previousConfig))
-		}
+		// Validation has not applied settings. A failed CAS/encryption/persistence
+		// leaves the live process, its tokens, and in-flight streams untouched.
 		return nil, err
+	}
+	applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	applyErr := runtime.applyNormalizedConfig(applyCtx, canonical)
+	cancel()
+	if applyErr != nil {
+		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer rollbackCancel()
+		var rollbackErr error
+		if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+			rollbackErr = repo.UpdateConfigCAS(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256, encrypted)
+		} else {
+			rollbackErr = m.repo.UpdateConfig(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256)
+		}
+		if rollbackErr != nil {
+			m.publishInstallationUnavailable(installation, "插件配置应用与恢复失败")
+		} else if !temporary {
+			rollbackErr = m.restoreRuntimeConfig(id, runtime, previousConfig)
+		}
+		return nil, errors.Join(applyErr, rollbackErr)
 	}
 	if !temporary {
 		runtime.installation.ConfigEncrypted = encrypted
@@ -905,18 +913,56 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 // running simply reports "not running" with no status blob. This makes it safe to
 // serve from a lightweight, ungated, read-only endpoint used for status polling.
 func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthResponse, error) {
-	if _, err := m.repo.GetByID(ctx, id); err != nil {
+	installation, err := m.repo.GetByID(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
 	runtime := m.runtimes[id]
 	m.mu.Unlock()
-	if runtime == nil {
-		return &pluginv1.HealthResponse{Healthy: false, Message: "插件未运行"}, nil
+	if runtime == nil || runtime.client == nil || runtime.client.Exited() || runtime.draining.Load() {
+		// A newly installed extension normally has no process until its first
+		// matching request. Return the same safe report shape as a live process so
+		// the UI can render an empty runtime instead of parsing this text as JSON.
+		revision := uint64(0)
+		if raw, decryptErr := m.decryptConfig(installation); decryptErr == nil {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) == nil {
+				_ = json.Unmarshal(fields["revision"], &revision)
+			}
+		}
+		report := map[string]any{
+			"schema": 1, "config_revision": revision,
+			"generated_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"engines":      0, "requests_total": uint64(0),
+			"sessions": []any{}, "pool": []any{}, "node_verifications": []any{},
+			"message":    messageForUnavailableRuntime(runtime),
+			"error_code": codeForUnavailableRuntime(runtime),
+		}
+		payload, _ := json.Marshal(map[string]any{"schema": 1, "core_report": report})
+		return &pluginv1.HealthResponse{
+			Healthy:    false,
+			Message:    "插件未运行；尚无运行会话",
+			StatusJson: string(payload),
+		}, nil
 	}
 	statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	return runtime.status(statusCtx)
+}
+
+func messageForUnavailableRuntime(runtime *pluginRuntime) string {
+	if runtime != nil && runtime.draining.Load() {
+		return "插件进程正在切换；请稍后刷新运行状态。"
+	}
+	return "插件尚未启动；发送一次匹配的 OAuth 请求后可查看运行状态。"
+}
+
+func codeForUnavailableRuntime(runtime *pluginRuntime) string {
+	if runtime != nil && runtime.draining.Load() {
+		return "RUNTIME_DRAINING"
+	}
+	return "PLUGIN_NOT_RUNNING"
 }
 
 type pluginUIAssetClaims struct {

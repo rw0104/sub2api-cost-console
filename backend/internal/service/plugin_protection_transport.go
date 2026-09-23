@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,7 +136,8 @@ func (r *pluginRuntime) protectionAccountMetadata(ctx context.Context, account *
 	}
 	digest := sha256.Sum256([]byte(defaultCodexSynthInstructions(mappedModel)))
 	raw, _ := json.Marshal(pluginv2.ProtectionAccount{ID: account.ID, Platform: account.Platform, Type: account.Type,
-		Concurrency: account.Concurrency, Shadow: account.IsShadow(), Extra: extra, MappedModel: mappedModel, DefaultInstructionsDigest: hex.EncodeToString(digest[:])})
+		Subscription: pluginAccountSubscription(account),
+		Concurrency:  account.Concurrency, Shadow: account.IsShadow(), Extra: extra, MappedModel: mappedModel, DefaultInstructionsDigest: hex.EncodeToString(digest[:])})
 	if len(raw) > 64*1024 {
 		return nil
 	}
@@ -189,12 +191,23 @@ func (m *PluginManager) roundTripProtection(ctx context.Context, req *http.Reque
 		rt.finishRequest()
 		// A local policy rejection is never treated as an upstream authentication failure.
 		var transportErr *PluginTransportError
-		if errors.As(err, &transportErr) && (transportErr.Code == "PROTECTION_DENIED" || transportErr.Code == "PROTECTION_BUSY") {
+		if errors.As(err, &transportErr) && (transportErr.Code == "PROTECTION_DENIED" || transportErr.Code == "PROTECTION_BUSY" || transportErr.Code == "ALL_ROUTES_COOLING" || transportErr.Code == "FIXED_ROUTE_COOLING") {
 			route.calls.finish(false)
 			if transportErr.Code == "PROTECTION_DENIED" {
 				route.calls.denied.Add(1)
 			}
-			return nil, true, &PluginPreprocessError{Denied: transportErr.Code == "PROTECTION_DENIED"}
+			policyError := &PluginPreprocessError{Denied: transportErr.Code == "PROTECTION_DENIED"}
+			if transportErr.Code == "ALL_ROUTES_COOLING" || transportErr.Code == "FIXED_ROUTE_COOLING" {
+				var detail struct {
+					RetryAfterSeconds int `json:"retry_after_seconds"`
+				}
+				if len(transportErr.Message) <= 512 {
+					_ = json.Unmarshal([]byte(transportErr.Message), &detail)
+				}
+				policyError.DiagnosticCode = strings.ToLower(transportErr.Code)
+				policyError.RetryAfterSeconds = min(86400, max(0, detail.RetryAfterSeconds))
+			}
+			return nil, true, policyError
 		}
 		route.calls.finish(ctx.Err() == nil)
 		return nil, true, err
