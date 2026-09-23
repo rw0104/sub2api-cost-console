@@ -8,8 +8,9 @@ import (
 )
 
 type PluginHostInfo struct {
-	Version   string
-	BuildType string
+	Version          string
+	BuildType        string
+	ExtensionVersion string
 }
 
 func EvaluatePluginCompatibility(manifest PluginManifest, host PluginHostInfo) PluginCompatibility {

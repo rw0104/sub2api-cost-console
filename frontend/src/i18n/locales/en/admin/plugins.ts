@@ -135,6 +135,9 @@ export default {
     confirmUninstall: 'Uninstall this plugin? It must be disabled first. Installed files and configuration will be removed.',
     confirmUntested: 'This plugin is compatible but has not declared the current Sub2API version as tested. Enable it anyway?',
     fileRequired: 'Select a compiled .s2plugin installer. Source or SDK archives cannot be installed.',
+    configUnreadable: 'The previous configuration cannot be decrypted and has been preserved. Restore the original encryption key, or disable the plugin, enter a replacement configuration and confirm below before saving. The original signed plugin package can still be used.',
+    confirmConfigRecovery: 'The plugin is disabled. I confirm that the old encrypted data will be backed up before replacing it with this configuration. Enable the plugin again after saving.',
+    v2HostRequired: 'The connected backend cannot read v2 plugin fields. Activate this project’s compatible core in Version & Updates and check that you are not connected to an older or upstream server. Do not remove failure_mode or edit the signed package.',
     bridgeRejected: 'Plugin UI message validation failed',
     onlyOpenAI: 'OpenAI OAuth transport and v2 request preprocessing',
     noAccountCoupling: 'The scope is platform and account type. Account records are not changed and no per-account toggle is required.'

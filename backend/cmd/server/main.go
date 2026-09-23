@@ -212,7 +212,11 @@ func runMainServer() {
 	// 等待中断信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	defer signal.Stop(quit)
+	select {
+	case <-quit:
+	case <-desktopShutdownRequests(os.Stdin):
+	}
 
 	log.Println("Shutting down server...")
 
