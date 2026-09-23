@@ -296,17 +296,67 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
  * @param id - Account ID
  * @returns Test result
  */
+export function parseAccountTestSse(payload: string, latencyMs: number): {
+  success: boolean
+  message: string
+  latency_ms: number
+} {
+  let success = false
+  let terminal = false
+  let message = ''
+
+  for (const line of payload.split(/\r?\n/)) {
+    const raw = line.trim()
+    if (!raw.startsWith('data:')) continue
+
+    try {
+      const event = JSON.parse(raw.slice(5).trim()) as {
+        type?: string
+        success?: boolean
+        text?: string
+        message?: string
+        error?: string
+      }
+      if (event.type === 'content' && event.text) message += event.text
+      if (event.type === 'error') {
+        terminal = true
+        success = false
+        message = event.error || event.message || message
+      }
+      if (event.type === 'test_complete') {
+        terminal = true
+        success = event.success === true
+        message = event.message || message
+      }
+    } catch {
+      // Ignore malformed keep-alive events and continue parsing the stream.
+    }
+  }
+
+  if (!terminal) {
+    success = false
+    message = message || 'Account test did not complete'
+  }
+
+  return {
+    success,
+    message: message || (success ? 'Account test succeeded' : 'Account test failed'),
+    latency_ms: latencyMs,
+  }
+}
+
 export async function testAccount(id: number): Promise<{
   success: boolean
   message: string
   latency_ms?: number
 }> {
-  const { data } = await apiClient.post<{
-    success: boolean
-    message: string
-    latency_ms?: number
-  }>(`/admin/accounts/${id}/test`)
-  return data
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const { data } = await apiClient.post<string>(`/admin/accounts/${id}/test`, undefined, {
+    responseType: 'text',
+    timeout: 60000,
+  })
+  const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  return parseAccountTestSse(String(data || ''), Math.round(finishedAt - startedAt))
 }
 
 /**

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from 'vue-router'
-import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
@@ -9,6 +9,10 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import { isDesktopRuntime } from '@/api/url'
+import DesktopBackendGate from '@/features/desktop/DesktopBackendGate.vue'
+import DesktopUpdateCenter from '@/features/desktop/DesktopUpdateCenter.vue'
+import DesktopTitleBar from '@/features/desktop/DesktopTitleBar.vue'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 
@@ -20,6 +24,8 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+const desktopBackendReady = ref(!isDesktopRuntime())
+const desktopRuntime = isDesktopRuntime()
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -137,11 +143,10 @@ router.afterEach(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
+  document.documentElement.classList.remove('desktop-runtime')
 })
 
-onMounted(async () => {
-  window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
-
+async function initializeApplication() {
   // Check if setup is needed
   try {
     const status = await getSetupStatus()
@@ -158,13 +163,81 @@ onMounted(async () => {
 
   // Re-resolve document title now that site settings are available
   updateDocumentTitle()
+}
+
+async function onDesktopBackendReady() {
+  desktopBackendReady.value = true
+  await initializeApplication()
+}
+
+onMounted(async () => {
+  document.documentElement.classList.toggle('desktop-runtime', desktopRuntime)
+  window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
+  if (desktopBackendReady.value) {
+    await initializeApplication()
+  }
 })
 </script>
 
 <template>
-  <NavigationProgress />
-  <RouterView />
-  <Toast />
-  <AnnouncementPopup />
-  <AdminComplianceDialog />
+  <div class="app-window" :class="{ 'app-window--desktop': desktopRuntime }">
+    <DesktopTitleBar v-if="desktopRuntime" />
+    <div class="app-window__content">
+      <DesktopBackendGate v-if="!desktopBackendReady" @ready="onDesktopBackendReady" />
+      <template v-else>
+        <NavigationProgress />
+        <RouterView />
+        <Toast />
+        <AnnouncementPopup />
+        <AdminComplianceDialog />
+        <DesktopUpdateCenter />
+      </template>
+    </div>
+  </div>
 </template>
+
+<style>
+.app-window { min-height: 100vh; }
+.app-window--desktop {
+  --desktop-titlebar-height: 36px;
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: #0c110d;
+  border: 1px solid #2f3930;
+}
+.app-window--desktop .app-window__content {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+/* Fixed descendants use the viewport instead of the flex content box. Keep
+   them below the custom Tauri titlebar so every Sub2API route shares one
+   desktop safe area. */
+.app-window--desktop .app-window__content .sidebar {
+  top: var(--desktop-titlebar-height);
+}
+.app-window--desktop .app-window__content .navigation-progress {
+  top: var(--desktop-titlebar-height);
+}
+.app-window--desktop .app-window__content .min-h-screen {
+  min-height: calc(100vh - var(--desktop-titlebar-height));
+}
+.app-window--desktop .app-window__content .h-screen {
+  height: calc(100vh - var(--desktop-titlebar-height));
+}
+
+/* Teleported dialogs live under <body>, outside .app-window__content. They
+   still belong to the application layer and must not cover the native window
+   controls or drag region. */
+:root.desktop-runtime {
+  --desktop-titlebar-height: 36px;
+}
+:root.desktop-runtime body :is(.fixed.inset-0, .modal-overlay) {
+  top: var(--desktop-titlebar-height);
+}
+</style>
