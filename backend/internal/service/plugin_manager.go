@@ -26,11 +26,13 @@ import (
 )
 
 const (
-	pluginConfigMaxBytes  = 4 * 1024 * 1024
-	pluginUIAssetMaxBytes = 32 * 1024 * 1024
-	pluginReconcilePeriod = time.Second
-	pluginHealthTimeout   = 5 * time.Second
-	pluginUITokenPrefix   = "sub2api:plugin-ui:v1:"
+	pluginConfigMaxBytes            = 4 * 1024 * 1024
+	pluginUIAssetMaxBytes           = 32 * 1024 * 1024
+	pluginReconcilePeriod           = time.Second
+	pluginHealthTimeout             = 5 * time.Second
+	pluginReadinessInterval         = 30 * time.Second
+	pluginReadinessFailureThreshold = 3
+	pluginUITokenPrefix             = "sub2api:plugin-ui:v1:"
 )
 
 type pluginRoute struct {
@@ -310,8 +312,9 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 	defer m.operationMu.Unlock()
 	installations, err := m.repo.List(ctx)
 	if err != nil {
-		m.publishUnavailableExtensions("插件启用状态暂时无法读取")
-		m.publishUnavailableRoute(0, 100, "插件启用状态暂时无法读取")
+		// Repository availability is a control-plane concern. Keep the last
+		// authoritative route and live runtimes serving while the next reconcile
+		// retries; a transient list failure must never drain every plugin.
 		return fmt.Errorf("读取插件启用状态: %w", err)
 	}
 	if err := m.prepareDesktopPlugins(ctx, installations); err != nil {
@@ -354,7 +357,7 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 			current.installation.BinarySHA256 == installation.BinarySHA256 &&
 			current.installation.ConfigEncrypted == installation.ConfigEncrypted {
 			healthCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
-			healthErr := current.checkHealth(healthCtx)
+			healthErr := current.checkReadiness(healthCtx)
 			cancel()
 			if healthErr != nil {
 				m.publishInstallationUnavailable(installation, healthErr.Error())
@@ -1245,6 +1248,15 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 			process.kill()
 			return nil, errors.New("连接插件 Host API 失败")
 		}
+	}
+	// Host API attachment precedes readiness: initialization may legitimately
+	// call host services before the plugin can report healthy.
+	readyCtx, cancel := context.WithTimeout(ctx, timeout)
+	err = process.checkHealth(readyCtx)
+	cancel()
+	if err != nil {
+		process.kill()
+		return nil, err
 	}
 	return process, nil
 }

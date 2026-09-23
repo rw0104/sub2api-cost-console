@@ -30,17 +30,21 @@ import (
 )
 
 type pluginRuntime struct {
-	installation *PluginInstallation
-	client       *hcplugin.Client
-	api          pluginv1.TransportPluginClient
-	transport    pluginv2.TransportClient
-	extension    pluginv2.ExtensionHandler
-	isolation    string
-	host         *pluginHostServices
-	inFlight     atomic.Int64
-	draining     atomic.Bool
-	done         chan struct{}
-	doneOnce     sync.Once
+	installation      *PluginInstallation
+	client            *hcplugin.Client
+	api               pluginv1.TransportPluginClient
+	transport         pluginv2.TransportClient
+	extension         pluginv2.ExtensionHandler
+	isolation         string
+	host              *pluginHostServices
+	inFlight          atomic.Int64
+	draining          atomic.Bool
+	done              chan struct{}
+	doneOnce          sync.Once
+	readinessMu       sync.Mutex
+	readinessAt       time.Time
+	readinessErr      error
+	readinessFailures int
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -131,10 +135,6 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
 	if err := runtime.initializeAPI(infoCtx, dispensed); err != nil {
-		runtime.kill()
-		return nil, err
-	}
-	if err := runtime.checkHealth(infoCtx); err != nil {
 		runtime.kill()
 		return nil, err
 	}
@@ -272,6 +272,40 @@ func (r *pluginRuntime) checkHealth(ctx context.Context) error {
 		return errors.New(message)
 	}
 	return nil
+}
+
+// checkReadiness caches the active capability probe. Reconcile runs every
+// second, but a readiness RPC is deliberately sampled at a slower interval and
+// must fail consecutively before the route is removed. A single slow probe can
+// therefore never kill an otherwise serving runtime.
+func (r *pluginRuntime) checkReadiness(ctx context.Context) error {
+	if r == nil || r.client == nil || r.client.Exited() {
+		return errors.New("插件进程已退出")
+	}
+	now := time.Now()
+	r.readinessMu.Lock()
+	if !r.readinessAt.IsZero() && now.Sub(r.readinessAt) < pluginReadinessInterval {
+		err := r.readinessErr
+		r.readinessMu.Unlock()
+		return err
+	}
+	r.readinessAt = now
+	r.readinessMu.Unlock()
+
+	err := r.checkHealth(ctx)
+	r.readinessMu.Lock()
+	defer r.readinessMu.Unlock()
+	if err == nil {
+		r.readinessErr = nil
+		r.readinessFailures = 0
+		return nil
+	}
+	r.readinessErr = err
+	r.readinessFailures++
+	if r.readinessFailures < pluginReadinessFailureThreshold {
+		return nil
+	}
+	return err
 }
 
 // status returns the plugin's passive Health response, including any status_json
