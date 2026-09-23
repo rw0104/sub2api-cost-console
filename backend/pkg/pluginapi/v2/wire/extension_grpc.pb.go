@@ -355,11 +355,12 @@ var ExtensionPlugin_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	HostServices_Log_FullMethodName          = "/sub2api.plugin.v2.HostServices/Log"
-	HostServices_Metric_FullMethodName       = "/sub2api.plugin.v2.HostServices/Metric"
-	HostServices_ReadConfig_FullMethodName   = "/sub2api.plugin.v2.HostServices/ReadConfig"
-	HostServices_ReadSecret_FullMethodName   = "/sub2api.plugin.v2.HostServices/ReadSecret"
-	HostServices_PublishEvent_FullMethodName = "/sub2api.plugin.v2.HostServices/PublishEvent"
+	HostServices_Log_FullMethodName                 = "/sub2api.plugin.v2.HostServices/Log"
+	HostServices_Metric_FullMethodName              = "/sub2api.plugin.v2.HostServices/Metric"
+	HostServices_ReadConfig_FullMethodName          = "/sub2api.plugin.v2.HostServices/ReadConfig"
+	HostServices_ReadSecret_FullMethodName          = "/sub2api.plugin.v2.HostServices/ReadSecret"
+	HostServices_ReadAccountMetadata_FullMethodName = "/sub2api.plugin.v2.HostServices/ReadAccountMetadata"
+	HostServices_PublishEvent_FullMethodName        = "/sub2api.plugin.v2.HostServices/PublishEvent"
 )
 
 // HostServicesClient is the client API for HostServices service.
@@ -373,6 +374,7 @@ type HostServicesClient interface {
 	Metric(ctx context.Context, in *HostMetricRequest, opts ...grpc.CallOption) (*HostAck, error)
 	ReadConfig(ctx context.Context, in *HostCapabilityRequest, opts ...grpc.CallOption) (*HostConfigResponse, error)
 	ReadSecret(ctx context.Context, in *HostSecretRequest, opts ...grpc.CallOption) (*HostSecretResponse, error)
+	ReadAccountMetadata(ctx context.Context, in *HostAccountMetadataRequest, opts ...grpc.CallOption) (*HostAccountMetadataResponse, error)
 	PublishEvent(ctx context.Context, in *HostEventRequest, opts ...grpc.CallOption) (*HostAck, error)
 }
 
@@ -424,6 +426,16 @@ func (c *hostServicesClient) ReadSecret(ctx context.Context, in *HostSecretReque
 	return out, nil
 }
 
+func (c *hostServicesClient) ReadAccountMetadata(ctx context.Context, in *HostAccountMetadataRequest, opts ...grpc.CallOption) (*HostAccountMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HostAccountMetadataResponse)
+	err := c.cc.Invoke(ctx, HostServices_ReadAccountMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *hostServicesClient) PublishEvent(ctx context.Context, in *HostEventRequest, opts ...grpc.CallOption) (*HostAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HostAck)
@@ -445,6 +457,7 @@ type HostServicesServer interface {
 	Metric(context.Context, *HostMetricRequest) (*HostAck, error)
 	ReadConfig(context.Context, *HostCapabilityRequest) (*HostConfigResponse, error)
 	ReadSecret(context.Context, *HostSecretRequest) (*HostSecretResponse, error)
+	ReadAccountMetadata(context.Context, *HostAccountMetadataRequest) (*HostAccountMetadataResponse, error)
 	PublishEvent(context.Context, *HostEventRequest) (*HostAck, error)
 	mustEmbedUnimplementedHostServicesServer()
 }
@@ -467,6 +480,9 @@ func (UnimplementedHostServicesServer) ReadConfig(context.Context, *HostCapabili
 }
 func (UnimplementedHostServicesServer) ReadSecret(context.Context, *HostSecretRequest) (*HostSecretResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadSecret not implemented")
+}
+func (UnimplementedHostServicesServer) ReadAccountMetadata(context.Context, *HostAccountMetadataRequest) (*HostAccountMetadataResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadAccountMetadata not implemented")
 }
 func (UnimplementedHostServicesServer) PublishEvent(context.Context, *HostEventRequest) (*HostAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method PublishEvent not implemented")
@@ -564,6 +580,24 @@ func _HostServices_ReadSecret_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HostServices_ReadAccountMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HostAccountMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServicesServer).ReadAccountMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HostServices_ReadAccountMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServicesServer).ReadAccountMetadata(ctx, req.(*HostAccountMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HostServices_PublishEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HostEventRequest)
 	if err := dec(in); err != nil {
@@ -604,6 +638,10 @@ var HostServices_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadSecret",
 			Handler:    _HostServices_ReadSecret_Handler,
+		},
+		{
+			MethodName: "ReadAccountMetadata",
+			Handler:    _HostServices_ReadAccountMetadata_Handler,
 		},
 		{
 			MethodName: "PublishEvent",

@@ -53,9 +53,13 @@ v1 能力 `openai.oauth.outbound_transport.v1`：
 
 - **命名空间键值存储（KV）**：`KVGet` / `KVSet` / `KVDelete` / `KVList`，为插件持久化跨请求、跨副本、跨重启的状态。存储由 Redis 支撑，因此多实例部署天然共享同一份状态。
   - **命名空间隔离**：宿主根据服务该连接的运行时注入插件身份（`pluginKey`），插件无法伪造，也无法读写其它插件的命名空间。
-  - **护栏**：`namespace` / `key` 仅允许 `[A-Za-z0-9._-]`；单值上限 256 KiB；`ttl_seconds` 为 0 表示不过期、正值有上限；`KVList` 返回条数有上限。
+- **护栏**：`namespace` / `key` 仅允许 `[A-Za-z0-9._-]`；单值上限 256 KiB；`ttl_seconds` 为 0 表示不过期、正值有上限；`KVList` 返回条数有上限。
+
+- **账号只读目录（HostService API v2）**：`ListAccounts` 保留 `account_ids`，并额外返回 binding scope 内的 `AccountInfo`。`AccountInfo.metadata_json` 只包含宿主生成的非机密字段；已规范化的 `subscription` 包含 `plan_type`、`source` 和可选 `workspace_id`。账号范围由已启用的 OpenAI OAuth binding 固定，插件不能传入其它账号或扩大范围。`ResolveOutboundIdentity` 仍是唯一的凭据通道，旧插件只读取 `account_ids` 即可继续运行。
 
 新增宿主设施时，在 `HostService` 上追加 RPC 即可，无需改动传输契约或清单格式。
+
+v2 扩展若声明 `account.metadata.read`，可通过 `HostServices.ReadAccountMetadata` 读取当前 binding scope 内单个账号的有界非机密元数据；未命中 scope 返回 `found=false`，不会返回凭据或允许枚举。
 
 ## 包结构
 

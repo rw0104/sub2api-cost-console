@@ -47,6 +47,21 @@ func buildPluginRequestContext(ctx context.Context, request *http.Request, accou
 		ctx = context.Background()
 	}
 	provenance := pluginRequestProvenanceFromContext(ctx)
+	if provenance.OriginalIngress == "" {
+		if value, ok := ctx.Value(ctxkey.PluginOriginalIngress).(string); ok {
+			provenance.OriginalIngress = sanitizePluginValue(value)
+		}
+	}
+	if provenance.ClientFamily == "" {
+		if value, ok := ctx.Value(ctxkey.PluginClientFamily).(string); ok {
+			provenance.ClientFamily = sanitizePluginValue(value)
+		}
+	}
+	if provenance.ClientVersion == "" {
+		if value, ok := ctx.Value(ctxkey.PluginClientVersion).(string); ok {
+			provenance.ClientVersion = sanitizePluginValue(value)
+		}
+	}
 	if provenance.CorrelationID == "" {
 		if value, ok := ctx.Value(ctxkey.RequestID).(string); ok {
 			provenance.CorrelationID = sanitizePluginValue(value)
@@ -93,6 +108,26 @@ func newPluginCorrelationID() string {
 		return hex.EncodeToString(raw[:])
 	}
 	return sanitizePluginValue(time.Now().UTC().Format("20060102T150405.000000000Z07:00"))
+}
+
+// pluginForwardRequestID preserves a stable logical correlation while keeping
+// each plugin transport attempt distinct. v1 has only request_id on the wire;
+// the delimiter is therefore the compatibility envelope until formal optional
+// provenance fields are added to the generated protocol.
+func pluginForwardRequestID(ctx context.Context) string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	provenance := pluginRequestProvenanceFromContext(ctx)
+	if provenance.CorrelationID == "" {
+		if value, ok := ctx.Value(ctxkey.RequestID).(string); ok {
+			provenance.CorrelationID = sanitizePluginValue(value)
+		}
+	}
+	if provenance.CorrelationID == "" {
+		provenance.CorrelationID = newPluginCorrelationID()
+	}
+	return provenance.CorrelationID + ":" + newPluginCorrelationID()
 }
 
 func classifyPluginClient(ctx context.Context, headers http.Header) (string, string) {

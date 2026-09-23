@@ -663,7 +663,7 @@ async function savePluginRouting(policies: PluginRoutingPolicy[]): Promise<void>
   if (!plugin) return;
   busyID.value = plugin.id;
   try {
-    await pluginStepUp.run(() => adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at));
+    await pluginStepUp.run(() => adminAPI.plugins.saveRouting(plugin.id, policies, plugin.updated_at, plugin.revision));
     routingPlugin.value = null;
     appStore.showSuccess(t("admin.plugins.routingSaved"));
     await loadPlugins();
@@ -1009,7 +1009,7 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
           throw new Error(t("admin.plugins.bridgeRejected"));
         }
         const digest = configRecoveryDigest.value;
-        const config = await pluginStepUp.run(() => {
+        const config = await pluginStepUp.run(async () => {
           if (generation !== frameGeneration) throw new Error(t('common.cancel'));
           if (digest) {
             if (!configRecoveryConfirmed.value || configPlugin.value?.state !== 'disabled' || hasEnabledBinding(configPlugin.value)) {
@@ -1017,7 +1017,15 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
             }
             return adminAPI.plugins.recoverConfig(pluginID, message.config as Record<string, unknown>, digest);
           }
-          return adminAPI.plugins.saveConfig(pluginID, message.config as Record<string, unknown>);
+          const saved = await adminAPI.plugins.saveConfig(
+            pluginID,
+            message.config as Record<string, unknown>,
+            configPlugin.value?.revision,
+          );
+          // Refresh the installation metadata so the next bridge save uses
+          // the newly issued revision instead of replaying a stale ETag.
+          configPlugin.value = await adminAPI.plugins.get(pluginID);
+          return saved;
         });
         if (generation !== frameGeneration) break;
         configRecoveryDigest.value = "";

@@ -16,8 +16,9 @@ const (
 	UIBridgeVersion = 1
 	// HostServiceAPIVersion 是宿主反向服务（HostService）的契约版本。它独立于
 	// TransportAPIVersion：宿主服务是叠加在传输契约之上的可选能力，通过
-	// InitHostServices 在运行时协商，因此新增宿主能力不会使既有插件失效。
-	HostServiceAPIVersion = 1
+	// InitHostServices 在运行时协商。版本 2 在 ListAccounts 增加结构化只读
+	// AccountInfo；account_ids 仍保留，因此旧插件可继续运行。
+	HostServiceAPIVersion = 2
 	// TransportPluginName 是 go-plugin 中注册的唯一能力名称。
 	TransportPluginName = "oauth_transport"
 )

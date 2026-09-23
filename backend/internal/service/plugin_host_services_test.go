@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -67,6 +68,30 @@ func TestPluginHostServicesEnforcePermissionsAndBoundedFields(t *testing.T) {
 	_, err = host.Metric(ctx, &wire.HostMetricRequest{Capability: cap.ID, Name: "requests", Value: 1})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 }
+
+func TestPluginHostServicesReadAccountMetadataIsScoped(t *testing.T) {
+	cap := hostCapability()
+	cap.Permissions = append(cap.Permissions, pluginv2.PermissionAccountMetadata)
+	installation := &PluginInstallation{ID: 9, Manifest: PluginManifest{Capabilities: []PluginCapability{cap}},
+		Bindings: []PluginBinding{{ID: 4, Capability: cap.ID, Platform: PlatformOpenAI, AccountType: AccountTypeOAuth, Enabled: true, AccountIDs: []int64{7}}}}
+	host := newPluginHostServices(installation, nil, func(context.Context, string, int64) ([]byte, error) {
+		return []byte(`{"schema":1,"subscription":{"plan_type":"pro"}}`), nil
+	})
+	defer host.Close()
+	response, err := host.ReadAccountMetadata(context.Background(), &wire.HostAccountMetadataRequest{Capability: cap.ID, AccountId: 7})
+	require.NoError(t, err)
+	require.True(t, response.Found)
+	assert.JSONEq(t, `{"schema":1,"subscription":{"plan_type":"pro"}}`, string(response.MetadataJson))
+	outside, err := host.ReadAccountMetadata(context.Background(), &wire.HostAccountMetadataRequest{Capability: cap.ID, AccountId: 8})
+	require.NoError(t, err)
+	assert.False(t, outside.Found)
+
+	noPermission := hostCapability()
+	without := newPluginHostServices(&PluginInstallation{ID: 10, Manifest: PluginManifest{Capabilities: []PluginCapability{noPermission}}, Bindings: installation.Bindings}, nil)
+	defer without.Close()
+	_, err = without.ReadAccountMetadata(context.Background(), &wire.HostAccountMetadataRequest{Capability: noPermission.ID, AccountId: 7})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
 func TestPluginHostServicesRateLimitAndExpiredSecret(t *testing.T) {
 	cap := hostCapability()
 	host := newPluginHostServices(&PluginInstallation{ID: 1, Manifest: PluginManifest{Capabilities: []PluginCapability{cap}}},
@@ -82,6 +107,109 @@ func TestPluginHostServicesRateLimitAndExpiredSecret(t *testing.T) {
 	host.mu.Unlock()
 	_, err = host.ReadConfig(context.Background(), &wire.HostCapabilityRequest{Capability: cap.ID})
 	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
+func TestPluginHostServicesSecretAuditRecordsOutcomesWithoutValue(t *testing.T) {
+	cap := hostCapability()
+	host := newPluginHostServices(&PluginInstallation{
+		ID:       42,
+		Manifest: PluginManifest{Capabilities: []PluginCapability{cap}},
+		Bindings: []PluginBinding{{ID: 77, Capability: cap.ID, Enabled: true}},
+	}, func(_ context.Context, _, alias string) (pluginv2.SecretValue, error) {
+		switch alias {
+		case "granted":
+			return pluginv2.SecretValue{Value: []byte("secret-value"), ExpiresAt: time.Now().Add(time.Minute)}, nil
+		case "expired":
+			return pluginv2.SecretValue{Value: []byte("expired-value"), ExpiresAt: time.Now().Add(-time.Second)}, nil
+		case "internal":
+			return pluginv2.SecretValue{}, errors.New("provider failed with secret-value")
+		default:
+			return pluginv2.SecretValue{}, &PluginSecretReadError{Result: PluginSecretAuditDenied, ErrorCode: "secret_unavailable"}
+		}
+	})
+	defer host.Close()
+	host.setRuntimeMetadata("instance-42")
+	ctx := WithPluginRequestProvenance(context.Background(), PluginRequestProvenance{CorrelationID: "corr-secret-1"})
+
+	resp, err := host.ReadSecret(ctx, &wire.HostSecretRequest{Capability: cap.ID, Alias: "granted"})
+	require.NoError(t, err)
+	require.Equal(t, []byte("secret-value"), resp.Value)
+	_, err = host.ReadSecret(ctx, &wire.HostSecretRequest{Capability: cap.ID, Alias: "unknown"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = host.ReadSecret(ctx, &wire.HostSecretRequest{Capability: cap.ID, Alias: "expired"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = host.ReadSecret(ctx, &wire.HostSecretRequest{Capability: cap.ID, Alias: "internal"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	host.mu.Lock()
+	host.window = time.Now()
+	host.calls = 100
+	host.mu.Unlock()
+	_, err = host.ReadSecret(ctx, &wire.HostSecretRequest{Capability: cap.ID, Alias: "rate"})
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	snapshot := host.Snapshot()
+	require.EqualValues(t, 1, snapshot.SecretReads[PluginSecretAuditGranted])
+	require.EqualValues(t, 1, snapshot.SecretReads[PluginSecretAuditDenied])
+	require.EqualValues(t, 1, snapshot.SecretReads[PluginSecretAuditExpired])
+	require.EqualValues(t, 1, snapshot.SecretReads[PluginSecretAuditInternalError])
+	require.EqualValues(t, 1, snapshot.SecretReads[PluginSecretAuditRateLimited])
+	require.Len(t, snapshot.RecentSecretAudits, 5)
+	for _, event := range snapshot.RecentSecretAudits {
+		require.EqualValues(t, 42, event.PluginID)
+		require.EqualValues(t, 77, event.BindingID)
+		require.Equal(t, "instance-42", event.InstanceID)
+		require.Equal(t, "corr-secret-1", event.CorrelationID)
+		assert.NotContains(t, event.Alias, "secret-value")
+		encoded, marshalErr := json.Marshal(event)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), "secret-value")
+		assert.NotContains(t, string(encoded), "provider failed")
+	}
+}
+
+func TestPluginHostServicesSecretAuditRateLimitsSameOutcome(t *testing.T) {
+	cap := hostCapability()
+	host := newPluginHostServices(&PluginInstallation{ID: 43, Manifest: PluginManifest{Capabilities: []PluginCapability{cap}}},
+		func(context.Context, string, string) (pluginv2.SecretValue, error) {
+			return pluginv2.SecretValue{}, &PluginSecretReadError{Result: PluginSecretAuditExpired, ErrorCode: "secret_expired"}
+		})
+	defer host.Close()
+	request := &wire.HostSecretRequest{Capability: cap.ID, Alias: "same"}
+	_, err := host.ReadSecret(context.Background(), request)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = host.ReadSecret(context.Background(), request)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	snapshot := host.Snapshot()
+	require.EqualValues(t, 2, snapshot.SecretReads[PluginSecretAuditExpired])
+	require.EqualValues(t, 1, snapshot.SecretAuditSuppressed)
+	require.Len(t, snapshot.RecentSecretAudits, 1)
+	assert.Equal(t, uint64(0), snapshot.RecentSecretAudits[0].Suppressed)
+}
+
+func TestPluginHostServicesSecretAuditSinkFailureIsBoundedAndRedacted(t *testing.T) {
+	cap := hostCapability()
+	received := make(chan PluginSecretAuditEvent, 1)
+	host := newPluginHostServices(&PluginInstallation{ID: 44, Manifest: PluginManifest{Capabilities: []PluginCapability{cap}}},
+		func(context.Context, string, string) (pluginv2.SecretValue, error) {
+			return pluginv2.SecretValue{Value: []byte("sink-secret"), ExpiresAt: time.Now().Add(time.Minute)}, nil
+		})
+	defer host.Close()
+	host.setSecretAuditSink(PluginSecretAuditSinkFunc(func(_ context.Context, event PluginSecretAuditEvent) error {
+		received <- event
+		return errors.New("sink failed with sink-secret")
+	}))
+	_, err := host.ReadSecret(context.Background(), &wire.HostSecretRequest{Capability: cap.ID, Alias: "sink"})
+	require.NoError(t, err)
+	select {
+	case event := <-received:
+		encoded, marshalErr := json.Marshal(event)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), "sink-secret")
+	case <-time.After(time.Second):
+		t.Fatal("secret audit sink was not invoked")
+	}
+	require.Eventually(t, func() bool { return host.Snapshot().SecretAuditSinkErrors == 1 }, time.Second, time.Millisecond*10)
 }
 
 func TestPluginHostEventQueueAppliesBackpressure(t *testing.T) {

@@ -11,6 +11,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type revisionRoutingMemoryRepository struct {
+	*extensionMemoryRepository
+}
+
+func (r *revisionRoutingMemoryRepository) UpdateRoutingRevision(_ context.Context, expected *PluginInstallation, bindings []PluginBinding, expectedRevision int64) (*PluginInstallation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if expectedRevision <= 0 || r.row.Revision != expectedRevision || r.row.BinarySHA256 != expected.BinarySHA256 ||
+		r.row.State != expected.State || !r.row.UpdatedAt.Equal(expected.UpdatedAt) {
+		return nil, ErrPluginStateChanged
+	}
+	r.row.Bindings = append([]PluginBinding(nil), bindings...)
+	next := time.Now()
+	if !next.After(r.row.UpdatedAt) {
+		next = r.row.UpdatedAt.Add(time.Microsecond)
+	}
+	r.row.UpdatedAt = next
+	r.row.Revision++
+	r.row.ETag = PluginInstallationETag(r.row.ID, r.row.Revision)
+	return cloneExtensionInstallation(r.row), nil
+}
+
 func TestPluginRoutingPriorityScopeAndNoFailureFallback(t *testing.T) {
 	m := &PluginManager{runtimes: map[int64]*pluginRuntime{}}
 	cap := testPreprocessCapability()
@@ -123,4 +145,19 @@ func TestPluginRoutingValidationAndStaleEditor(t *testing.T) {
 		_, err = m.SaveRouting(context.Background(), 1, []PluginRoutingPolicy{invalid}, saved.UpdatedAt)
 		require.Error(t, err)
 	}
+}
+
+func TestPluginRoutingRevisionCASRejectsStaleEditor(t *testing.T) {
+	now := time.Now()
+	i := &PluginInstallation{ID: 2, State: PluginStateDisabled, UpdatedAt: now, Revision: 4, ETag: PluginInstallationETag(2, 4), Manifest: testExtensionManifest(),
+		Bindings: []PluginBinding{{Capability: pluginv2.CapabilityRequestPreprocess, Platform: "openai", AccountType: "oauth", RolloutPercent: 100}}}
+	repo := &revisionRoutingMemoryRepository{extensionMemoryRepository: &extensionMemoryRepository{row: i}}
+	m := &PluginManager{repo: repo, runtimes: map[int64]*pluginRuntime{}}
+	policy := PluginRoutingPolicy{Capability: pluginv2.CapabilityRequestPreprocess, RolloutPercent: 50, MaxConcurrency: 4, TimeoutMS: 20}
+	saved, err := m.SaveRoutingWithRevision(context.Background(), i.ID, []PluginRoutingPolicy{policy}, 4)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, saved.Revision)
+	require.Equal(t, PluginInstallationETag(i.ID, 5), saved.ETag)
+	_, err = m.SaveRoutingWithRevision(context.Background(), i.ID, []PluginRoutingPolicy{policy}, 4)
+	require.ErrorIs(t, err, ErrPluginStateChanged)
 }

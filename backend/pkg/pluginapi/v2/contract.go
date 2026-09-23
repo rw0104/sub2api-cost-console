@@ -38,6 +38,7 @@ const (
 	PermissionRequestMutate   Permission = "request.mutate"
 	PermissionNetworkOutbound Permission = "network.outbound"
 	PermissionSecretBroker    Permission = "secrets.broker"
+	PermissionAccountMetadata Permission = "account.metadata.read"
 	PermissionEventPublish    Permission = "events.publish"
 	PermissionHostLog         Permission = "host.log"
 	PermissionHostMetric      Permission = "host.metric"

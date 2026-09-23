@@ -109,6 +109,7 @@ func (r *pluginRepository) installWithPublisher(ctx context.Context, plugin *ser
 			installed_by = EXCLUDED.installed_by,
 			installed_at = NOW(),
 			enabled_at = NULL,
+			revision = sub2api_plugin_installations.revision + 1,
 			updated_at = NOW()
 		WHERE sub2api_plugin_installations.state IN ('disabled', 'error', 'incompatible')
 		  AND NOT EXISTS (
@@ -163,7 +164,7 @@ func (r *pluginRepository) Delete(ctx context.Context, id int64, expectedBinaryS
 func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = 'starting', last_error = '', updated_at = NOW()
+		SET state = 'starting', last_error = '', revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $2 AND state = $3 AND state <> 'starting'
 	`, id, binarySHA256, expectedState)
 	if err != nil {
@@ -182,7 +183,7 @@ func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA2
 func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, binarySHA256, configEncrypted string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations p
-		SET state = 'enabled', last_error = '', enabled_at = COALESCE(enabled_at, NOW()), updated_at = NOW()
+		SET state = 'enabled', last_error = '', enabled_at = COALESCE(enabled_at, NOW()), revision = revision + 1, updated_at = NOW()
 		WHERE p.id = $1 AND p.binary_sha256 = $2 AND p.config_encrypted = $3
 		  AND EXISTS (SELECT 1 FROM sub2api_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
 	`, id, binarySHA256, configEncrypted)
@@ -202,7 +203,7 @@ func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, bin
 func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, lastError string, enabledAt *time.Time, expectedBinarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
+		SET state = $2, last_error = $3, enabled_at = $4, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $5 AND state = $6
 	`, id, state, lastError, enabledAt, expectedBinarySHA256, expectedState)
 	if err != nil {
@@ -221,7 +222,7 @@ func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, las
 func (r *pluginRepository) UpdateConfig(ctx context.Context, id int64, encrypted, expectedBinarySHA256 string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET config_encrypted = $2, updated_at = NOW()
+		SET config_encrypted = $2, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $3
 	`, id, encrypted, expectedBinarySHA256)
 	if err != nil {
@@ -254,7 +255,7 @@ func (r *pluginRepository) UpdateBindingsAndState(
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
+		SET state = $2, last_error = $3, enabled_at = $4, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND ($5 = '' OR state = $5) AND binary_sha256 = $6
 	`, pluginID, state, lastError, enabledAt, expectedState, expectedBinarySHA256)
 	if err != nil {
@@ -301,6 +302,7 @@ const pluginSelectSQL = `
 	       artifact_path, install_path, binary_path, binary_sha256,
 	       signature_status, state, config_encrypted, last_error,
 	       installed_by, installed_at, enabled_at, updated_at
+	       , revision
 	FROM sub2api_plugin_installations`
 
 type pluginScanner interface {
@@ -315,13 +317,14 @@ func scanPlugin(scanner pluginScanner) (*service.PluginInstallation, error) {
 		&plugin.Author, &manifestJSON, &plugin.ArtifactPath, &plugin.InstallPath,
 		&plugin.BinaryPath, &plugin.BinarySHA256, &plugin.SignatureStatus, &plugin.State,
 		&plugin.ConfigEncrypted, &plugin.LastError, &plugin.InstalledBy, &plugin.InstalledAt,
-		&plugin.EnabledAt, &plugin.UpdatedAt,
+		&plugin.EnabledAt, &plugin.UpdatedAt, &plugin.Revision,
 	); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(manifestJSON, &plugin.Manifest); err != nil {
 		return nil, fmt.Errorf("解析插件清单: %w", err)
 	}
+	service.NormalizePluginInstallationMetadata(plugin)
 	return plugin, nil
 }
 

@@ -25,32 +25,67 @@ type PluginHostEvent struct {
 	Time       time.Time `json:"time"`
 }
 type PluginHostSnapshot struct {
-	Logs           uint64             `json:"logs"`
-	Metrics        map[string]float64 `json:"metrics"`
-	EventsAccepted uint64             `json:"events_accepted"`
-	EventsDropped  uint64             `json:"events_dropped"`
-	RecentEvents   []PluginHostEvent  `json:"recent_events"`
+	Logs                   uint64                             `json:"logs"`
+	Metrics                map[string]float64                 `json:"metrics"`
+	EventsAccepted         uint64                             `json:"events_accepted"`
+	EventsDropped          uint64                             `json:"events_dropped"`
+	RecentEvents           []PluginHostEvent                  `json:"recent_events"`
+	SecretReads            map[PluginSecretAuditResult]uint64 `json:"secret_reads,omitempty"`
+	RecentSecretAudits     []PluginSecretAuditEvent           `json:"recent_secret_audits,omitempty"`
+	SecretAuditSuppressed  uint64                             `json:"secret_audit_suppressed,omitempty"`
+	SecretAuditEvicted     uint64                             `json:"secret_audit_evicted,omitempty"`
+	SecretAuditSinkDropped uint64                             `json:"secret_audit_sink_dropped,omitempty"`
+	SecretAuditSinkErrors  uint64                             `json:"secret_audit_sink_errors,omitempty"`
 }
 type pluginHostConfig struct{ data []byte }
 type pluginHostServices struct {
 	wire.UnimplementedHostServicesServer
-	pluginID    int64
-	permissions map[string]map[pluginv2.Permission]bool
-	config      atomic.Pointer[pluginHostConfig]
-	readSecret  func(context.Context, string, string) (pluginv2.SecretValue, error)
-	mu          sync.Mutex
-	window      time.Time
-	calls       int
-	stats       PluginHostSnapshot
-	events      chan PluginHostEvent
-	stop        chan struct{}
-	done        chan struct{}
-	closed      atomic.Bool
+	pluginID            int64
+	permissions         map[string]map[pluginv2.Permission]bool
+	config              atomic.Pointer[pluginHostConfig]
+	readSecret          func(context.Context, string, string) (pluginv2.SecretValue, error)
+	readAccountMetadata func(context.Context, string, int64) ([]byte, error)
+	accountScope        PluginAccountScope
+	mu                  sync.Mutex
+	window              time.Time
+	calls               int
+	stats               PluginHostSnapshot
+	secretAuditLast     map[string]pluginSecretAuditBucket
+	secretAuditSink     PluginSecretAuditSink
+	secretAuditSlots    chan struct{}
+	bindingIDs          map[string]int64
+	instanceID          string
+	events              chan PluginHostEvent
+	stop                chan struct{}
+	done                chan struct{}
+	closed              atomic.Bool
 }
 
-func newPluginHostServices(i *PluginInstallation, readSecret func(context.Context, string, string) (pluginv2.SecretValue, error)) *pluginHostServices {
-	h := &pluginHostServices{pluginID: i.ID, permissions: map[string]map[pluginv2.Permission]bool{}, readSecret: readSecret,
-		stats: PluginHostSnapshot{Metrics: map[string]float64{}}, events: make(chan PluginHostEvent, 64), stop: make(chan struct{}), done: make(chan struct{})}
+func newPluginHostServices(i *PluginInstallation, readSecret func(context.Context, string, string) (pluginv2.SecretValue, error), metadataReaders ...func(context.Context, string, int64) ([]byte, error)) *pluginHostServices {
+	h := &pluginHostServices{permissions: map[string]map[pluginv2.Permission]bool{}, readSecret: readSecret,
+		stats:           PluginHostSnapshot{Metrics: map[string]float64{}, SecretReads: map[PluginSecretAuditResult]uint64{}},
+		secretAuditLast: map[string]pluginSecretAuditBucket{}, bindingIDs: map[string]int64{},
+		events: make(chan PluginHostEvent, 64), stop: make(chan struct{}), done: make(chan struct{})}
+	if len(metadataReaders) > 0 {
+		h.readAccountMetadata = metadataReaders[0]
+	}
+	if i != nil {
+		h.pluginID = i.ID
+		h.accountScope = pluginAccountScopeForInstallation(i)
+	}
+	for _, binding := range func() []PluginBinding {
+		if i == nil {
+			return nil
+		}
+		return i.Bindings
+	}() {
+		if binding.Enabled && binding.ID > 0 && h.bindingIDs[binding.Capability] == 0 {
+			h.bindingIDs[binding.Capability] = binding.ID
+		}
+	}
+	if i == nil {
+		return h
+	}
 	for _, cap := range i.Manifest.Capabilities {
 		h.permissions[cap.ID] = map[pluginv2.Permission]bool{}
 		for _, permission := range cap.Permissions {
@@ -64,7 +99,7 @@ func hasHostPermissions(manifest PluginManifest) bool {
 	for _, cap := range manifest.Capabilities {
 		for _, permission := range cap.Permissions {
 			switch permission {
-			case pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig, pluginv2.PermissionSecretBroker, pluginv2.PermissionEventPublish:
+			case pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig, pluginv2.PermissionSecretBroker, pluginv2.PermissionAccountMetadata, pluginv2.PermissionEventPublish:
 				return true
 			}
 		}
@@ -164,23 +199,212 @@ func (h *pluginHostServices) ReadConfig(ctx context.Context, r *wire.HostCapabil
 func (h *pluginHostServices) setConfig(raw json.RawMessage) {
 	h.config.Store(&pluginHostConfig{data: append([]byte(nil), raw...)})
 }
+
+// setSecretAuditSink installs an optional persistence/observability port. It
+// is intentionally separate from the constructor so runtime setup can attach
+// the sink without changing older plugin call sites.
+func (h *pluginHostServices) setSecretAuditSink(sink PluginSecretAuditSink) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.secretAuditSink = sink
+	if sink != nil && h.secretAuditSlots == nil {
+		h.secretAuditSlots = make(chan struct{}, pluginSecretAuditSinkSlots)
+	}
+	h.mu.Unlock()
+}
+
+// setRuntimeMetadata is called by the runtime owner when the host connector is
+// attached. Empty values are allowed for old runtimes and are omitted from the
+// resulting event rather than guessed from a plugin-controlled field.
+func (h *pluginHostServices) setRuntimeMetadata(instanceID string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.instanceID = sanitizePluginSecretAuditField(instanceID)
+	h.mu.Unlock()
+}
+
+func (h *pluginHostServices) recordSecretAudit(ctx context.Context, capability, alias string, result PluginSecretAuditResult, errorCode string, expiresAt time.Time, startedAt time.Time) {
+	if h == nil {
+		return
+	}
+	result = normalizePluginSecretAuditResult(result)
+	capability = sanitizePluginSecretAuditField(capability)
+	alias = sanitizePluginSecretAuditAlias(alias)
+	if errorCode != "" {
+		errorCode = sanitizePluginSecretAuditCode(errorCode)
+	}
+	now := time.Now().UTC()
+	durationMS := now.Sub(startedAt).Milliseconds()
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	ttlMS := int64(0)
+	if !expiresAt.IsZero() {
+		ttlMS = expiresAt.Sub(now).Milliseconds()
+		if ttlMS < 0 {
+			ttlMS = 0
+		}
+	}
+
+	provenance := pluginRequestProvenanceFromContext(ctx)
+	// The throttle scope is the plugin/alias pair. Capability is deliberately
+	// excluded so a plugin cannot bypass the audit budget by declaring aliases
+	// through several capabilities.
+	key := alias
+	h.mu.Lock()
+	if h.secretAuditLast == nil {
+		h.secretAuditLast = map[string]pluginSecretAuditBucket{}
+	}
+	if h.stats.SecretReads == nil {
+		h.stats.SecretReads = map[PluginSecretAuditResult]uint64{}
+	}
+	h.stats.SecretReads[result]++
+	bucket := h.secretAuditLast[key]
+	if bucket.lastResult == result && !bucket.lastAt.IsZero() && now.Sub(bucket.lastAt) < pluginSecretAuditRateWindow {
+		bucket.suppressed++
+		h.secretAuditLast[key] = bucket
+		h.stats.SecretAuditSuppressed++
+		h.mu.Unlock()
+		return
+	}
+
+	event := PluginSecretAuditEvent{
+		Time: now, PluginID: h.pluginID, Capability: capability, Alias: alias,
+		BindingID: h.bindingIDs[capability], InstanceID: h.instanceID,
+		CorrelationID: sanitizePluginSecretAuditField(provenance.CorrelationID),
+		Result:        result, DurationMS: durationMS, TTLMS: ttlMS,
+	}
+	if result != PluginSecretAuditGranted || errorCode != "" {
+		event.ErrorCode = errorCode
+	}
+	if bucket.suppressed > 0 {
+		event.Suppressed = bucket.suppressed
+	}
+	bucket = pluginSecretAuditBucket{lastAt: now, lastResult: result}
+	h.secretAuditLast[key] = bucket
+	if len(h.secretAuditLast) > pluginSecretAuditMaxRateKeys {
+		// The map is only a duplicate-suppression cache. Clear it as a bounded,
+		// deterministic fallback; the durable event ring remains untouched.
+		h.secretAuditLast = map[string]pluginSecretAuditBucket{key: bucket}
+	}
+	h.stats.RecentSecretAudits = append(h.stats.RecentSecretAudits, event)
+	if len(h.stats.RecentSecretAudits) > pluginSecretAuditMaxEvents {
+		copy(h.stats.RecentSecretAudits, h.stats.RecentSecretAudits[len(h.stats.RecentSecretAudits)-pluginSecretAuditMaxEvents:])
+		h.stats.RecentSecretAudits = h.stats.RecentSecretAudits[:pluginSecretAuditMaxEvents]
+		h.stats.SecretAuditEvicted++
+	}
+	sink, slots := h.secretAuditSink, h.secretAuditSlots
+	if sink != nil && slots == nil {
+		slots = make(chan struct{}, pluginSecretAuditSinkSlots)
+		h.secretAuditSlots = slots
+	}
+	h.mu.Unlock()
+
+	if sink == nil || slots == nil {
+		return
+	}
+	select {
+	case slots <- struct{}{}:
+		go h.writeSecretAudit(sink, slots, event)
+	default:
+		h.mu.Lock()
+		h.stats.SecretAuditSinkDropped++
+		h.mu.Unlock()
+	}
+}
+
+func (h *pluginHostServices) writeSecretAudit(sink PluginSecretAuditSink, slots chan struct{}, event PluginSecretAuditEvent) {
+	defer func() { <-slots }()
+	writeCtx, cancel := context.WithTimeout(context.Background(), pluginSecretAuditSinkTimeout)
+	defer cancel()
+	var err error
+	func() {
+		defer func() {
+			if recover() != nil {
+				err = errPluginSecretAuditSinkPanic
+			}
+		}()
+		err = sink.RecordPluginSecretAudit(writeCtx, event)
+	}()
+	if err == nil {
+		return
+	}
+	h.mu.Lock()
+	h.stats.SecretAuditSinkErrors++
+	pluginID := h.pluginID
+	h.mu.Unlock()
+	// Keep the failure diagnostic stable and free of sink/provider text. The
+	// in-memory event is already available through HostStats for retrieval.
+	slog.Warn("plugin_secret_audit_sink_failed", "plugin_id", pluginID, "error_code", pluginSecretAuditErrorCode(err))
+}
+
+var errPluginSecretAuditSinkPanic = &PluginSecretReadError{Result: PluginSecretAuditInternalError, ErrorCode: "audit_sink_panic"}
+
 func (h *pluginHostServices) ReadSecret(ctx context.Context, r *wire.HostSecretRequest) (*wire.HostSecretResponse, error) {
-	if err := h.authorize(ctx, r.GetCapability(), pluginv2.PermissionSecretBroker); err != nil {
+	startedAt := time.Now()
+	capability, alias := r.GetCapability(), r.GetAlias()
+	if err := h.authorize(ctx, capability, pluginv2.PermissionSecretBroker); err != nil {
+		result, errorCode := pluginSecretAuditOutcomeForError(err)
+		if status.Code(err) == codes.ResourceExhausted {
+			result, errorCode = PluginSecretAuditRateLimited, "rate_limited"
+		} else if status.Code(err) == codes.PermissionDenied {
+			result, errorCode = PluginSecretAuditDenied, "permission_denied"
+		} else {
+			result = PluginSecretAuditInternalError
+		}
+		h.recordSecretAudit(ctx, capability, alias, result, errorCode, time.Time{}, startedAt)
 		return nil, err
 	}
-	if !pluginSecretAliasPattern.MatchString(r.GetAlias()) || h.readSecret == nil {
+	if !pluginSecretAliasPattern.MatchString(alias) || h.readSecret == nil {
+		h.recordSecretAudit(ctx, capability, alias, PluginSecretAuditDenied, "secret_alias_not_granted", time.Time{}, startedAt)
 		return nil, status.Error(codes.PermissionDenied, "secret alias not granted")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	secret, err := h.readSecret(callCtx, r.Capability, r.Alias)
+	secret, err := h.readSecret(callCtx, capability, alias)
 	if err != nil {
+		result, errorCode := pluginSecretAuditOutcomeForError(err)
+		h.recordSecretAudit(ctx, capability, alias, result, errorCode, time.Time{}, startedAt)
 		return nil, status.Error(codes.PermissionDenied, "secret alias not granted or expired")
 	}
-	if h.closed.Load() || !time.Now().Before(secret.ExpiresAt) || len(secret.Value) == 0 || len(secret.Value) > pluginSecretMaxBytes {
+	if h.closed.Load() {
+		h.recordSecretAudit(ctx, capability, alias, PluginSecretAuditInternalError, "host_unavailable", secret.ExpiresAt, startedAt)
+		return nil, status.Error(codes.Unavailable, "host service stopped")
+	}
+	if !time.Now().Before(secret.ExpiresAt) {
+		h.recordSecretAudit(ctx, capability, alias, PluginSecretAuditExpired, "secret_expired", secret.ExpiresAt, startedAt)
 		return nil, status.Error(codes.PermissionDenied, "secret grant unavailable")
 	}
+	if len(secret.Value) == 0 || len(secret.Value) > pluginSecretMaxBytes {
+		h.recordSecretAudit(ctx, capability, alias, PluginSecretAuditInternalError, "invalid_secret_value", secret.ExpiresAt, startedAt)
+		return nil, status.Error(codes.PermissionDenied, "secret grant unavailable")
+	}
+	h.recordSecretAudit(ctx, capability, alias, PluginSecretAuditGranted, "", secret.ExpiresAt, startedAt)
 	return &wire.HostSecretResponse{Value: secret.Value, ExpiresUnixMillis: secret.ExpiresAt.UnixMilli()}, nil
+}
+
+func (h *pluginHostServices) ReadAccountMetadata(ctx context.Context, r *wire.HostAccountMetadataRequest) (*wire.HostAccountMetadataResponse, error) {
+	if r == nil || r.GetAccountId() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "account_id 无效")
+	}
+	if err := h.authorize(ctx, r.GetCapability(), pluginv2.PermissionAccountMetadata); err != nil {
+		return nil, err
+	}
+	if h.readAccountMetadata == nil || !h.accountScope.allowsID(r.GetAccountId()) {
+		return &wire.HostAccountMetadataResponse{Found: false}, nil
+	}
+	metadata, err := h.readAccountMetadata(ctx, r.GetCapability(), r.GetAccountId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, "读取账号元数据失败")
+	}
+	if len(metadata) == 0 || len(metadata) > 128*1024 || !json.Valid(metadata) {
+		return &wire.HostAccountMetadataResponse{Found: false}, nil
+	}
+	return &wire.HostAccountMetadataResponse{Found: true, MetadataJson: append([]byte(nil), metadata...)}, nil
 }
 func (h *pluginHostServices) PublishEvent(ctx context.Context, r *wire.HostEventRequest) (*wire.HostAck, error) {
 	if err := h.authorize(ctx, r.GetCapability(), pluginv2.PermissionEventPublish); err != nil {
@@ -228,6 +452,11 @@ func (h *pluginHostServices) Snapshot() PluginHostSnapshot {
 		out.Metrics[name] = value
 	}
 	out.RecentEvents = append([]PluginHostEvent(nil), h.stats.RecentEvents...)
+	out.SecretReads = map[PluginSecretAuditResult]uint64{}
+	for result, count := range h.stats.SecretReads {
+		out.SecretReads[result] = count
+	}
+	out.RecentSecretAudits = append([]PluginSecretAuditEvent(nil), h.stats.RecentSecretAudits...)
 	return out
 }
 
@@ -239,7 +468,12 @@ func (m *PluginManager) HostStats(ctx context.Context, id int64) (PluginHostSnap
 	process := m.runtimes[id]
 	m.mu.Unlock()
 	if process == nil || process.host == nil {
-		return PluginHostSnapshot{Metrics: map[string]float64{}, RecentEvents: []PluginHostEvent{}}, nil
+		return PluginHostSnapshot{
+			Metrics:            map[string]float64{},
+			RecentEvents:       []PluginHostEvent{},
+			SecretReads:        map[PluginSecretAuditResult]uint64{},
+			RecentSecretAudits: []PluginSecretAuditEvent{},
+		}, nil
 	}
 	return process.host.Snapshot(), nil
 }
@@ -420,10 +654,12 @@ func (s *pluginHostServiceServer) ListAccounts(ctx context.Context, req *pluginv
 			return nil, status.Errorf(codes.Internal, "列举账号失败: %v", err)
 		}
 		ids := make([]int64, 0, len(infos))
+		accounts := make([]*pluginv1.AccountInfo, 0, len(infos))
 		for _, info := range infos {
 			ids = append(ids, info.ID)
+			accounts = append(accounts, accountInfoToPlugin(info))
 		}
-		return &pluginv1.ListAccountsResponse{AccountIds: ids}, nil
+		return &pluginv1.ListAccountsResponse{AccountIds: ids, Accounts: accounts}, nil
 	case PluginAccountDirectory:
 		ids, err := directory.ListPluginAccounts(ctx, req.Platform, req.AccountType)
 		if err != nil {
@@ -441,6 +677,22 @@ func (s *pluginHostServiceServer) ListAccounts(ctx context.Context, req *pluginv
 		return &pluginv1.ListAccountsResponse{AccountIds: ids}, nil
 	default:
 		return nil, status.Error(codes.Unavailable, "账号目录实现不支持作用域接口")
+	}
+}
+
+// accountInfoToPlugin maps the host-owned readable view to the wire contract.
+// MetadataJSON is already bounded and stripped of credentials by the directory;
+// this adapter never reads or reconstructs account credentials.
+func accountInfoToPlugin(info PluginAccountInfo) *pluginv1.AccountInfo {
+	return &pluginv1.AccountInfo{
+		Id:           info.ID,
+		Platform:     info.Platform,
+		AccountType:  info.AccountType,
+		Name:         info.Name,
+		Status:       info.Status,
+		Schedulable:  info.Schedulable,
+		IsShadow:     info.IsShadow,
+		MetadataJson: append([]byte(nil), info.MetadataJSON...),
 	}
 }
 

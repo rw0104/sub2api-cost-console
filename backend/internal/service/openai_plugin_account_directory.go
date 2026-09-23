@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 )
 
 type pluginAccountScopeEntry struct {
@@ -31,6 +33,29 @@ func newPluginAccountScope(entries ...pluginAccountScopeEntry) PluginAccountScop
 		out.entries = append(out.entries, copyEntry)
 	}
 	return out
+}
+
+func pluginAccountScopeForInstallation(installation *PluginInstallation) PluginAccountScope {
+	return pluginAccountScopeForCapability(installation, "")
+}
+
+func pluginAccountScopeForCapability(installation *PluginInstallation, capability string) PluginAccountScope {
+	if installation == nil {
+		return PluginAccountScope{}
+	}
+	entries := make([]pluginAccountScopeEntry, 0, len(installation.Bindings))
+	for _, binding := range installation.Bindings {
+		if !binding.Enabled || (capability != "" && binding.Capability != capability) || binding.Platform != PlatformOpenAI || binding.AccountType != AccountTypeOAuth {
+			continue
+		}
+		entries = append(entries, pluginAccountScopeEntry{
+			Platform: binding.Platform, AccountType: binding.AccountType,
+			AccountIDs: append([]int64(nil), binding.AccountIDs...),
+			UserIDs:    append([]int64(nil), binding.UserIDs...),
+			GroupIDs:   append([]int64(nil), binding.GroupIDs...),
+		})
+	}
+	return newPluginAccountScope(entries...)
 }
 
 func (s PluginAccountScope) allows(account *Account) bool {
@@ -70,7 +95,12 @@ func (s PluginAccountScope) allowsID(accountID int64) bool {
 
 type PluginAccountInfo struct {
 	ID           int64
+	Platform     string
+	AccountType  string
+	Name         string
+	Status       string
 	Schedulable  bool
+	IsShadow     bool
 	MetadataJSON json.RawMessage
 }
 
@@ -118,7 +148,9 @@ func (s *OpenAIGatewayService) ListPluginAccounts(ctx context.Context, args ...a
 		if account.Status != StatusActive || account.Type != AccountTypeOAuth || !account.IsOpenAIOAuthLike() || account.IsShadow() || !scope.allows(account) {
 			continue
 		}
-		infos = append(infos, PluginAccountInfo{ID: account.ID, Schedulable: account.IsSchedulable(), MetadataJSON: accountReadableSnapshotJSON(account)})
+		infos = append(infos, PluginAccountInfo{ID: account.ID, Platform: account.Platform, AccountType: account.Type,
+			Name: account.Name, Status: account.Status, Schedulable: account.IsSchedulable(), IsShadow: account.IsShadow(),
+			MetadataJSON: accountReadableSnapshotJSON(account)})
 	}
 	return infos, nil
 }
@@ -165,42 +197,43 @@ func accountReadableSnapshotJSON(account *Account) []byte {
 		return nil
 	}
 	readable := struct {
-		ID                      int64          `json:"id"`
-		Name                    string         `json:"name"`
-		Notes                   *string        `json:"notes,omitempty"`
-		Platform                string         `json:"platform"`
-		Type                    string         `json:"type"`
-		Extra                   map[string]any `json:"extra,omitempty"`
-		Proxy                   *Proxy         `json:"proxy,omitempty"`
-		ProxyID                 *int64         `json:"proxy_id,omitempty"`
-		ProxyFallbackOriginID   *int64         `json:"proxy_fallback_origin_id,omitempty"`
-		ProxyFallbackOriginName *string        `json:"proxy_fallback_origin_name,omitempty"`
-		Concurrency             int            `json:"concurrency"`
-		Priority                int            `json:"priority"`
-		RateMultiplier          *float64       `json:"rate_multiplier,omitempty"`
-		LoadFactor              *int           `json:"load_factor,omitempty"`
-		Status                  string         `json:"status"`
-		ErrorMessage            string         `json:"error_message,omitempty"`
-		LastUsedAt              *time.Time     `json:"last_used_at,omitempty"`
-		ExpiresAt               *time.Time     `json:"expires_at,omitempty"`
-		AutoPauseOnExpired      bool           `json:"auto_pause_on_expired"`
-		CreatedAt               time.Time      `json:"created_at"`
-		UpdatedAt               time.Time      `json:"updated_at"`
-		Schedulable             bool           `json:"schedulable"`
-		RateLimitedAt           *time.Time     `json:"rate_limited_at,omitempty"`
-		RateLimitResetAt        *time.Time     `json:"rate_limit_reset_at,omitempty"`
-		OverloadUntil           *time.Time     `json:"overload_until,omitempty"`
-		TempUnschedulableUntil  *time.Time     `json:"temp_unschedulable_until,omitempty"`
-		TempUnschedulableReason string         `json:"temp_unschedulable_reason,omitempty"`
-		SessionWindowStart      *time.Time     `json:"session_window_start,omitempty"`
-		SessionWindowEnd        *time.Time     `json:"session_window_end,omitempty"`
-		SessionWindowStatus     string         `json:"session_window_status,omitempty"`
-		ParentAccountID         *int64         `json:"parent_account_id,omitempty"`
-		QuotaDimension          string         `json:"quota_dimension,omitempty"`
-		GroupIDs                []int64        `json:"group_ids,omitempty"`
+		ID                      int64                         `json:"id"`
+		Name                    string                        `json:"name"`
+		Notes                   *string                       `json:"notes,omitempty"`
+		Platform                string                        `json:"platform"`
+		Type                    string                        `json:"type"`
+		Extra                   map[string]any                `json:"extra,omitempty"`
+		Proxy                   *Proxy                        `json:"proxy,omitempty"`
+		ProxyID                 *int64                        `json:"proxy_id,omitempty"`
+		ProxyFallbackOriginID   *int64                        `json:"proxy_fallback_origin_id,omitempty"`
+		ProxyFallbackOriginName *string                       `json:"proxy_fallback_origin_name,omitempty"`
+		Concurrency             int                           `json:"concurrency"`
+		Priority                int                           `json:"priority"`
+		RateMultiplier          *float64                      `json:"rate_multiplier,omitempty"`
+		LoadFactor              *int                          `json:"load_factor,omitempty"`
+		Status                  string                        `json:"status"`
+		ErrorMessage            string                        `json:"error_message,omitempty"`
+		LastUsedAt              *time.Time                    `json:"last_used_at,omitempty"`
+		ExpiresAt               *time.Time                    `json:"expires_at,omitempty"`
+		AutoPauseOnExpired      bool                          `json:"auto_pause_on_expired"`
+		CreatedAt               time.Time                     `json:"created_at"`
+		UpdatedAt               time.Time                     `json:"updated_at"`
+		Schedulable             bool                          `json:"schedulable"`
+		RateLimitedAt           *time.Time                    `json:"rate_limited_at,omitempty"`
+		RateLimitResetAt        *time.Time                    `json:"rate_limit_reset_at,omitempty"`
+		OverloadUntil           *time.Time                    `json:"overload_until,omitempty"`
+		TempUnschedulableUntil  *time.Time                    `json:"temp_unschedulable_until,omitempty"`
+		TempUnschedulableReason string                        `json:"temp_unschedulable_reason,omitempty"`
+		SessionWindowStart      *time.Time                    `json:"session_window_start,omitempty"`
+		SessionWindowEnd        *time.Time                    `json:"session_window_end,omitempty"`
+		SessionWindowStatus     string                        `json:"session_window_status,omitempty"`
+		ParentAccountID         *int64                        `json:"parent_account_id,omitempty"`
+		QuotaDimension          string                        `json:"quota_dimension,omitempty"`
+		GroupIDs                []int64                       `json:"group_ids,omitempty"`
+		Subscription            *pluginv2.AccountSubscription `json:"subscription,omitempty"`
 	}{
 		ID: account.ID, Name: account.Name, Notes: account.Notes, Platform: account.Platform, Type: account.Type, Extra: account.Extra, Proxy: account.Proxy, ProxyID: account.ProxyID, ProxyFallbackOriginID: account.ProxyFallbackOriginID, ProxyFallbackOriginName: account.ProxyFallbackOriginName,
-		Concurrency: account.Concurrency, Priority: account.Priority, RateMultiplier: account.RateMultiplier, LoadFactor: account.LoadFactor, Status: account.Status, ErrorMessage: account.ErrorMessage, LastUsedAt: account.LastUsedAt, ExpiresAt: account.ExpiresAt, AutoPauseOnExpired: account.AutoPauseOnExpired, CreatedAt: account.CreatedAt, UpdatedAt: account.UpdatedAt, Schedulable: account.IsSchedulable(), RateLimitedAt: account.RateLimitedAt, RateLimitResetAt: account.RateLimitResetAt, OverloadUntil: account.OverloadUntil, TempUnschedulableUntil: account.TempUnschedulableUntil, TempUnschedulableReason: account.TempUnschedulableReason, SessionWindowStart: account.SessionWindowStart, SessionWindowEnd: account.SessionWindowEnd, SessionWindowStatus: account.SessionWindowStatus, ParentAccountID: account.ParentAccountID, QuotaDimension: account.QuotaDimension, GroupIDs: append([]int64(nil), account.GroupIDs...),
+		Concurrency: account.Concurrency, Priority: account.Priority, RateMultiplier: account.RateMultiplier, LoadFactor: account.LoadFactor, Status: account.Status, ErrorMessage: account.ErrorMessage, LastUsedAt: account.LastUsedAt, ExpiresAt: account.ExpiresAt, AutoPauseOnExpired: account.AutoPauseOnExpired, CreatedAt: account.CreatedAt, UpdatedAt: account.UpdatedAt, Schedulable: account.IsSchedulable(), RateLimitedAt: account.RateLimitedAt, RateLimitResetAt: account.RateLimitResetAt, OverloadUntil: account.OverloadUntil, TempUnschedulableUntil: account.TempUnschedulableUntil, TempUnschedulableReason: account.TempUnschedulableReason, SessionWindowStart: account.SessionWindowStart, SessionWindowEnd: account.SessionWindowEnd, SessionWindowStatus: account.SessionWindowStatus, ParentAccountID: account.ParentAccountID, QuotaDimension: account.QuotaDimension, GroupIDs: append([]int64(nil), account.GroupIDs...), Subscription: pluginAccountSubscription(account),
 	}
 	raw, err := json.Marshal(readable)
 	if err != nil || len(raw) > 128*1024 {

@@ -67,7 +67,8 @@ func validateProtectionTransportCapability(c PluginCapability) error {
 			continue
 		}
 		switch permission {
-		case pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig, pluginv2.PermissionEventPublish:
+		case pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig,
+			pluginv2.PermissionAccountMetadata, pluginv2.PermissionEventPublish:
 		default:
 			return errors.New("保护传输权限不受支持")
 		}

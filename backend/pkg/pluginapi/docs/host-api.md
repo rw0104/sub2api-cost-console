@@ -2,6 +2,16 @@
 
 Host API 通过 go-plugin multiplex broker 复用已认证的进程连接。在容器模式中不需要开放网络接口。每个服务实例绑定一个已验证的插件安装 ID；请求中没有安装 ID、环境变量名或数据库查询参数。
 
+## v1 账号只读元数据
+
+声明并绑定 `openai.oauth.outbound_transport.v1` 的插件使用 HostService API v2 时，`ListAccounts` 会同时返回兼容的 `account_ids` 和结构化 `accounts`。每个 `AccountInfo` 包含账号 ID、平台、账号类型、名称、状态、宿主计算的 `schedulable` 以及有界 `metadata_json`。
+
+`metadata_json` 不包含 credentials、access token、refresh token 或 cookie；已知 OpenAI OAuth 账号会带规范化的 `subscription`：`plan_type` 使用固定名单，未知值为 `unknown`，`source` 仅为 `host_credentials` 或 `host_extra`，`workspace_id` 只绑定当前账号。宿主不会通过此接口枚举其它 binding scope、刷新 token、访问 repository 或交付凭据。空 scope 返回空账号集；`ResolveOutboundIdentity` 仍是单独且敏感的凭据接口。
+
+## v2 当前账号元数据
+
+声明 `account.metadata.read` 权限的 v2 capability 可调用 `HostServices.ReadAccountMetadata`。请求必须携带 capability ID 和当前 binding scope 内的 `account_id`；宿主返回有界的 `metadata_json`，未命中 scope 时返回 `found=false`。该 RPC 只返回当前账号的非机密套餐/账号元数据，不支持账号枚举、token 刷新、repository 访问或凭据读取。
+
 ## 插件如何接入
 
 账号保护插件使用新增的 `openai.oauth.protection_transport.v1` 能力，详见[保护传输接口](protection-transport.md)。该能力显式授权当前出站请求的凭据转发和网络访问；普通 `request.preprocess.v1` 的脱敏边界不变。它只能在 process 模式运行，无网络容器不会自动放开网络。

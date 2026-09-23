@@ -28,6 +28,7 @@ service HostServices {
   rpc Metric(HostMetricRequest) returns (HostAck);
   rpc ReadConfig(HostCapabilityRequest) returns (HostConfigResponse);
   rpc ReadSecret(HostSecretRequest) returns (HostSecretResponse);
+  rpc ReadAccountMetadata(HostAccountMetadataRequest) returns (HostAccountMetadataResponse);
   rpc PublishEvent(HostEventRequest) returns (HostAck);
 }
 message HostCapabilityRequest { string capability = 1; }
@@ -49,6 +50,14 @@ message HostSecretRequest {
 message HostSecretResponse {
   bytes value = 1;
   int64 expires_unix_millis = 2;
+}
+message HostAccountMetadataRequest {
+  string capability = 1;
+  int64 account_id = 2;
+}
+message HostAccountMetadataResponse {
+  bool found = 1;
+  bytes metadata_json = 2;
 }
 message HostEventRequest {
   string capability = 1;

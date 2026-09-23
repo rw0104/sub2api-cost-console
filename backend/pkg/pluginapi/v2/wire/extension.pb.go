@@ -385,6 +385,110 @@ func (x *HostSecretResponse) GetExpiresUnixMillis() int64 {
 	return 0
 }
 
+type HostAccountMetadataRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Capability    string                 `protobuf:"bytes,1,opt,name=capability,proto3" json:"capability,omitempty"`
+	AccountId     int64                  `protobuf:"varint,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostAccountMetadataRequest) Reset() {
+	*x = HostAccountMetadataRequest{}
+	mi := &file_extension_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostAccountMetadataRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostAccountMetadataRequest) ProtoMessage() {}
+
+func (x *HostAccountMetadataRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_extension_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostAccountMetadataRequest.ProtoReflect.Descriptor instead.
+func (*HostAccountMetadataRequest) Descriptor() ([]byte, []int) {
+	return file_extension_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *HostAccountMetadataRequest) GetCapability() string {
+	if x != nil {
+		return x.Capability
+	}
+	return ""
+}
+
+func (x *HostAccountMetadataRequest) GetAccountId() int64 {
+	if x != nil {
+		return x.AccountId
+	}
+	return 0
+}
+
+type HostAccountMetadataResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Found         bool                   `protobuf:"varint,1,opt,name=found,proto3" json:"found,omitempty"`
+	MetadataJson  []byte                 `protobuf:"bytes,2,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostAccountMetadataResponse) Reset() {
+	*x = HostAccountMetadataResponse{}
+	mi := &file_extension_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostAccountMetadataResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostAccountMetadataResponse) ProtoMessage() {}
+
+func (x *HostAccountMetadataResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_extension_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostAccountMetadataResponse.ProtoReflect.Descriptor instead.
+func (*HostAccountMetadataResponse) Descriptor() ([]byte, []int) {
+	return file_extension_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *HostAccountMetadataResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *HostAccountMetadataResponse) GetMetadataJson() []byte {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return nil
+}
+
 type HostEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Capability    string                 `protobuf:"bytes,1,opt,name=capability,proto3" json:"capability,omitempty"`
@@ -396,7 +500,7 @@ type HostEventRequest struct {
 
 func (x *HostEventRequest) Reset() {
 	*x = HostEventRequest{}
-	mi := &file_extension_proto_msgTypes[7]
+	mi := &file_extension_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -408,7 +512,7 @@ func (x *HostEventRequest) String() string {
 func (*HostEventRequest) ProtoMessage() {}
 
 func (x *HostEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[7]
+	mi := &file_extension_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -421,7 +525,7 @@ func (x *HostEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostEventRequest.ProtoReflect.Descriptor instead.
 func (*HostEventRequest) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{7}
+	return file_extension_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HostEventRequest) GetCapability() string {
@@ -454,7 +558,7 @@ type HostAck struct {
 
 func (x *HostAck) Reset() {
 	*x = HostAck{}
-	mi := &file_extension_proto_msgTypes[8]
+	mi := &file_extension_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -466,7 +570,7 @@ func (x *HostAck) String() string {
 func (*HostAck) ProtoMessage() {}
 
 func (x *HostAck) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[8]
+	mi := &file_extension_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -479,7 +583,7 @@ func (x *HostAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostAck.ProtoReflect.Descriptor instead.
 func (*HostAck) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{8}
+	return file_extension_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *HostAck) GetAccepted() bool {
@@ -497,7 +601,7 @@ type GetInfoRequest struct {
 
 func (x *GetInfoRequest) Reset() {
 	*x = GetInfoRequest{}
-	mi := &file_extension_proto_msgTypes[9]
+	mi := &file_extension_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -509,7 +613,7 @@ func (x *GetInfoRequest) String() string {
 func (*GetInfoRequest) ProtoMessage() {}
 
 func (x *GetInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[9]
+	mi := &file_extension_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -522,7 +626,7 @@ func (x *GetInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetInfoRequest) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{9}
+	return file_extension_proto_rawDescGZIP(), []int{11}
 }
 
 type GetInfoResponse struct {
@@ -537,7 +641,7 @@ type GetInfoResponse struct {
 
 func (x *GetInfoResponse) Reset() {
 	*x = GetInfoResponse{}
-	mi := &file_extension_proto_msgTypes[10]
+	mi := &file_extension_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +653,7 @@ func (x *GetInfoResponse) String() string {
 func (*GetInfoResponse) ProtoMessage() {}
 
 func (x *GetInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[10]
+	mi := &file_extension_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +666,7 @@ func (x *GetInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetInfoResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{10}
+	return file_extension_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetInfoResponse) GetPluginId() string {
@@ -609,7 +713,7 @@ type Capability struct {
 
 func (x *Capability) Reset() {
 	*x = Capability{}
-	mi := &file_extension_proto_msgTypes[11]
+	mi := &file_extension_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +725,7 @@ func (x *Capability) String() string {
 func (*Capability) ProtoMessage() {}
 
 func (x *Capability) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[11]
+	mi := &file_extension_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +738,7 @@ func (x *Capability) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capability.ProtoReflect.Descriptor instead.
 func (*Capability) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{11}
+	return file_extension_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Capability) GetId() string {
@@ -701,7 +805,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_extension_proto_msgTypes[12]
+	mi := &file_extension_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -713,7 +817,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[12]
+	mi := &file_extension_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -726,7 +830,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{12}
+	return file_extension_proto_rawDescGZIP(), []int{14}
 }
 
 type HealthResponse struct {
@@ -739,7 +843,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_extension_proto_msgTypes[13]
+	mi := &file_extension_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -751,7 +855,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[13]
+	mi := &file_extension_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -764,7 +868,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{13}
+	return file_extension_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -790,7 +894,7 @@ type ConfigRequest struct {
 
 func (x *ConfigRequest) Reset() {
 	*x = ConfigRequest{}
-	mi := &file_extension_proto_msgTypes[14]
+	mi := &file_extension_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -802,7 +906,7 @@ func (x *ConfigRequest) String() string {
 func (*ConfigRequest) ProtoMessage() {}
 
 func (x *ConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[14]
+	mi := &file_extension_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -815,7 +919,7 @@ func (x *ConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigRequest.ProtoReflect.Descriptor instead.
 func (*ConfigRequest) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{14}
+	return file_extension_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ConfigRequest) GetConfigJson() []byte {
@@ -836,7 +940,7 @@ type ConfigResponse struct {
 
 func (x *ConfigResponse) Reset() {
 	*x = ConfigResponse{}
-	mi := &file_extension_proto_msgTypes[15]
+	mi := &file_extension_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -848,7 +952,7 @@ func (x *ConfigResponse) String() string {
 func (*ConfigResponse) ProtoMessage() {}
 
 func (x *ConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[15]
+	mi := &file_extension_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -861,7 +965,7 @@ func (x *ConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigResponse.ProtoReflect.Descriptor instead.
 func (*ConfigResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{15}
+	return file_extension_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ConfigResponse) GetValid() bool {
@@ -895,7 +999,7 @@ type ApplyResponse struct {
 
 func (x *ApplyResponse) Reset() {
 	*x = ApplyResponse{}
-	mi := &file_extension_proto_msgTypes[16]
+	mi := &file_extension_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +1011,7 @@ func (x *ApplyResponse) String() string {
 func (*ApplyResponse) ProtoMessage() {}
 
 func (x *ApplyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[16]
+	mi := &file_extension_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1024,7 @@ func (x *ApplyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyResponse.ProtoReflect.Descriptor instead.
 func (*ApplyResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{16}
+	return file_extension_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ApplyResponse) GetApplied() bool {
@@ -948,7 +1052,7 @@ type TestResponse struct {
 
 func (x *TestResponse) Reset() {
 	*x = TestResponse{}
-	mi := &file_extension_proto_msgTypes[17]
+	mi := &file_extension_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1064,7 @@ func (x *TestResponse) String() string {
 func (*TestResponse) ProtoMessage() {}
 
 func (x *TestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[17]
+	mi := &file_extension_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +1077,7 @@ func (x *TestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestResponse.ProtoReflect.Descriptor instead.
 func (*TestResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{17}
+	return file_extension_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TestResponse) GetSuccess() bool {
@@ -1018,7 +1122,7 @@ type RequestContext struct {
 
 func (x *RequestContext) Reset() {
 	*x = RequestContext{}
-	mi := &file_extension_proto_msgTypes[18]
+	mi := &file_extension_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1030,7 +1134,7 @@ func (x *RequestContext) String() string {
 func (*RequestContext) ProtoMessage() {}
 
 func (x *RequestContext) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[18]
+	mi := &file_extension_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1043,7 +1147,7 @@ func (x *RequestContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestContext.ProtoReflect.Descriptor instead.
 func (*RequestContext) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{18}
+	return file_extension_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RequestContext) GetRequestId() string {
@@ -1146,7 +1250,7 @@ type HeaderValues struct {
 
 func (x *HeaderValues) Reset() {
 	*x = HeaderValues{}
-	mi := &file_extension_proto_msgTypes[19]
+	mi := &file_extension_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1158,7 +1262,7 @@ func (x *HeaderValues) String() string {
 func (*HeaderValues) ProtoMessage() {}
 
 func (x *HeaderValues) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[19]
+	mi := &file_extension_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1171,7 +1275,7 @@ func (x *HeaderValues) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeaderValues.ProtoReflect.Descriptor instead.
 func (*HeaderValues) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{19}
+	return file_extension_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HeaderValues) GetValues() []string {
@@ -1192,7 +1296,7 @@ type PreprocessRequest struct {
 
 func (x *PreprocessRequest) Reset() {
 	*x = PreprocessRequest{}
-	mi := &file_extension_proto_msgTypes[20]
+	mi := &file_extension_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1204,7 +1308,7 @@ func (x *PreprocessRequest) String() string {
 func (*PreprocessRequest) ProtoMessage() {}
 
 func (x *PreprocessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[20]
+	mi := &file_extension_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1217,7 +1321,7 @@ func (x *PreprocessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreprocessRequest.ProtoReflect.Descriptor instead.
 func (*PreprocessRequest) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{20}
+	return file_extension_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *PreprocessRequest) GetCapability() string {
@@ -1254,7 +1358,7 @@ type RequestPatch struct {
 
 func (x *RequestPatch) Reset() {
 	*x = RequestPatch{}
-	mi := &file_extension_proto_msgTypes[21]
+	mi := &file_extension_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1266,7 +1370,7 @@ func (x *RequestPatch) String() string {
 func (*RequestPatch) ProtoMessage() {}
 
 func (x *RequestPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[21]
+	mi := &file_extension_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1279,7 +1383,7 @@ func (x *RequestPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestPatch.ProtoReflect.Descriptor instead.
 func (*RequestPatch) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{21}
+	return file_extension_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RequestPatch) GetMethod() string {
@@ -1329,7 +1433,7 @@ type PreprocessResponse struct {
 
 func (x *PreprocessResponse) Reset() {
 	*x = PreprocessResponse{}
-	mi := &file_extension_proto_msgTypes[22]
+	mi := &file_extension_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1341,7 +1445,7 @@ func (x *PreprocessResponse) String() string {
 func (*PreprocessResponse) ProtoMessage() {}
 
 func (x *PreprocessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_extension_proto_msgTypes[22]
+	mi := &file_extension_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1354,7 +1458,7 @@ func (x *PreprocessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreprocessResponse.ProtoReflect.Descriptor instead.
 func (*PreprocessResponse) Descriptor() ([]byte, []int) {
-	return file_extension_proto_rawDescGZIP(), []int{22}
+	return file_extension_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *PreprocessResponse) GetDecision() string {
@@ -1419,7 +1523,16 @@ const file_extension_proto_rawDesc = "" +
 	"\x05alias\x18\x02 \x01(\tR\x05alias\"Z\n" +
 	"\x12HostSecretResponse\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\fR\x05value\x12.\n" +
-	"\x13expires_unix_millis\x18\x02 \x01(\x03R\x11expiresUnixMillis\"\\\n" +
+	"\x13expires_unix_millis\x18\x02 \x01(\x03R\x11expiresUnixMillis\"[\n" +
+	"\x1aHostAccountMetadataRequest\x12\x1e\n" +
+	"\n" +
+	"capability\x18\x01 \x01(\tR\n" +
+	"capability\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x02 \x01(\x03R\taccountId\"X\n" +
+	"\x1bHostAccountMetadataResponse\x12\x14\n" +
+	"\x05found\x18\x01 \x01(\bR\x05found\x12#\n" +
+	"\rmetadata_json\x18\x02 \x01(\fR\fmetadataJson\"\\\n" +
 	"\x10HostEventRequest\x12\x1e\n" +
 	"\n" +
 	"capability\x18\x01 \x01(\tR\n" +
@@ -1516,14 +1629,15 @@ const file_extension_proto_rawDesc = "" +
 	"\n" +
 	"Preprocess\x12$.sub2api.plugin.v2.PreprocessRequest\x1a%.sub2api.plugin.v2.PreprocessResponse\x12T\n" +
 	"\n" +
-	"AttachHost\x12$.sub2api.plugin.v2.AttachHostRequest\x1a .sub2api.plugin.v2.ApplyResponse2\xab\x03\n" +
+	"AttachHost\x12$.sub2api.plugin.v2.AttachHostRequest\x1a .sub2api.plugin.v2.ApplyResponse2\xa1\x04\n" +
 	"\fHostServices\x12D\n" +
 	"\x03Log\x12!.sub2api.plugin.v2.HostLogRequest\x1a\x1a.sub2api.plugin.v2.HostAck\x12J\n" +
 	"\x06Metric\x12$.sub2api.plugin.v2.HostMetricRequest\x1a\x1a.sub2api.plugin.v2.HostAck\x12]\n" +
 	"\n" +
 	"ReadConfig\x12(.sub2api.plugin.v2.HostCapabilityRequest\x1a%.sub2api.plugin.v2.HostConfigResponse\x12Y\n" +
 	"\n" +
-	"ReadSecret\x12$.sub2api.plugin.v2.HostSecretRequest\x1a%.sub2api.plugin.v2.HostSecretResponse\x12O\n" +
+	"ReadSecret\x12$.sub2api.plugin.v2.HostSecretRequest\x1a%.sub2api.plugin.v2.HostSecretResponse\x12t\n" +
+	"\x13ReadAccountMetadata\x12-.sub2api.plugin.v2.HostAccountMetadataRequest\x1a..sub2api.plugin.v2.HostAccountMetadataResponse\x12O\n" +
 	"\fPublishEvent\x12#.sub2api.plugin.v2.HostEventRequest\x1a\x1a.sub2api.plugin.v2.HostAckB8Z6github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2/wire;wireb\x06proto3"
 
 var (
@@ -1538,68 +1652,72 @@ func file_extension_proto_rawDescGZIP() []byte {
 	return file_extension_proto_rawDescData
 }
 
-var file_extension_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_extension_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_extension_proto_goTypes = []any{
-	(*AttachHostRequest)(nil),     // 0: sub2api.plugin.v2.AttachHostRequest
-	(*HostCapabilityRequest)(nil), // 1: sub2api.plugin.v2.HostCapabilityRequest
-	(*HostLogRequest)(nil),        // 2: sub2api.plugin.v2.HostLogRequest
-	(*HostMetricRequest)(nil),     // 3: sub2api.plugin.v2.HostMetricRequest
-	(*HostConfigResponse)(nil),    // 4: sub2api.plugin.v2.HostConfigResponse
-	(*HostSecretRequest)(nil),     // 5: sub2api.plugin.v2.HostSecretRequest
-	(*HostSecretResponse)(nil),    // 6: sub2api.plugin.v2.HostSecretResponse
-	(*HostEventRequest)(nil),      // 7: sub2api.plugin.v2.HostEventRequest
-	(*HostAck)(nil),               // 8: sub2api.plugin.v2.HostAck
-	(*GetInfoRequest)(nil),        // 9: sub2api.plugin.v2.GetInfoRequest
-	(*GetInfoResponse)(nil),       // 10: sub2api.plugin.v2.GetInfoResponse
-	(*Capability)(nil),            // 11: sub2api.plugin.v2.Capability
-	(*HealthRequest)(nil),         // 12: sub2api.plugin.v2.HealthRequest
-	(*HealthResponse)(nil),        // 13: sub2api.plugin.v2.HealthResponse
-	(*ConfigRequest)(nil),         // 14: sub2api.plugin.v2.ConfigRequest
-	(*ConfigResponse)(nil),        // 15: sub2api.plugin.v2.ConfigResponse
-	(*ApplyResponse)(nil),         // 16: sub2api.plugin.v2.ApplyResponse
-	(*TestResponse)(nil),          // 17: sub2api.plugin.v2.TestResponse
-	(*RequestContext)(nil),        // 18: sub2api.plugin.v2.RequestContext
-	(*HeaderValues)(nil),          // 19: sub2api.plugin.v2.HeaderValues
-	(*PreprocessRequest)(nil),     // 20: sub2api.plugin.v2.PreprocessRequest
-	(*RequestPatch)(nil),          // 21: sub2api.plugin.v2.RequestPatch
-	(*PreprocessResponse)(nil),    // 22: sub2api.plugin.v2.PreprocessResponse
-	nil,                           // 23: sub2api.plugin.v2.RequestContext.HeadersEntry
-	nil,                           // 24: sub2api.plugin.v2.RequestPatch.HeadersEntry
+	(*AttachHostRequest)(nil),           // 0: sub2api.plugin.v2.AttachHostRequest
+	(*HostCapabilityRequest)(nil),       // 1: sub2api.plugin.v2.HostCapabilityRequest
+	(*HostLogRequest)(nil),              // 2: sub2api.plugin.v2.HostLogRequest
+	(*HostMetricRequest)(nil),           // 3: sub2api.plugin.v2.HostMetricRequest
+	(*HostConfigResponse)(nil),          // 4: sub2api.plugin.v2.HostConfigResponse
+	(*HostSecretRequest)(nil),           // 5: sub2api.plugin.v2.HostSecretRequest
+	(*HostSecretResponse)(nil),          // 6: sub2api.plugin.v2.HostSecretResponse
+	(*HostAccountMetadataRequest)(nil),  // 7: sub2api.plugin.v2.HostAccountMetadataRequest
+	(*HostAccountMetadataResponse)(nil), // 8: sub2api.plugin.v2.HostAccountMetadataResponse
+	(*HostEventRequest)(nil),            // 9: sub2api.plugin.v2.HostEventRequest
+	(*HostAck)(nil),                     // 10: sub2api.plugin.v2.HostAck
+	(*GetInfoRequest)(nil),              // 11: sub2api.plugin.v2.GetInfoRequest
+	(*GetInfoResponse)(nil),             // 12: sub2api.plugin.v2.GetInfoResponse
+	(*Capability)(nil),                  // 13: sub2api.plugin.v2.Capability
+	(*HealthRequest)(nil),               // 14: sub2api.plugin.v2.HealthRequest
+	(*HealthResponse)(nil),              // 15: sub2api.plugin.v2.HealthResponse
+	(*ConfigRequest)(nil),               // 16: sub2api.plugin.v2.ConfigRequest
+	(*ConfigResponse)(nil),              // 17: sub2api.plugin.v2.ConfigResponse
+	(*ApplyResponse)(nil),               // 18: sub2api.plugin.v2.ApplyResponse
+	(*TestResponse)(nil),                // 19: sub2api.plugin.v2.TestResponse
+	(*RequestContext)(nil),              // 20: sub2api.plugin.v2.RequestContext
+	(*HeaderValues)(nil),                // 21: sub2api.plugin.v2.HeaderValues
+	(*PreprocessRequest)(nil),           // 22: sub2api.plugin.v2.PreprocessRequest
+	(*RequestPatch)(nil),                // 23: sub2api.plugin.v2.RequestPatch
+	(*PreprocessResponse)(nil),          // 24: sub2api.plugin.v2.PreprocessResponse
+	nil,                                 // 25: sub2api.plugin.v2.RequestContext.HeadersEntry
+	nil,                                 // 26: sub2api.plugin.v2.RequestPatch.HeadersEntry
 }
 var file_extension_proto_depIdxs = []int32{
-	11, // 0: sub2api.plugin.v2.GetInfoResponse.capabilities:type_name -> sub2api.plugin.v2.Capability
-	23, // 1: sub2api.plugin.v2.RequestContext.headers:type_name -> sub2api.plugin.v2.RequestContext.HeadersEntry
-	18, // 2: sub2api.plugin.v2.PreprocessRequest.context:type_name -> sub2api.plugin.v2.RequestContext
-	24, // 3: sub2api.plugin.v2.RequestPatch.headers:type_name -> sub2api.plugin.v2.RequestPatch.HeadersEntry
-	21, // 4: sub2api.plugin.v2.PreprocessResponse.patch:type_name -> sub2api.plugin.v2.RequestPatch
-	19, // 5: sub2api.plugin.v2.RequestContext.HeadersEntry.value:type_name -> sub2api.plugin.v2.HeaderValues
-	19, // 6: sub2api.plugin.v2.RequestPatch.HeadersEntry.value:type_name -> sub2api.plugin.v2.HeaderValues
-	9,  // 7: sub2api.plugin.v2.ExtensionPlugin.GetInfo:input_type -> sub2api.plugin.v2.GetInfoRequest
-	12, // 8: sub2api.plugin.v2.ExtensionPlugin.Health:input_type -> sub2api.plugin.v2.HealthRequest
-	14, // 9: sub2api.plugin.v2.ExtensionPlugin.ValidateConfig:input_type -> sub2api.plugin.v2.ConfigRequest
-	14, // 10: sub2api.plugin.v2.ExtensionPlugin.ApplyConfig:input_type -> sub2api.plugin.v2.ConfigRequest
-	14, // 11: sub2api.plugin.v2.ExtensionPlugin.TestConfig:input_type -> sub2api.plugin.v2.ConfigRequest
-	20, // 12: sub2api.plugin.v2.ExtensionPlugin.Preprocess:input_type -> sub2api.plugin.v2.PreprocessRequest
+	13, // 0: sub2api.plugin.v2.GetInfoResponse.capabilities:type_name -> sub2api.plugin.v2.Capability
+	25, // 1: sub2api.plugin.v2.RequestContext.headers:type_name -> sub2api.plugin.v2.RequestContext.HeadersEntry
+	20, // 2: sub2api.plugin.v2.PreprocessRequest.context:type_name -> sub2api.plugin.v2.RequestContext
+	26, // 3: sub2api.plugin.v2.RequestPatch.headers:type_name -> sub2api.plugin.v2.RequestPatch.HeadersEntry
+	23, // 4: sub2api.plugin.v2.PreprocessResponse.patch:type_name -> sub2api.plugin.v2.RequestPatch
+	21, // 5: sub2api.plugin.v2.RequestContext.HeadersEntry.value:type_name -> sub2api.plugin.v2.HeaderValues
+	21, // 6: sub2api.plugin.v2.RequestPatch.HeadersEntry.value:type_name -> sub2api.plugin.v2.HeaderValues
+	11, // 7: sub2api.plugin.v2.ExtensionPlugin.GetInfo:input_type -> sub2api.plugin.v2.GetInfoRequest
+	14, // 8: sub2api.plugin.v2.ExtensionPlugin.Health:input_type -> sub2api.plugin.v2.HealthRequest
+	16, // 9: sub2api.plugin.v2.ExtensionPlugin.ValidateConfig:input_type -> sub2api.plugin.v2.ConfigRequest
+	16, // 10: sub2api.plugin.v2.ExtensionPlugin.ApplyConfig:input_type -> sub2api.plugin.v2.ConfigRequest
+	16, // 11: sub2api.plugin.v2.ExtensionPlugin.TestConfig:input_type -> sub2api.plugin.v2.ConfigRequest
+	22, // 12: sub2api.plugin.v2.ExtensionPlugin.Preprocess:input_type -> sub2api.plugin.v2.PreprocessRequest
 	0,  // 13: sub2api.plugin.v2.ExtensionPlugin.AttachHost:input_type -> sub2api.plugin.v2.AttachHostRequest
 	2,  // 14: sub2api.plugin.v2.HostServices.Log:input_type -> sub2api.plugin.v2.HostLogRequest
 	3,  // 15: sub2api.plugin.v2.HostServices.Metric:input_type -> sub2api.plugin.v2.HostMetricRequest
 	1,  // 16: sub2api.plugin.v2.HostServices.ReadConfig:input_type -> sub2api.plugin.v2.HostCapabilityRequest
 	5,  // 17: sub2api.plugin.v2.HostServices.ReadSecret:input_type -> sub2api.plugin.v2.HostSecretRequest
-	7,  // 18: sub2api.plugin.v2.HostServices.PublishEvent:input_type -> sub2api.plugin.v2.HostEventRequest
-	10, // 19: sub2api.plugin.v2.ExtensionPlugin.GetInfo:output_type -> sub2api.plugin.v2.GetInfoResponse
-	13, // 20: sub2api.plugin.v2.ExtensionPlugin.Health:output_type -> sub2api.plugin.v2.HealthResponse
-	15, // 21: sub2api.plugin.v2.ExtensionPlugin.ValidateConfig:output_type -> sub2api.plugin.v2.ConfigResponse
-	16, // 22: sub2api.plugin.v2.ExtensionPlugin.ApplyConfig:output_type -> sub2api.plugin.v2.ApplyResponse
-	17, // 23: sub2api.plugin.v2.ExtensionPlugin.TestConfig:output_type -> sub2api.plugin.v2.TestResponse
-	22, // 24: sub2api.plugin.v2.ExtensionPlugin.Preprocess:output_type -> sub2api.plugin.v2.PreprocessResponse
-	16, // 25: sub2api.plugin.v2.ExtensionPlugin.AttachHost:output_type -> sub2api.plugin.v2.ApplyResponse
-	8,  // 26: sub2api.plugin.v2.HostServices.Log:output_type -> sub2api.plugin.v2.HostAck
-	8,  // 27: sub2api.plugin.v2.HostServices.Metric:output_type -> sub2api.plugin.v2.HostAck
-	4,  // 28: sub2api.plugin.v2.HostServices.ReadConfig:output_type -> sub2api.plugin.v2.HostConfigResponse
-	6,  // 29: sub2api.plugin.v2.HostServices.ReadSecret:output_type -> sub2api.plugin.v2.HostSecretResponse
-	8,  // 30: sub2api.plugin.v2.HostServices.PublishEvent:output_type -> sub2api.plugin.v2.HostAck
-	19, // [19:31] is the sub-list for method output_type
-	7,  // [7:19] is the sub-list for method input_type
+	7,  // 18: sub2api.plugin.v2.HostServices.ReadAccountMetadata:input_type -> sub2api.plugin.v2.HostAccountMetadataRequest
+	9,  // 19: sub2api.plugin.v2.HostServices.PublishEvent:input_type -> sub2api.plugin.v2.HostEventRequest
+	12, // 20: sub2api.plugin.v2.ExtensionPlugin.GetInfo:output_type -> sub2api.plugin.v2.GetInfoResponse
+	15, // 21: sub2api.plugin.v2.ExtensionPlugin.Health:output_type -> sub2api.plugin.v2.HealthResponse
+	17, // 22: sub2api.plugin.v2.ExtensionPlugin.ValidateConfig:output_type -> sub2api.plugin.v2.ConfigResponse
+	18, // 23: sub2api.plugin.v2.ExtensionPlugin.ApplyConfig:output_type -> sub2api.plugin.v2.ApplyResponse
+	19, // 24: sub2api.plugin.v2.ExtensionPlugin.TestConfig:output_type -> sub2api.plugin.v2.TestResponse
+	24, // 25: sub2api.plugin.v2.ExtensionPlugin.Preprocess:output_type -> sub2api.plugin.v2.PreprocessResponse
+	18, // 26: sub2api.plugin.v2.ExtensionPlugin.AttachHost:output_type -> sub2api.plugin.v2.ApplyResponse
+	10, // 27: sub2api.plugin.v2.HostServices.Log:output_type -> sub2api.plugin.v2.HostAck
+	10, // 28: sub2api.plugin.v2.HostServices.Metric:output_type -> sub2api.plugin.v2.HostAck
+	4,  // 29: sub2api.plugin.v2.HostServices.ReadConfig:output_type -> sub2api.plugin.v2.HostConfigResponse
+	6,  // 30: sub2api.plugin.v2.HostServices.ReadSecret:output_type -> sub2api.plugin.v2.HostSecretResponse
+	8,  // 31: sub2api.plugin.v2.HostServices.ReadAccountMetadata:output_type -> sub2api.plugin.v2.HostAccountMetadataResponse
+	10, // 32: sub2api.plugin.v2.HostServices.PublishEvent:output_type -> sub2api.plugin.v2.HostAck
+	20, // [20:33] is the sub-list for method output_type
+	7,  // [7:20] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -1616,7 +1734,7 @@ func file_extension_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_extension_proto_rawDesc), len(file_extension_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   25,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

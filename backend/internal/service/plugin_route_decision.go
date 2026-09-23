@@ -84,8 +84,6 @@ func (m *PluginManager) evaluateRoute(ctx context.Context, capability string, ac
 	decision.Stale = table.stateUnavailable
 	principal := pluginPrincipalFromContext(ctx)
 	firstFailure := ""
-	var firstUnavailable *extensionRoute
-	firstUnavailableReason := ""
 	setFailure := func(reason string) {
 		if firstFailure == "" {
 			firstFailure = reason
@@ -136,11 +134,15 @@ func (m *PluginManager) evaluateRoute(ctx context.Context, capability string, ac
 			(route.runtime.client != nil && route.runtime.client.Exited()) ||
 			(route.runtime.api == nil && route.runtime.extension == nil && route.runtime.transport == nil) {
 			setFailure(PluginRouteReasonRuntimeUnavailable)
-			if firstUnavailable == nil {
-				firstUnavailable = route
-				firstUnavailableReason = PluginRouteReasonRuntimeUnavailable
+			decision.Reason = PluginRouteReasonRuntimeUnavailable
+			decision.PluginID = route.pluginID
+			decision.Capability = route.capability.ID
+			decision.BindingID = binding.ID
+			if route.runtime != nil {
+				decision.RuntimeInstanceID = route.runtime.instanceID
 			}
-			continue
+			decision.FirstFailureReason = firstFailure
+			return pluginRouteEvaluation{route: route, decision: decision}
 		}
 
 		if route.calls != nil {
@@ -149,11 +151,13 @@ func (m *PluginManager) evaluateRoute(ctx context.Context, capability string, ac
 			route.calls.mu.Unlock()
 			if open {
 				setFailure(PluginRouteReasonCircuitOpen)
-				if firstUnavailable == nil {
-					firstUnavailable = route
-					firstUnavailableReason = PluginRouteReasonCircuitOpen
-				}
-				continue
+				decision.Reason = PluginRouteReasonCircuitOpen
+				decision.PluginID = route.pluginID
+				decision.Capability = route.capability.ID
+				decision.BindingID = binding.ID
+				decision.RuntimeInstanceID = route.runtime.instanceID
+				decision.FirstFailureReason = firstFailure
+				return pluginRouteEvaluation{route: route, decision: decision}
 			}
 		}
 
@@ -168,16 +172,6 @@ func (m *PluginManager) evaluateRoute(ctx context.Context, capability string, ac
 	}
 
 	decision.FirstFailureReason = firstFailure
-	if firstUnavailable != nil {
-		decision.Reason = firstUnavailableReason
-		decision.PluginID = firstUnavailable.pluginID
-		decision.Capability = firstUnavailable.capability.ID
-		decision.BindingID = firstUnavailable.binding.ID
-		if firstUnavailable.runtime != nil {
-			decision.RuntimeInstanceID = firstUnavailable.runtime.instanceID
-		}
-		return pluginRouteEvaluation{route: firstUnavailable, decision: decision}
-	}
 	if firstFailure != "" {
 		decision.Reason = firstFailure
 	}

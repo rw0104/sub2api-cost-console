@@ -167,6 +167,7 @@ func (m *PluginManager) List(ctx context.Context) ([]*PluginInstallation, error)
 	defer m.mu.Unlock()
 	route := m.route.Load()
 	for _, installation := range plugins {
+		NormalizePluginInstallationMetadata(installation)
 		installation.Compatibility = EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
 		installation.CapabilityRuntime = m.extensionStatus(installation.ID)
 		if runtime := m.runtimes[installation.ID]; runtime != nil && !runtime.client.Exited() {
@@ -192,6 +193,7 @@ func (m *PluginManager) Get(ctx context.Context, id int64) (*PluginInstallation,
 	if err != nil {
 		return nil, err
 	}
+	NormalizePluginInstallationMetadata(installation)
 	installation.Compatibility = EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
 	installation.CapabilityRuntime = m.extensionStatus(installation.ID)
 	m.mu.Lock()
@@ -756,33 +758,47 @@ func (m *PluginManager) GetConfig(ctx context.Context, id int64) (json.RawMessag
 	return m.decryptConfig(installation)
 }
 
+// SaveConfig preserves the pre-revision API for internal callers and older
+// plugin UI bridges. The repository still uses the installation revision as
+// the CAS token whenever it supports the additive revision interface.
 func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMessage) (json.RawMessage, error) {
+	saved, _, err := m.SaveConfigWithRevision(ctx, id, raw, 0)
+	return saved, err
+}
+
+// SaveConfigWithRevision performs the common validate -> CAS persist -> apply
+// sequence. expectedRevision is the value read by the editor; zero is only a
+// compatibility value for legacy in-process callers.
+func (m *PluginManager) SaveConfigWithRevision(ctx context.Context, id int64, raw json.RawMessage, expectedRevision int64) (json.RawMessage, PluginMutationResult, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	if len(raw) == 0 || len(raw) > pluginConfigMaxBytes || !json.Valid(raw) {
-		return nil, errors.New("插件配置必须是有效且大小受限的 JSON")
+		return nil, PluginMutationResult{}, errors.New("插件配置必须是有效且大小受限的 JSON")
 	}
 	installation, err := m.repo.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
+	}
+	if expectedRevision > 0 && installation.Revision != expectedRevision {
+		return nil, PluginMutationResult{}, ErrPluginStateChanged
 	}
 	previousConfig, err := m.decryptConfig(installation)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	var normalized any
 	if err := json.Unmarshal(raw, &normalized); err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	if normalized == nil {
-		return nil, errors.New("插件配置 JSON 根节点必须是对象")
+		return nil, PluginMutationResult{}, errors.New("插件配置 JSON 根节点必须是对象")
 	}
 	if _, ok := normalized.(map[string]any); !ok {
-		return nil, errors.New("插件配置 JSON 根节点必须是对象")
+		return nil, PluginMutationResult{}, errors.New("插件配置 JSON 根节点必须是对象")
 	}
 	canonical, err := json.Marshal(normalized)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	m.mu.Lock()
 	runtime := m.runtimes[id]
@@ -794,11 +810,11 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 	if runtime == nil {
 		installation, err = m.ensureLocalInstallation(ctx, installation)
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 		runtime, err = m.newRuntime(ctx, installation)
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 		temporary = true
 		defer runtime.kill()
@@ -808,27 +824,49 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 		canonical, err = runtime.validateNormalizedConfig(applyCtx, canonical)
 		cancel()
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 	}
 	encrypted, err := m.encryptor.Encrypt(string(canonical))
 	if err != nil {
-		return nil, fmt.Errorf("加密插件配置: %w", err)
+		return nil, PluginMutationResult{}, fmt.Errorf("加密插件配置: %w", err)
+	}
+	op, err := m.beginPluginOperation(ctx, id, "config.save", installation.Revision)
+	if err != nil {
+		return nil, PluginMutationResult{}, err
+	}
+	mutation := PluginMutationResult{Revision: installation.Revision + 1}
+	mutation.OperationID = op.ID
+	if mutation.Revision <= 0 {
+		mutation.Revision = 0
 	}
 	if hasProtectionCapability(installation.Manifest) {
-		if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+		if repo, ok := m.repo.(PluginConfigRevisionRepository); ok {
+			mutation, err = repo.UpdateConfigCASRevision(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted, installation.Revision)
+		} else if repo, ok := m.repo.(PluginConfigCASRepository); ok {
 			err = repo.UpdateConfigCAS(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted)
 		} else {
 			err = errors.New("宿主存储不支持保护配置的原子比较更新")
 		}
+	} else if repo, ok := m.repo.(PluginConfigRevisionRepository); ok {
+		mutation, err = repo.UpdateConfigCASRevision(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted, installation.Revision)
 	} else {
 		err = m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256)
 	}
 	if err != nil {
 		// Validation has not applied settings. A failed CAS/encryption/persistence
 		// leaves the live process, its tokens, and in-flight streams untouched.
-		return nil, err
+		m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		return nil, PluginMutationResult{}, err
 	}
+	// Repository adapters return revision metadata only; the operation ID is
+	// owned by the manager and must remain stable in the response envelope.
+	mutation.OperationID = op.ID
+	if mutation.Revision > 0 {
+		mutation.ETag = PluginInstallationETag(id, mutation.Revision)
+	}
+	op.TargetRevision = mutation.Revision
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	applyErr := runtime.applyNormalizedConfig(applyCtx, canonical)
 	cancel()
@@ -836,7 +874,9 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer rollbackCancel()
 		var rollbackErr error
-		if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+		if repo, ok := m.repo.(PluginConfigRevisionRepository); ok && mutation.Revision > 0 {
+			_, rollbackErr = repo.UpdateConfigCASRevision(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256, encrypted, mutation.Revision)
+		} else if repo, ok := m.repo.(PluginConfigCASRepository); ok {
 			rollbackErr = repo.UpdateConfigCAS(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256, encrypted)
 		} else {
 			rollbackErr = m.repo.UpdateConfig(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256)
@@ -846,12 +886,18 @@ func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMe
 		} else if !temporary {
 			rollbackErr = m.restoreRuntimeConfig(id, runtime, previousConfig)
 		}
-		return nil, errors.Join(applyErr, rollbackErr)
+		operationErr := errors.Join(applyErr, rollbackErr)
+		m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", operationErr)
+		return nil, PluginMutationResult{}, operationErr
 	}
 	if !temporary {
 		runtime.installation.ConfigEncrypted = encrypted
+		runtime.installation.Revision = mutation.Revision
+		runtime.installation.ETag = mutation.ETag
 	}
-	return canonical, nil
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "applied", nil)
+	return canonical, mutation, nil
 }
 
 func (m *PluginManager) restoreRuntimeConfig(id int64, runtime *pluginRuntime, previous json.RawMessage) error {
@@ -1050,6 +1096,7 @@ func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, run
 	routeDecision := "NOT_SELECTED"
 	timeline := pluginRuntimeTimelineSnapshot{}
 	if runtime != nil {
+		stale = stale || runtime.statusIsStale()
 		timeline = runtime.runtimeTimelineSnapshot()
 		instanceID = runtime.instanceID
 		if runtime.client != nil && !runtime.client.Exited() {
@@ -1427,10 +1474,15 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 		return nil, err
 	}
 	if installation.Manifest.SchemaVersion == 2 && hasHostPermissions(installation.Manifest) {
-		host := newPluginHostServices(installation, func(ctx context.Context, capability, alias string) (pluginv2.SecretValue, error) {
-			return m.readPluginSecret(ctx, installation.ID, capability, alias)
-		})
+		host := newPluginHostServices(installation,
+			func(ctx context.Context, capability, alias string) (pluginv2.SecretValue, error) {
+				return m.readPluginSecret(ctx, installation.ID, capability, alias)
+			},
+			func(ctx context.Context, capability string, accountID int64) ([]byte, error) {
+				return m.readPluginAccountMetadata(ctx, installation, capability, accountID)
+			})
 		process.host = host
+		host.setRuntimeMetadata(process.instanceID)
 		connector, ok := process.extension.(pluginv2.HostConnector)
 		if !ok {
 			process.kill()
@@ -1456,6 +1508,33 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 	}
 	process.markRuntimeReadiness(nil)
 	return process, nil
+}
+
+func (m *PluginManager) readPluginAccountMetadata(ctx context.Context, installation *PluginInstallation, capability string, accountID int64) ([]byte, error) {
+	if installation == nil || accountID <= 0 {
+		return nil, errors.New("账号元数据不可用")
+	}
+	scope := pluginAccountScopeForCapability(installation, capability)
+	if !scope.allowsID(accountID) {
+		return nil, errors.New("账号不在插件作用域内")
+	}
+	m.mu.Lock()
+	directory := m.accountDirectory
+	m.mu.Unlock()
+	scoped, ok := directory.(ScopedPluginAccountDirectory)
+	if !ok {
+		return nil, errors.New("账号目录不支持元数据接口")
+	}
+	infos, err := scoped.ListPluginAccounts(ctx, scope, PlatformOpenAI, AccountTypeOAuth)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range infos {
+		if info.ID == accountID && len(info.MetadataJSON) > 0 {
+			return append([]byte(nil), info.MetadataJSON...), nil
+		}
+	}
+	return nil, errors.New("账号元数据不存在")
 }
 
 // SetAccountDirectory 注入账号目录实现（敏感能力）。仅在启动装配阶段调用一次，

@@ -192,17 +192,31 @@ func (h *PluginHandler) SaveRouting(c *gin.Context) {
 	}
 	var request struct {
 		Policies          []service.PluginRoutingPolicy `json:"policies" binding:"required,min=1,max=16"`
-		ExpectedUpdatedAt time.Time                     `json:"expected_updated_at" binding:"required"`
+		ExpectedUpdatedAt time.Time                     `json:"expected_updated_at"`
+		ExpectedRevision  int64                         `json:"expected_revision"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256*1024)
 	if err := c.ShouldBindJSON(&request); err != nil {
 		response.BadRequest(c, "插件路由参数无效")
 		return
 	}
-	plugin, err := h.manager.SaveRouting(c.Request.Context(), id, request.Policies, request.ExpectedUpdatedAt)
+	if request.ExpectedRevision <= 0 && request.ExpectedUpdatedAt.IsZero() {
+		response.BadRequest(c, "插件路由 revision 无效，请刷新后重试")
+		return
+	}
+	var plugin *service.PluginInstallation
+	var err error
+	if request.ExpectedRevision > 0 {
+		plugin, err = h.manager.SaveRoutingWithRevision(c.Request.Context(), id, request.Policies, request.ExpectedRevision)
+	} else {
+		plugin, err = h.manager.SaveRouting(c.Request.Context(), id, request.Policies, request.ExpectedUpdatedAt)
+	}
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
+	}
+	if plugin.OperationID != "" {
+		c.Header("X-Plugin-Operation-ID", plugin.OperationID)
 	}
 	response.Success(c, plugin)
 }
@@ -354,10 +368,21 @@ func (h *PluginHandler) GetConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	installation, err := h.manager.Get(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	configJSON, err := h.manager.GetConfig(c.Request.Context(), id)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if installation.ETag != "" {
+		c.Header("ETag", installation.ETag)
+	}
+	if installation.Revision > 0 {
+		c.Header("X-Plugin-Revision", strconv.FormatInt(installation.Revision, 10))
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", configJSON)
 }
@@ -383,7 +408,18 @@ func (h *PluginHandler) SaveConfig(c *gin.Context) {
 		response.BadRequest(c, "插件配置无法序列化")
 		return
 	}
-	saved, err := h.manager.SaveConfig(c.Request.Context(), id, raw)
+	expectedRevision, revisionErr := pluginExpectedRevision(c)
+	if revisionErr != nil {
+		response.BadRequest(c, revisionErr.Error())
+		return
+	}
+	var saved json.RawMessage
+	var mutation service.PluginMutationResult
+	if expectedRevision > 0 {
+		saved, mutation, err = h.manager.SaveConfigWithRevision(c.Request.Context(), id, raw, expectedRevision)
+	} else {
+		saved, mutation, err = h.manager.SaveConfigWithRevision(c.Request.Context(), id, raw, 0)
+	}
 	if err != nil {
 		if infraerrors.Reason(err) == service.PluginConfigUnreadableReason {
 			response.ErrorFrom(c, err)
@@ -392,7 +428,37 @@ func (h *PluginHandler) SaveConfig(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if mutation.ETag != "" {
+		c.Header("ETag", mutation.ETag)
+	}
+	if mutation.OperationID != "" {
+		c.Header("X-Plugin-Operation-ID", mutation.OperationID)
+	}
+	if mutation.Revision > 0 {
+		c.Header("X-Plugin-Revision", strconv.FormatInt(mutation.Revision, 10))
+	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", saved)
+}
+
+func pluginExpectedRevision(c *gin.Context) (int64, error) {
+	raw := strings.TrimSpace(c.GetHeader("X-Plugin-Revision"))
+	if raw == "" {
+		raw = strings.TrimSpace(c.GetHeader("If-Match"))
+	}
+	if raw == "" {
+		return 0, nil
+	}
+	if strings.HasPrefix(raw, `"plugin-`) && strings.HasSuffix(raw, `"`) {
+		parts := strings.Split(strings.Trim(raw, `"`), "-")
+		if len(parts) == 3 {
+			raw = parts[2]
+		}
+	}
+	revision, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || revision <= 0 {
+		return 0, errors.New("插件配置 revision 无效，请刷新后重试")
+	}
+	return revision, nil
 }
 
 func (h *PluginHandler) RecoverConfig(c *gin.Context) {

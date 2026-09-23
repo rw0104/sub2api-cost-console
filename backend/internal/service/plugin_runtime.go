@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,6 +48,11 @@ type pluginRuntime struct {
 	readinessErr      error
 	readinessFailures int
 	readinessInFlight bool
+	statusMu          sync.Mutex
+	statusAt          time.Time
+	statusValue       *pluginv1.HealthResponse
+	statusInFlight    bool
+	statusStale       bool
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -343,13 +347,55 @@ func (r *pluginRuntime) readinessDecisionLocked() error {
 	return nil
 }
 
-// status returns the plugin's passive Health response, including any status_json
-// blob it exposes for the config UI. It performs no config apply and no upstream
-// call, so it is safe to serve from a lightweight, ungated status endpoint.
+const pluginRuntimeStatusCacheTTL = 2 * time.Second
+
+// status returns a cached passive Health response for the config UI. At most
+// one remote Health RPC is in flight per runtime; concurrent UI polls receive
+// the last snapshot marked stale instead of multiplying slow probes.
 func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, error) {
 	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
 		return nil, errors.New("插件进程已退出")
 	}
+	now := time.Now()
+	r.statusMu.Lock()
+	if r.statusValue != nil && now.Sub(r.statusAt) < pluginRuntimeStatusCacheTTL {
+		cached := clonePluginHealthResponse(r.statusValue)
+		r.statusMu.Unlock()
+		return cached, nil
+	}
+	if r.statusInFlight {
+		if r.statusValue != nil {
+			r.statusStale = true
+			cached := clonePluginHealthResponse(r.statusValue)
+			r.statusMu.Unlock()
+			return cached, nil
+		}
+		r.statusMu.Unlock()
+		return nil, errors.New("插件状态查询正在进行")
+	}
+	r.statusInFlight = true
+	previous := clonePluginHealthResponse(r.statusValue)
+	r.statusMu.Unlock()
+
+	health, err := r.fetchStatus(ctx)
+	r.statusMu.Lock()
+	r.statusInFlight = false
+	if err != nil {
+		r.statusStale = true
+		r.statusMu.Unlock()
+		if previous != nil {
+			return previous, nil
+		}
+		return nil, err
+	}
+	r.statusValue = clonePluginHealthResponse(health)
+	r.statusAt = time.Now()
+	r.statusStale = false
+	r.statusMu.Unlock()
+	return health, nil
+}
+
+func (r *pluginRuntime) fetchStatus(ctx context.Context) (*pluginv1.HealthResponse, error) {
 	if r.extension != nil {
 		result, err := r.extension.Health(ctx)
 		if err != nil {
@@ -371,6 +417,22 @@ func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, e
 		return nil, errors.New("插件未返回状态")
 	}
 	return health, nil
+}
+
+func clonePluginHealthResponse(value *pluginv1.HealthResponse) *pluginv1.HealthResponse {
+	if value == nil {
+		return nil
+	}
+	return &pluginv1.HealthResponse{Healthy: value.Healthy, Message: value.Message, StatusJson: value.StatusJson}
+}
+
+func (r *pluginRuntime) statusIsStale() bool {
+	if r == nil {
+		return false
+	}
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	return r.statusStale
 }
 
 func (r *pluginRuntime) beginRequest() bool {
@@ -437,7 +499,7 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		cancel()
 		return nil, normalizePluginRPCError(ctx, "创建插件转发流", err, false)
 	}
-	requestID := strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatInt(account.ID, 36)
+	requestID := pluginForwardRequestID(ctx)
 	if err := stream.Send(&pluginv1.ForwardRequest{Frame: &pluginv1.ForwardRequest_Start{Start: &pluginv1.ForwardRequestStart{
 		RequestId:           requestID,
 		Method:              request.Method,

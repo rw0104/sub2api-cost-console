@@ -33,3 +33,16 @@ func TestPluginArtifactMigrationSupportsExistingInstallations(t *testing.T) {
 	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS artifact_data BYTEA")
 	require.NotContains(t, strings.ToUpper(sql), "ALTER TABLE ACCOUNTS")
 }
+
+func TestPluginRevisionOperationMigrationIsIdempotentAndScoped(t *testing.T) {
+	content, err := FS.ReadFile("244_plugin_revision_operations.sql")
+	require.NoError(t, err)
+
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 1")
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS sub2api_plugin_operations")
+	require.Contains(t, sql, "operation_id VARCHAR(96) PRIMARY KEY")
+	require.Contains(t, sql, "REFERENCES sub2api_plugin_installations(id) ON DELETE CASCADE")
+	require.Contains(t, sql, "expected_revision BIGINT NOT NULL DEFAULT 0")
+	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_sub2api_plugin_operations_active")
+}

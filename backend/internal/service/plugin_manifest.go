@@ -99,27 +99,34 @@ type PluginCompatibility struct {
 type PluginInstallation struct {
 	// Set only after explicit approval of this exact verified upload; repositories
 	// persist the publisher pin in the same transaction as install/upgrade.
-	PublisherToTrust  *PluginPublisher          `json:"-"`
-	ID                int64                     `json:"id"`
-	PluginKey         string                    `json:"plugin_key"`
-	Name              string                    `json:"name"`
-	Version           string                    `json:"version"`
-	Description       string                    `json:"description"`
-	Author            string                    `json:"author"`
-	Manifest          PluginManifest            `json:"manifest"`
-	ArtifactData      []byte                    `json:"-"`
-	ArtifactPath      string                    `json:"-"`
-	InstallPath       string                    `json:"-"`
-	BinaryPath        string                    `json:"-"`
-	BinarySHA256      string                    `json:"binary_sha256"`
-	SignatureStatus   string                    `json:"signature_status"`
-	State             string                    `json:"state"`
-	ConfigEncrypted   string                    `json:"-"`
-	LastError         string                    `json:"last_error"`
-	InstalledBy       *int64                    `json:"installed_by"`
-	InstalledAt       time.Time                 `json:"installed_at"`
-	EnabledAt         *time.Time                `json:"enabled_at"`
-	UpdatedAt         time.Time                 `json:"updated_at"`
+	PublisherToTrust *PluginPublisher `json:"-"`
+	ID               int64            `json:"id"`
+	PluginKey        string           `json:"plugin_key"`
+	Name             string           `json:"name"`
+	Version          string           `json:"version"`
+	Description      string           `json:"description"`
+	Author           string           `json:"author"`
+	Manifest         PluginManifest   `json:"manifest"`
+	ArtifactData     []byte           `json:"-"`
+	ArtifactPath     string           `json:"-"`
+	InstallPath      string           `json:"-"`
+	BinaryPath       string           `json:"-"`
+	BinarySHA256     string           `json:"binary_sha256"`
+	SignatureStatus  string           `json:"signature_status"`
+	State            string           `json:"state"`
+	ConfigEncrypted  string           `json:"-"`
+	LastError        string           `json:"last_error"`
+	InstalledBy      *int64           `json:"installed_by"`
+	InstalledAt      time.Time        `json:"installed_at"`
+	EnabledAt        *time.Time       `json:"enabled_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	// Revision is the monotonic control-plane version for all installation
+	// mutations (config, bindings, lifecycle and package replacement).  It is
+	// persisted by repositories that support the revision protocol; zero keeps
+	// old in-memory test repositories source-compatible.
+	Revision          int64                     `json:"revision"`
+	ETag              string                    `json:"etag"`
+	OperationID       string                    `json:"operation_id,omitempty"`
 	Bindings          []PluginBinding           `json:"bindings"`
 	Compatibility     PluginCompatibility       `json:"compatibility"`
 	RuntimeHealthy    bool                      `json:"runtime_healthy"`
@@ -279,7 +286,7 @@ func supportedExtensionCapability(c PluginCapability) error {
 			metadata = true
 		case pluginv2.PermissionRequestBody, pluginv2.PermissionRequestMutate,
 			pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig,
-			pluginv2.PermissionSecretBroker, pluginv2.PermissionEventPublish:
+			pluginv2.PermissionSecretBroker, pluginv2.PermissionAccountMetadata, pluginv2.PermissionEventPublish:
 		default:
 			return fmt.Errorf("请求预处理不支持权限 %s", permission)
 		}

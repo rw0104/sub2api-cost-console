@@ -102,9 +102,9 @@ export async function deleteSecretGrant(id: number, capability: string, alias: s
   await apiClient.delete(`/admin/plugins/${id}/secret-grants`, { data: { capability, alias } })
 }
 
-export async function saveRouting(id: number, policies: PluginRoutingPolicy[], expectedUpdatedAt: string): Promise<PluginInstallation> {
+export async function saveRouting(id: number, policies: PluginRoutingPolicy[], expectedUpdatedAt: string, expectedRevision?: number): Promise<PluginInstallation> {
   const { data } = await apiClient.put<PluginInstallation>(`/admin/plugins/${id}/routing`, {
-    policies, expected_updated_at: expectedUpdatedAt
+    policies, expected_updated_at: expectedUpdatedAt, ...(expectedRevision && expectedRevision > 0 ? { expected_revision: expectedRevision } : {})
   })
   return data
 }
@@ -124,6 +124,8 @@ export interface PluginInstallation {
   installed_at: string
   enabled_at?: string
   updated_at: string
+  revision?: number
+  etag?: string
   bindings: PluginBinding[]
   compatibility: PluginCompatibility
   runtime_healthy: boolean
@@ -280,9 +282,11 @@ export async function getConfig(id: number): Promise<Record<string, unknown>> {
 
 export async function saveConfig(
   id: number,
-  config: Record<string, unknown>
+  config: Record<string, unknown>,
+  expectedRevision?: number
 ): Promise<Record<string, unknown>> {
-  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config)
+  const headers = expectedRevision && expectedRevision > 0 ? { 'If-Match': String(expectedRevision) } : undefined
+  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config, { headers })
   return data
 }
 

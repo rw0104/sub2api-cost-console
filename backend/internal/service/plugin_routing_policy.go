@@ -92,6 +92,16 @@ type PluginRoutingRepository interface {
 }
 
 func (m *PluginManager) SaveRouting(ctx context.Context, id int64, policies []PluginRoutingPolicy, expectedUpdatedAt time.Time) (*PluginInstallation, error) {
+	return m.saveRouting(ctx, id, policies, 0, expectedUpdatedAt)
+}
+
+// SaveRoutingWithRevision is the revision/ETag form used by new admin
+// clients. The timestamp form above remains available to older UI bundles.
+func (m *PluginManager) SaveRoutingWithRevision(ctx context.Context, id int64, policies []PluginRoutingPolicy, expectedRevision int64) (*PluginInstallation, error) {
+	return m.saveRouting(ctx, id, policies, expectedRevision, time.Time{})
+}
+
+func (m *PluginManager) saveRouting(ctx context.Context, id int64, policies []PluginRoutingPolicy, expectedRevision int64, expectedUpdatedAt time.Time) (*PluginInstallation, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	repo, ok := m.repo.(PluginRoutingRepository)
@@ -102,7 +112,11 @@ func (m *PluginManager) SaveRouting(ctx context.Context, id int64, policies []Pl
 	if err != nil {
 		return nil, err
 	}
-	if expectedUpdatedAt.IsZero() || !current.UpdatedAt.Equal(expectedUpdatedAt) {
+	if expectedRevision > 0 {
+		if current.Revision != expectedRevision {
+			return nil, ErrPluginStateChanged
+		}
+	} else if expectedUpdatedAt.IsZero() || !current.UpdatedAt.Equal(expectedUpdatedAt) {
 		return nil, ErrPluginStateChanged
 	}
 	if current.Manifest.SchemaVersion != 2 {
@@ -170,10 +184,24 @@ func (m *PluginManager) SaveRouting(ctx context.Context, id int64, policies []Pl
 			return nil, errors.New("能力绑定不存在")
 		}
 	}
-	saved, err := repo.UpdateRouting(ctx, current, bindings)
+	op, err := m.beginPluginOperation(ctx, id, "routing.save", current.Revision)
 	if err != nil {
 		return nil, err
 	}
+	var saved *PluginInstallation
+	if revisionRepo, ok := m.repo.(PluginRoutingRevisionRepository); ok {
+		saved, err = revisionRepo.UpdateRoutingRevision(ctx, current, bindings, current.Revision)
+	} else {
+		saved, err = repo.UpdateRouting(ctx, current, bindings)
+	}
+	if err != nil {
+		m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		return nil, err
+	}
+	NormalizePluginInstallationMetadata(saved)
+	saved.OperationID = op.ID
+	op.TargetRevision = saved.Revision
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	m.mu.Lock()
 	process := m.runtimes[id]
 	if process != nil && process.installation.BinarySHA256 == saved.BinarySHA256 {
@@ -190,5 +218,6 @@ func (m *PluginManager) SaveRouting(ctx context.Context, id int64, policies []Pl
 		saved.RuntimeIsolation = process.isolation
 	}
 	saved.CapabilityRuntime = m.extensionStatus(id)
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "applied", nil)
 	return saved, nil
 }

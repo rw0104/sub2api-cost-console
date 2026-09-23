@@ -73,6 +73,9 @@ func (r *pluginRepository) swapVersionWithPublisher(ctx context.Context, expecte
 		current.ConfigEncrypted != expected.ConfigEncrypted || !current.UpdatedAt.Equal(expected.UpdatedAt) {
 		return nil, service.ErrPluginStateChanged
 	}
+	if expected.Revision > 0 && current.Revision != expected.Revision {
+		return nil, service.ErrPluginStateChanged
+	}
 	archived, err := tx.ExecContext(ctx, `INSERT INTO sub2api_plugin_versions
 		(plugin_id,plugin_key,name,version,description,author,manifest,artifact_data,binary_sha256,signature_status,config_encrypted)
 		SELECT id,plugin_key,name,version,description,author,manifest,artifact_data,binary_sha256,signature_status,config_encrypted
@@ -90,7 +93,7 @@ func (r *pluginRepository) swapVersionWithPublisher(ctx context.Context, expecte
 	result, err := tx.ExecContext(ctx, `UPDATE sub2api_plugin_installations SET
 		name=$2,version=$3,description=$4,author=$5,manifest=$6::jsonb,artifact_data=$7,
 		artifact_path=$8,install_path=$9,binary_path=$10,binary_sha256=$11,signature_status=$12,
-		config_encrypted=$13,state=$14,last_error='',updated_at=NOW()
+		config_encrypted=$13,state=$14,last_error='',revision=revision+1,updated_at=NOW()
 		WHERE id=$1`, expected.ID, replacement.Name, replacement.Version, replacement.Description, replacement.Author, manifest, replacement.ArtifactData,
 		replacement.ArtifactPath, replacement.InstallPath, replacement.BinaryPath, replacement.BinarySHA256, replacement.SignatureStatus, replacement.ConfigEncrypted, replacement.State)
 	if err != nil {
