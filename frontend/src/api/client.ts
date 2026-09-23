@@ -219,7 +219,7 @@ apiClient.interceptors.response.use(
               const refreshStatus = failure.response?.status ?? failure.status ?? (
                 axios.isAxiosError(refreshError) || Object.prototype.hasOwnProperty.call(failure, 'response') ? 0 : undefined
               )
-              if (refreshStatus === 0 || refreshStatus === 408 || refreshStatus === 429 || refreshStatus >= 500) {
+              if (refreshStatus !== undefined && (refreshStatus === 0 || refreshStatus === 408 || refreshStatus === 429 || refreshStatus >= 500)) {
                 return Promise.reject({
                   status: refreshStatus,
                   code: 'TOKEN_REFRESH_UNAVAILABLE',
