@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -131,4 +132,12 @@ func TestPluginManagerStatusReportsNotRunningWithoutRuntime(t *testing.T) {
 	assert.False(t, resp.Healthy)
 	assert.Contains(t, resp.Message, "尚无运行会话")
 	assert.Contains(t, resp.StatusJson, "PLUGIN_NOT_RUNNING")
+	var envelope map[string]any
+	require.NoError(t, json.Unmarshal([]byte(resp.StatusJson), &envelope))
+	assert.Equal(t, float64(1), envelope["schema"])
+	assert.Equal(t, "not_running", envelope["liveness"])
+	assert.Equal(t, "not_ready", envelope["readiness"])
+	assert.Equal(t, false, envelope["stale"])
+	assert.Equal(t, "PLUGIN_NOT_RUNNING", envelope["error_code"])
+	assert.Contains(t, envelope, "generated_at")
 }

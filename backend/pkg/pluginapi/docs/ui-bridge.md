@@ -54,7 +54,7 @@ UI 到宿主：
 
 `config.test` 在 v1 中测试已保存配置（需二次验证，可产生副作用）。UI 若要测试当前表单，应先调用 `config.save`。
 
-`plugin.status` 是只读运行时状态通道：无副作用、免二次验证、不弹宿主提示，供状态面板轮询。它映射到插件 `Health`，`result.status_json` 是插件自定义的不透明 JSON 快照。带状态展示的插件应使用它，而不是把 `config.test` 当作状态轮询。
+`plugin.status` 是只读运行时状态通道：无副作用、免二次验证、不弹宿主提示，供状态面板轮询。它映射到插件 `Health`，`result.status_json` 外层由宿主提供统一快照 envelope，插件自定义状态保留在 `payload` 和兼容的旧字段中。带状态展示的插件应使用它，而不是把 `config.test` 当作状态轮询。
 
 ## 必须执行的校验
 

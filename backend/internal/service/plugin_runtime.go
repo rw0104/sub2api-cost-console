@@ -31,6 +31,7 @@ import (
 
 type pluginRuntime struct {
 	installation      *PluginInstallation
+	instanceID        string
 	client            *hcplugin.Client
 	api               pluginv1.TransportPluginClient
 	transport         pluginv2.TransportClient
@@ -128,6 +129,7 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	}
 	runtime := &pluginRuntime{
 		installation: installation,
+		instanceID:   fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano()),
 		client:       client,
 		done:         make(chan struct{}),
 		isolation:    isolation,

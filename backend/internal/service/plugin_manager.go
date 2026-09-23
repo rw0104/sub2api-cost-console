@@ -950,16 +950,182 @@ func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthR
 			"message":    messageForUnavailableRuntime(runtime),
 			"error_code": codeForUnavailableRuntime(runtime),
 		}
-		payload, _ := json.Marshal(map[string]any{"schema": 1, "core_report": report})
+		payload := m.statusSnapshotJSON(installation, runtime, false, report["message"].(string), map[string]any{"schema": 1, "core_report": report})
 		return &pluginv1.HealthResponse{
 			Healthy:    false,
 			Message:    "插件未运行；尚无运行会话",
-			StatusJson: string(payload),
+			StatusJson: payload,
 		}, nil
 	}
 	statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return runtime.status(statusCtx)
+	health, err := runtime.status(statusCtx)
+	if err != nil {
+		return nil, err
+	}
+	statusPayload := map[string]any{}
+	if strings.TrimSpace(health.StatusJson) != "" && json.Valid([]byte(health.StatusJson)) {
+		_ = json.Unmarshal([]byte(health.StatusJson), &statusPayload)
+	}
+	health.StatusJson = m.statusSnapshotJSON(installation, runtime, health.Healthy, health.Message, statusPayload)
+	return health, nil
+}
+
+// statusSnapshotJSON wraps plugin-defined status data in a host-owned envelope.
+// The old core_report/status_json keys are retained at the top level for older
+// plugin UIs while the host fields provide a stable, queryable contract.
+func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, runtime *pluginRuntime, healthy bool, message string, payload map[string]any) string {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	revision := uint64(0)
+	if installation != nil {
+		if raw, err := m.decryptConfig(installation); err == nil {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) == nil {
+				_ = json.Unmarshal(fields["revision"], &revision)
+			}
+		}
+	}
+	bindingID := int64(0)
+	capability := ""
+	var scopeInputs []struct {
+		Capability string  `json:"capability"`
+		Platform   string  `json:"platform"`
+		Account    string  `json:"account_type"`
+		Accounts   []int64 `json:"account_ids"`
+		Users      []int64 `json:"user_ids"`
+		Groups     []int64 `json:"group_ids"`
+	}
+	if installation != nil {
+		for _, binding := range installation.Bindings {
+			if !binding.Enabled {
+				continue
+			}
+			if bindingID == 0 {
+				bindingID = binding.ID
+				capability = binding.Capability
+			}
+			scopeInputs = append(scopeInputs, struct {
+				Capability string  `json:"capability"`
+				Platform   string  `json:"platform"`
+				Account    string  `json:"account_type"`
+				Accounts   []int64 `json:"account_ids"`
+				Users      []int64 `json:"user_ids"`
+				Groups     []int64 `json:"group_ids"`
+			}{binding.Capability, binding.Platform, binding.AccountType, binding.AccountIDs, binding.UserIDs, binding.GroupIDs})
+		}
+	}
+	scopeDigest := ""
+	if raw, err := json.Marshal(scopeInputs); err == nil {
+		digest := sha256.Sum256(raw)
+		scopeDigest = hex.EncodeToString(digest[:])[:16]
+	}
+	instanceID := ""
+	liveness := "not_running"
+	readiness := "not_ready"
+	requestsTotal := uint64(0)
+	inFlight := int64(0)
+	errorsTotal := uint64(0)
+	deniedTotal := uint64(0)
+	stale := false
+	routeDecision := "NOT_SELECTED"
+	if runtime != nil {
+		instanceID = runtime.instanceID
+		if runtime.client != nil && !runtime.client.Exited() {
+			liveness = "alive"
+		}
+		if runtime.draining.Load() {
+			liveness = "draining"
+		}
+		if healthy {
+			readiness = "ready"
+		}
+		inFlight = runtime.inFlight.Load()
+	}
+	if installation != nil && installation.Manifest.SchemaVersion == 2 {
+		inFlight = 0
+		for _, capability := range m.extensionStatus(installation.ID) {
+			requestsTotal += capability.Calls
+			inFlight += capability.InFlight
+			errorsTotal += capability.Errors
+			deniedTotal += capability.Denied
+			if capability.Healthy {
+				routeDecision = "SELECTED"
+			}
+		}
+		if table := m.extensions.Load(); table != nil {
+			stale = table.stateUnavailable
+			if stale {
+				routeDecision = "STALE_CONTROL_PLANE"
+			}
+		}
+	} else if route := m.route.Load(); route != nil && route.pluginID == installationID(installation) {
+		if route.runtime != nil && !route.runtime.draining.Load() {
+			routeDecision = "SELECTED"
+		} else {
+			routeDecision = "RUNTIME_UNAVAILABLE"
+		}
+	}
+	lastErrorCode := lastPluginErrorCode(installation)
+	if lastErrorCode == "" && liveness != "alive" {
+		lastErrorCode = codeForUnavailableRuntime(runtime)
+	}
+	envelope := map[string]any{
+		"schema":               1,
+		"revision":             revision,
+		"generated_at":         time.Now().UTC().Format(time.RFC3339Nano),
+		"plugin_id":            installationID(installation),
+		"plugin_key":           installationKey(installation),
+		"capability":           capability,
+		"runtime_instance_id":  instanceID,
+		"liveness":             liveness,
+		"readiness":            readiness,
+		"stale":                stale,
+		"binding_id":           bindingID,
+		"binding_scope_digest": scopeDigest,
+		"requests_total":       requestsTotal,
+		"in_flight":            inFlight,
+		"errors_total":         errorsTotal,
+		"denied_total":         deniedTotal,
+		"last_error_code":      lastErrorCode,
+		"last_error_at":        nil,
+		"route_decision":       routeDecision,
+		"error_code":           lastErrorCode,
+		"message":              message,
+		"payload":              payload,
+	}
+	for key, value := range payload {
+		if _, exists := envelope[key]; !exists {
+			envelope[key] = value
+		}
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return `{"schema":1,"stale":true,"last_error_code":"STATUS_ENCODE_FAILED"}`
+	}
+	return string(encoded)
+}
+
+func installationID(installation *PluginInstallation) int64 {
+	if installation == nil {
+		return 0
+	}
+	return installation.ID
+}
+
+func installationKey(installation *PluginInstallation) string {
+	if installation == nil {
+		return ""
+	}
+	return installation.PluginKey
+}
+
+func lastPluginErrorCode(installation *PluginInstallation) string {
+	if installation == nil {
+		return ""
+	}
+	return strings.TrimSpace(installation.LastError)
 }
 
 func messageForUnavailableRuntime(runtime *pluginRuntime) string {

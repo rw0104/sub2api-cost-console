@@ -102,7 +102,7 @@ UI 可以发送以下消息。消息按语义分层，鉴权与副作用一致�
 
 - 配置整体使用 Sub2API 的密钥加密后存入数据库；运行中插件会先验证并应用新配置，数据库写入失败时恢复旧配置。
 - `config.test` 的结果由插件 UI 自行展示（内联或经 `ui.notify`），宿主不再对成功结果强制弹出提示，避免插件把它当作轻量状态轮询时刷屏。
-- `plugin.status` 是通用的**只读**状态通道：宿主经 `GET /admin/plugins/:id/status` 调用运行中插件的 `Health`，返回 `{healthy, message, status_json}`。`status_json` 是插件自定义的**不透明** JSON 快照（宿主不解析、不参与健康判定），插件必须以无副作用方式生成（不得应用配置、访问上游或触发探测），因此该端点只读、免二次验证。插件未运行时返回 `healthy=false` 且不含 `status_json`。这样带状态面板的插件无需滥用 `config.test` 即可展示实时状态。
+- `plugin.status` 是通用的**只读**状态通道：宿主经 `GET /admin/plugins/:id/status` 调用运行中插件的 `Health`，返回 `{healthy, message, status_json}`。`status_json` 的宿主 envelope 至少包含 `schema`、`revision`、`generated_at`、`plugin_id`、`runtime_instance_id`、`liveness`、`readiness`、`stale`、`binding_id`、`binding_scope_digest`、请求/错误/拒绝计数和 `last_error_code`；插件自定义 JSON 放在 `payload`，并保留兼容的旧顶层字段。插件必须以无副作用方式生成状态（不得应用配置、访问上游或触发探测），因此该端点只读、免二次验证。插件未运行时仍返回结构化 envelope，并以 `PLUGIN_NOT_RUNNING` 或 `RUNTIME_DRAINING` 标记原因。这样带状态面板的插件无需滥用 `config.test` 即可展示运行状态。
 
 ## 协议源码
 

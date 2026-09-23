@@ -767,9 +767,13 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		plugins.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Delete)
 		plugins.GET("/:id/config", h.Admin.Plugin.GetConfig)
 		plugins.GET("/:id/status", h.Admin.Plugin.Status)
+		plugins.GET("/:id/host", h.Admin.Plugin.HostStats)
+		plugins.GET("/:id/secret-grants", h.Admin.Plugin.SecretGrants)
 		plugins.PUT("/:id/config", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveConfig)
+		plugins.PUT("/:id/secret-grants", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.PutSecretGrant)
 		plugins.POST("/:id/config/recover", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.RecoverConfig)
 		plugins.POST("/:id/test", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Test)
+		plugins.DELETE("/:id/secret-grants", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.DeleteSecretGrant)
 		plugins.POST("/:id/ui-session", h.Admin.Plugin.CreateUISession)
 	}
 }
