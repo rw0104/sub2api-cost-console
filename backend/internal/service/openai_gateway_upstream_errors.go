@@ -308,6 +308,10 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 }
 
 func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
+	return isOpenAICompatibleModelNotFoundBody(respBody)
+}
+
+func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
 	code := strings.TrimSpace(extractUpstreamErrorCode(respBody))
 	if code != "" {
 		return strings.EqualFold(code, "model_not_found")
