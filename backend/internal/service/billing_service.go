@@ -107,15 +107,16 @@ type ModelPricing struct {
 	FastMultiplier                     *float64 // 渠道显式 Fast/priority 倍率；nil 时沿用模型目录行为
 	FlexMultiplier                     *float64 // 渠道显式 Flex 倍率；nil 时沿用默认行为
 	MaxReasoningEffortMultiplier       *float64 // max 推理等级的额度/计费倍率；nil 时沿用模型默认行为
-	CacheCreation5mPrice               float64  // 5分钟缓存创建每token价格 (USD)
-	CacheCreation1hPrice               float64  // 1小时缓存创建每token价格 (USD)
-	SupportsCacheBreakdown             bool     // 是否支持详细的缓存分类
-	LongContextInputThreshold          int      // 超过阈值后按整次会话提升输入价格
-	LongContextThresholdInclusive      bool     // 达到阈值即应用（xAI）；默认保持严格大于以兼容既有模型
-	LongContextInputMultiplier         float64  // 长上下文整次会话输入倍率
-	LongContextOutputMultiplier        float64  // 长上下文整次会话输出倍率
-	ImageOutputPricePerToken           float64  // 图片输出 token 价格 (USD)
-	ImageOutputPriceExplicit           bool     // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
+	ReasoningEffortMultipliers         map[string]float64
+	CacheCreation5mPrice               float64 // 5分钟缓存创建每token价格 (USD)
+	CacheCreation1hPrice               float64 // 1小时缓存创建每token价格 (USD)
+	SupportsCacheBreakdown             bool    // 是否支持详细的缓存分类
+	LongContextInputThreshold          int     // 超过阈值后按整次会话提升输入价格
+	LongContextThresholdInclusive      bool    // 达到阈值即应用（xAI）；默认保持严格大于以兼容既有模型
+	LongContextInputMultiplier         float64 // 长上下文整次会话输入倍率
+	LongContextOutputMultiplier        float64 // 长上下文整次会话输出倍率
+	ImageOutputPricePerToken           float64 // 图片输出 token 价格 (USD)
+	ImageOutputPriceExplicit           bool    // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 }
 
 func normalizeBillingServiceTier(serviceTier string) string {

@@ -230,7 +230,7 @@ func injectDesktopReturnBanner(html []byte) []byte {
 	if returnURL == "" {
 		returnURL = "http://tauri.localhost/index.html#/admin/cost-center?desktop=1"
 	}
-	banner := []byte(`<style nonce="` + NonceHTMLPlaceholder + `">#sub2api-desktop-return{position:fixed;z-index:2147483647;left:16px;bottom:16px;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid #9acb45;border-radius:8px;background:#111811ef;color:#e8f5d0;font:600 13px/1.2 Segoe UI,sans-serif;box-shadow:0 8px 24px #0008}#sub2api-desktop-return a{color:#c9f27b;text-decoration:none}#sub2api-desktop-return a:hover{text-decoration:underline}</style><div id="sub2api-desktop-return" role="navigation" aria-label="Desktop console"><span>桌面成本控制台</span><a href="` + []byte(htmlpkg.EscapeString(returnURL)) + `">返回成本控制台</a></div>`)
+	banner := []byte(`<style nonce="` + NonceHTMLPlaceholder + `">#sub2api-desktop-return{position:fixed;z-index:2147483647;left:16px;bottom:16px;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid #9acb45;border-radius:8px;background:#111811ef;color:#e8f5d0;font:600 13px/1.2 Segoe UI,sans-serif;box-shadow:0 8px 24px #0008}#sub2api-desktop-return a{color:#c9f27b;text-decoration:none}#sub2api-desktop-return a:hover{text-decoration:underline}</style><div id="sub2api-desktop-return" role="navigation" aria-label="Desktop console"><span>桌面成本控制台</span><a href="` + htmlpkg.EscapeString(returnURL) + `">返回成本控制台</a></div>`)
 	bodyClose := []byte("</body>")
 	if bytes.Contains(html, bodyClose) {
 		return bytes.Replace(html, bodyClose, append(banner, bodyClose...), 1)
