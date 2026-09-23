@@ -204,5 +204,28 @@ export async function syncPricingModels(platform: string): Promise<SyncPricingMo
   return data
 }
 
-const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels }
+const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels, getPricingStatus, refreshPricing }
 export default channelsAPI
+
+export interface PricingCatalogStatus {
+  model_count: number
+  last_updated: string
+  local_hash: string
+  catalog_source: string
+  configured_source: string
+  fallback_available: boolean
+  update_interval_hours: number
+}
+
+/**
+ * Fetch the latest model names from the LiteLLM pricing catalog for the given platform
+ */
+export async function getPricingStatus(): Promise<PricingCatalogStatus> {
+  const { data } = await apiClient.get<PricingCatalogStatus>('/admin/channels/pricing/status')
+  return data
+}
+
+export async function refreshPricing(): Promise<PricingCatalogStatus> {
+  const { data } = await apiClient.post<PricingCatalogStatus>('/admin/channels/pricing/refresh')
+  return data
+}
