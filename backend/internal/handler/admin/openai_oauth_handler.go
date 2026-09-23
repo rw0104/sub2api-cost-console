@@ -21,7 +21,6 @@ type OpenAIOAuthHandler struct {
 	openaiOAuthService *service.OpenAIOAuthService
 	adminService       service.AdminService
 	quotaService       openAIQuotaService
-	referralService    openAIReferralService
 	rateLimitService   openAIAccountStateRecoverer
 	referralService    openAIReferralService
 }
@@ -29,7 +28,6 @@ type OpenAIOAuthHandler struct {
 type openAIQuotaService interface {
 	QueryUsage(ctx context.Context, accountID int64) (*service.OpenAIQuotaUsage, error)
 	CacheResetCreditsSnapshot(ctx context.Context, accountID int64, credits *service.OpenAIRateLimitResetCredits) error
-	CacheCreditsSnapshot(ctx context.Context, accountID int64, usage *service.OpenAIQuotaUsage) error
 	CachePostResetSnapshot(ctx context.Context, accountID int64, usage *service.OpenAIQuotaUsage) error
 	ResetCredit(ctx context.Context, accountID int64) (*service.OpenAIQuotaResetResult, error)
 }
@@ -97,7 +95,6 @@ func NewOpenAIOAuthHandler(
 	// `== nil` capability guards below and panic instead of returning 400.
 	if quotaService != nil {
 		h.quotaService = quotaService
-		h.referralService = quotaService
 	}
 	if rateLimitService != nil {
 		h.rateLimitService = rateLimitService
@@ -535,11 +532,6 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	service.NotifyOpenAIAutoResetCredit(accountID)
 
 	refreshResponse := openAIQuotaRefreshResponse{OpenAIQuotaUsage: *usage}
-	if err := h.quotaService.CacheCreditsSnapshot(c.Request.Context(), accountID, usage); err != nil {
-		slog.Warn("openai_quota_credits_cache_persist_failed", "account_id", accountID, "error", err)
-	} else {
-		refreshResponse.CreditsCachePersisted = true
-	}
 	// A failed snapshot write leaves the previous cache intact — report it as a
 	// partial success instead of discarding the usage payload we just fetched,
 	// which would leave the card without a credit count at all.

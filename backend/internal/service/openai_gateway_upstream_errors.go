@@ -308,10 +308,6 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 }
 
 func isOpenAICompatibleModelNotFound400(respBody []byte) bool {
-	return isOpenAICompatibleModelNotFoundBody(respBody)
-}
-
-func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
 	code := strings.TrimSpace(extractUpstreamErrorCode(respBody))
 	if code != "" {
 		return strings.EqualFold(code, "model_not_found")
@@ -327,8 +323,7 @@ func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
 		strings.Contains(msg, "model is not supported")
 }
 
-// isOpenAICompatibleModelNotFoundBody keeps the account scheduling call site
-// compatible with the upstream naming used by the rate-limit path.
+// Keep the rate-limit account scheduling call site on the shared parser.
 func isOpenAICompatibleModelNotFoundBody(respBody []byte) bool {
 	return isOpenAICompatibleModelNotFound400(respBody)
 }

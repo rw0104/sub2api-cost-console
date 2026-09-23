@@ -186,7 +186,7 @@ func (f *fakePluginKVStore) List(_ context.Context, pluginKey, namespace, keyPre
 
 func TestPluginHostServiceServer_SetGetDeleteRoundtrip(t *testing.T) {
 	store := newFakePluginKVStore()
-	server := newPluginHostServiceServer("local.example.plugin", store, nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", store, nil)
 	ctx := context.Background()
 
 	_, err := server.KVSet(ctx, &pluginv1.KVSetRequest{Namespace: "state", Key: "alpha", Value: []byte("v1"), TtlSeconds: 60})
@@ -207,7 +207,7 @@ func TestPluginHostServiceServer_SetGetDeleteRoundtrip(t *testing.T) {
 }
 
 func TestPluginHostServiceServer_GetNotFound(t *testing.T) {
-	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil)
 	got, err := server.KVGet(context.Background(), &pluginv1.KVGetRequest{Namespace: "state", Key: "missing"})
 	require.NoError(t, err)
 	assert.False(t, got.Found)
@@ -216,8 +216,8 @@ func TestPluginHostServiceServer_GetNotFound(t *testing.T) {
 
 func TestPluginHostServiceServer_NamespaceIsolationAcrossPlugins(t *testing.T) {
 	store := newFakePluginKVStore()
-	first := newPluginHostServiceServer("local.plugin.one", store, nil, PluginAccountScope{})
-	second := newPluginHostServiceServer("local.plugin.two", store, nil, PluginAccountScope{})
+	first := newPluginHostServiceServer("local.plugin.one", store, nil)
+	second := newPluginHostServiceServer("local.plugin.two", store, nil)
 	ctx := context.Background()
 
 	_, err := first.KVSet(ctx, &pluginv1.KVSetRequest{Namespace: "state", Key: "shared", Value: []byte("first")})
@@ -236,7 +236,7 @@ func TestPluginHostServiceServer_NamespaceIsolationAcrossPlugins(t *testing.T) {
 
 func TestPluginHostServiceServer_ListPrefixAndLimit(t *testing.T) {
 	store := newFakePluginKVStore()
-	server := newPluginHostServiceServer("local.example.plugin", store, nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", store, nil)
 	ctx := context.Background()
 	for _, key := range []string{"account-1", "account-2", "account-3", "other-1"} {
 		_, err := server.KVSet(ctx, &pluginv1.KVSetRequest{Namespace: "state", Key: key, Value: []byte("x")})
@@ -253,7 +253,7 @@ func TestPluginHostServiceServer_ListPrefixAndLimit(t *testing.T) {
 }
 
 func TestPluginHostServiceServer_Validation(t *testing.T) {
-	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil)
 	ctx := context.Background()
 	oversized := make([]byte, pluginKVMaxValueBytes+1)
 
@@ -305,19 +305,19 @@ func TestPluginHostServiceServer_Validation(t *testing.T) {
 }
 
 func TestPluginHostServiceServer_UnavailableWhenNoStore(t *testing.T) {
-	server := newPluginHostServiceServer("local.example.plugin", nil, nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", nil, nil)
 	_, err := server.KVGet(context.Background(), &pluginv1.KVGetRequest{Namespace: "state", Key: "k"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	// pluginKey 为空同样视为不可用，避免键前缀塌缩导致的跨插件泄漏。
-	blank := newPluginHostServiceServer("", newFakePluginKVStore(), nil, PluginAccountScope{})
+	blank := newPluginHostServiceServer("", newFakePluginKVStore(), nil)
 	_, err = blank.KVGet(context.Background(), &pluginv1.KVGetRequest{Namespace: "state", Key: "k"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	// pluginKey 含 ':' 会破坏内部键结构，必须判定为不可用而非放行。
-	tainted := newPluginHostServiceServer("bad:key", newFakePluginKVStore(), nil, PluginAccountScope{})
+	tainted := newPluginHostServiceServer("bad:key", newFakePluginKVStore(), nil)
 	_, err = tainted.KVGet(context.Background(), &pluginv1.KVGetRequest{Namespace: "state", Key: "k"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -327,30 +327,27 @@ func TestPluginHostServiceServer_UnavailableWhenNoStore(t *testing.T) {
 // 静默剥夺宿主服务能力。
 func TestPluginHostServiceServer_PluginKeyLengthBoundary(t *testing.T) {
 	ctx := context.Background()
-	maxLen := newPluginHostServiceServer(strings.Repeat("a", pluginKVMaxPluginKeyLen), newFakePluginKVStore(), nil, PluginAccountScope{})
+	maxLen := newPluginHostServiceServer(strings.Repeat("a", pluginKVMaxPluginKeyLen), newFakePluginKVStore(), nil)
 	_, err := maxLen.KVSet(ctx, &pluginv1.KVSetRequest{Namespace: "state", Key: "k", Value: []byte("v")})
 	require.NoError(t, err)
 
-	tooLong := newPluginHostServiceServer(strings.Repeat("a", pluginKVMaxPluginKeyLen+1), newFakePluginKVStore(), nil, PluginAccountScope{})
+	tooLong := newPluginHostServiceServer(strings.Repeat("a", pluginKVMaxPluginKeyLen+1), newFakePluginKVStore(), nil)
 	_, err = tooLong.KVSet(ctx, &pluginv1.KVSetRequest{Namespace: "state", Key: "k", Value: []byte("v")})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 type fakeAccountDirectory struct {
-	infos     []PluginAccountInfo
-	identity  *PluginOutboundIdentity
-	lastReq   int64
-	lastScope PluginAccountScope
+	ids      []int64
+	identity *PluginOutboundIdentity
+	lastReq  int64
 }
 
-func (f *fakeAccountDirectory) ListPluginAccounts(_ context.Context, scope PluginAccountScope, _, _ string) ([]PluginAccountInfo, error) {
-	f.lastScope = scope
-	return f.infos, nil
+func (f *fakeAccountDirectory) ListPluginAccounts(_ context.Context, _, _ string) ([]int64, error) {
+	return f.ids, nil
 }
 
-func (f *fakeAccountDirectory) ResolvePluginOutboundIdentity(_ context.Context, scope PluginAccountScope, accountID int64) (*PluginOutboundIdentity, error) {
-	f.lastScope = scope
+func (f *fakeAccountDirectory) ResolvePluginOutboundIdentity(_ context.Context, accountID int64) (*PluginOutboundIdentity, error) {
 	f.lastReq = accountID
 	if f.identity == nil || f.identity.AccountID != accountID {
 		return nil, nil
@@ -361,26 +358,17 @@ func (f *fakeAccountDirectory) ResolvePluginOutboundIdentity(_ context.Context, 
 func TestPluginHostServiceServer_AccountDirectory(t *testing.T) {
 	ctx := context.Background()
 	dir := &fakeAccountDirectory{
-		infos: []PluginAccountInfo{
-			{ID: 3, Platform: "openai", AccountType: "oauth", Status: "active", Schedulable: false, MetadataJSON: []byte(`{"ID":3}`)},
-			{ID: 7, Platform: "openai", AccountType: "oauth", Status: "active", Schedulable: true, MetadataJSON: []byte(`{"ID":7}`)},
-		},
+		ids: []int64{3, 7},
 		identity: &PluginOutboundIdentity{
 			AccountID: 7, Platform: "openai", AccountType: "oauth", ProxyURL: "http://p:1",
 			Token: "tok", Headers: http.Header{"Originator": {"codex-tui"}},
 		},
 	}
-	scope := newPluginAccountScope(pluginAccountScopeEntry{Platform: "openai", AccountType: "oauth"})
-	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), dir, scope)
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), dir)
 
 	list, err := server.ListAccounts(ctx, &pluginv1.ListAccountsRequest{Platform: "openai", AccountType: "oauth"})
 	require.NoError(t, err)
 	assert.Equal(t, []int64{3, 7}, list.AccountIds)
-	require.Len(t, list.Accounts, 2)
-	assert.False(t, list.Accounts[0].Schedulable)
-	assert.True(t, list.Accounts[1].Schedulable)
-	assert.Equal(t, []byte(`{"ID":7}`), list.Accounts[1].MetadataJson)
-	assert.Equal(t, scope, dir.lastScope, "server must pass its scope to the directory")
 
 	resolved, err := server.ResolveOutboundIdentity(ctx, &pluginv1.ResolveOutboundIdentityRequest{AccountId: 7})
 	require.NoError(t, err)
@@ -401,7 +389,7 @@ func TestPluginHostServiceServer_AccountDirectory(t *testing.T) {
 
 // 无目录时账号目录 RPC 必须返回 Unavailable（KV 仍可用），保证未授权插件拿不到凭据。
 func TestPluginHostServiceServer_DirectoryUnavailableWithoutDirectory(t *testing.T) {
-	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil, PluginAccountScope{})
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), nil)
 	_, err := server.ListAccounts(context.Background(), &pluginv1.ListAccountsRequest{})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	_, err = server.ResolveOutboundIdentity(context.Background(), &pluginv1.ResolveOutboundIdentityRequest{AccountId: 1})
@@ -411,38 +399,18 @@ func TestPluginHostServiceServer_DirectoryUnavailableWithoutDirectory(t *testing
 	require.NoError(t, kvErr)
 }
 
-func TestPluginAccountScopeFromManifest(t *testing.T) {
-	// A declared OpenAI OAuth capability grants exactly the (openai, oauth) scope.
+func TestPluginDeclaresOpenAIOAuthCapability(t *testing.T) {
 	match := PluginManifest{Capabilities: []PluginCapability{{ID: PluginCapabilityOpenAIOAuthOutbound, Platform: PlatformOpenAI, AccountType: AccountTypeOAuth}}}
-	scope := pluginAccountScopeFromManifest(match)
-	if scope.Empty() {
-		t.Fatal("declared OpenAI OAuth capability must grant a non-empty scope")
+	if !pluginDeclaresOpenAIOAuthCapability(match) {
+		t.Fatal("matching capability must be recognized")
 	}
-	if !scope.Contains(PlatformOpenAI, AccountTypeOAuth) {
-		t.Fatal("scope must contain (openai, oauth)")
+	wrongType := PluginManifest{Capabilities: []PluginCapability{{ID: PluginCapabilityOpenAIOAuthOutbound, Platform: PlatformOpenAI, AccountType: "apikey"}}}
+	if pluginDeclaresOpenAIOAuthCapability(wrongType) {
+		t.Fatal("wrong account_type must not match")
 	}
-	if scope.Contains("anthropic", "oauth") {
-		t.Fatal("scope must not leak to other platforms")
-	}
-
-	// The granted scope is pinned to the capability id, so a manifest cannot widen
-	// it by declaring a different platform/account_type on a known capability.
-	spoof := PluginManifest{Capabilities: []PluginCapability{{ID: PluginCapabilityOpenAIOAuthOutbound, Platform: "anthropic", AccountType: "apikey"}}}
-	spoofScope := pluginAccountScopeFromManifest(spoof)
-	if spoofScope.Contains("anthropic", "apikey") {
-		t.Fatal("granted scope must be pinned to the capability id, not the declared platform/type")
-	}
-	if !spoofScope.Contains(PlatformOpenAI, AccountTypeOAuth) {
-		t.Fatal("known capability must still grant its pinned (openai, oauth) scope")
-	}
-
-	// An unknown capability grants nothing.
-	unknown := PluginManifest{Capabilities: []PluginCapability{{ID: "some.other.capability", Platform: "x", AccountType: "y"}}}
-	if !pluginAccountScopeFromManifest(unknown).Empty() {
-		t.Fatal("unknown capability must grant an empty scope")
-	}
-	if !pluginAccountScopeFromManifest(PluginManifest{}).Empty() {
-		t.Fatal("no capability must grant an empty scope")
+	empty := PluginManifest{}
+	if pluginDeclaresOpenAIOAuthCapability(empty) {
+		t.Fatal("no capability must not match")
 	}
 }
 
