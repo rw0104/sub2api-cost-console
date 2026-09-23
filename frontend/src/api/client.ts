@@ -13,23 +13,8 @@ import {
   shouldMarkUserUIRequest,
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
-import { expireAuthSession, storedAuthUserId } from './authSession'
-import { getAPIBaseURL, isDesktopRuntime, redirectToAppPath } from './url'
+import { getAPIBaseURL } from './url'
 export { buildApiUrl, buildGatewayUrl } from './url'
-
-interface AuthenticatedRequest extends InternalAxiosRequestConfig {
-  _retry?: boolean
-  _authUserId?: number | null
-}
-
-function requestAccessToken(config?: InternalAxiosRequestConfig): string | null {
-  const header = config?.headers?.Authorization ?? config?.headers?.authorization
-  return typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) || null : null
-}
-
-const changedSessionError = () => ({
-  status: 401, code: 'AUTH_SESSION_CHANGED', message: 'Authentication session changed while the request was in flight.'
-})
 
 // ==================== Axios Instance Configuration ====================
 
@@ -54,17 +39,12 @@ const getUserTimezone = (): string => {
 }
 
 apiClient.interceptors.request.use(
-  (config: AuthenticatedRequest) => {
+  (config: InternalAxiosRequestConfig) => {
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
-    const userId = storedAuthUserId()
-    if (config._retry && config._authUserId !== undefined && config._authUserId !== userId) {
-      throw changedSessionError()
-    }
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
-    config._authUserId = userId
 
     // Attach locale for backend translations
     if (config.headers) {
@@ -121,14 +101,13 @@ apiClient.interceptors.response.use(
     return response
   },
   async (error: AxiosError<ApiResponse<unknown>>) => {
-    if (error.code === 'AUTH_SESSION_CHANGED') return Promise.reject(error)
     // Request cancellation: keep the original axios cancellation error so callers can ignore it.
     // Otherwise we'd misclassify it as a generic "network error".
     if (error.code === 'ERR_CANCELED' || axios.isCancel(error)) {
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as AuthenticatedRequest | undefined
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
 
     // Handle common errors
     if (error.response) {
@@ -153,7 +132,7 @@ apiClient.interceptors.response.use(
         }
 
         if (window.location.pathname.startsWith('/admin/ops')) {
-          redirectToAppPath('/admin/settings')
+          window.location.href = '/admin/settings'
         }
 
         return Promise.reject({
@@ -181,53 +160,97 @@ apiClient.interceptors.response.use(
         })
       }
 
-      if (status === 401) {
+      // 401: Try to refresh the token if we have a refresh token
+      // This handles TOKEN_EXPIRED, INVALID_TOKEN, TOKEN_REVOKED, etc.
+      if (status === 401 && !originalRequest._retry) {
+        const refreshToken = localStorage.getItem('refresh_token')
         const isAuthEndpoint =
           url.includes('/auth/login') || url.includes('/auth/register') || url.includes('/auth/refresh')
-        if (!isAuthEndpoint) {
-          const accessToken = localStorage.getItem('auth_token')
-          const refreshToken = localStorage.getItem('refresh_token')
-          const failedAccessToken = requestAccessToken(originalRequest)
-          const currentUserId = storedAuthUserId()
-          const differentToken = accessToken && accessToken !== failedAccessToken
-          const sameKnownUser = originalRequest?._authUserId != null && originalRequest._authUserId === currentUserId
 
-          // Late responses from a logged-out/replaced session must not revoke or replay as a new user.
-          if (differentToken && (!sameKnownUser || !refreshToken || originalRequest?._retry)) {
-            return Promise.reject(changedSessionError())
-          }
+        // If we have a refresh token and this is not an auth endpoint, try to refresh
+        if (refreshToken && !isAuthEndpoint) {
+          const refreshSessionUser = localStorage.getItem('auth_user')
+          originalRequest._retry = true
 
-          if (refreshToken && originalRequest && !originalRequest._retry) {
-            const refreshSessionToken = accessToken
-            const refreshSessionUser = currentUserId
-            originalRequest._retry = true
-            try {
-              const tokens = await refreshAuthTokens({ failedAccessToken })
-              if (storedAuthUserId() !== refreshSessionUser || localStorage.getItem('auth_token') !== tokens.access_token) {
-                return Promise.reject(changedSessionError())
-              }
-              originalRequest.headers.Authorization = 'Bearer ' + tokens.access_token
-              originalRequest._authUserId = refreshSessionUser
-              return apiClient(originalRequest)
-            } catch (refreshError) {
-              if (localStorage.getItem('refresh_token') !== refreshToken ||
-                  localStorage.getItem('auth_token') !== refreshSessionToken ||
-                  storedAuthUserId() !== refreshSessionUser) {
-                return Promise.reject(changedSessionError())
-              }
-              const failure = refreshError as { status?: number; message?: string; response?: { status?: number; data?: { message?: string } } }
-              const refreshStatus = failure.response?.status ?? failure.status
-              const transportFailure = axios.isAxiosError(refreshError) && !refreshError.response
-              const unknownTransportStatus = refreshStatus === undefined && !(refreshError instanceof Error)
-              if (transportFailure || unknownTransportStatus || refreshStatus === 0 || refreshStatus === 408 || refreshStatus === 429 || (refreshStatus !== undefined && refreshStatus >= 500)) {
-                return Promise.reject({ status: refreshStatus ?? 0, code: 'TOKEN_REFRESH_UNAVAILABLE', message: failure.response?.data?.message || failure.message || 'Unable to refresh the session right now. Please try again.' })
-              }
-              expireAuthSession()
-              return Promise.reject({ status: 401, code: 'TOKEN_REFRESH_FAILED', message: 'Session expired. Please log in again.' })
+          try {
+            const headers = originalRequest.headers as Record<string, unknown> | undefined
+            const authHeader = headers?.Authorization ?? headers?.authorization
+            const failedAccessToken =
+              typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+                ? authHeader.slice('Bearer '.length)
+                : null
+            const tokens = await refreshAuthTokens({ failedAccessToken })
+
+            // Retry the original request with the refreshed token
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`
             }
+            return apiClient(originalRequest)
+          } catch (refreshError) {
+            // A stale request must never destroy a session that was logged out or replaced while
+            // its refresh was in flight (for example, when another tab signs in as another user).
+            const sessionChanged =
+              localStorage.getItem('refresh_token') !== refreshToken ||
+              localStorage.getItem('auth_user') !== refreshSessionUser
+            if (sessionChanged) {
+              return Promise.reject({
+                status: 401,
+                code: 'AUTH_SESSION_CHANGED',
+                message: 'Authentication session changed while refreshing.'
+              })
+            }
+
+            if (axios.isAxiosError(refreshError)) {
+              const refreshStatus = refreshError.response?.status ?? 0
+              if (refreshStatus === 0 || refreshStatus === 429 || refreshStatus >= 500) {
+                return Promise.reject({
+                  status: refreshStatus,
+                  code: 'TOKEN_REFRESH_UNAVAILABLE',
+                  message: refreshError.response?.data?.message || refreshError.message
+                })
+              }
+            }
+
+            // Clear tokens and redirect to login
+            localStorage.removeItem('auth_token')
+            localStorage.removeItem('refresh_token')
+            localStorage.removeItem('auth_user')
+            localStorage.removeItem('token_expires_at')
+            sessionStorage.setItem('auth_expired', '1')
+
+            if (!window.location.pathname.includes('/login')) {
+              window.location.href = '/login'
+            }
+
+            return Promise.reject({
+              status: 401,
+              code: 'TOKEN_REFRESH_FAILED',
+              message: 'Session expired. Please log in again.'
+            })
           }
-          // Covers both sessions without refresh tokens and a refreshed request rejected again.
-          expireAuthSession(Boolean(accessToken || failedAccessToken))
+        }
+
+        // No refresh token or is auth endpoint - clear auth and redirect
+        const hasToken = !!localStorage.getItem('auth_token')
+        const headers = error.config?.headers as Record<string, unknown> | undefined
+        const authHeader = headers?.Authorization ?? headers?.authorization
+        const sentAuth =
+          typeof authHeader === 'string'
+            ? authHeader.trim() !== ''
+            : Array.isArray(authHeader)
+              ? authHeader.length > 0
+              : !!authHeader
+
+        localStorage.removeItem('auth_token')
+        localStorage.removeItem('refresh_token')
+        localStorage.removeItem('auth_user')
+        localStorage.removeItem('token_expires_at')
+        if ((hasToken || sentAuth) && !isAuthEndpoint) {
+          sessionStorage.setItem('auth_expired', '1')
+        }
+        // Only redirect if not already on login page
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login'
         }
       }
 
@@ -242,14 +265,11 @@ apiClient.interceptors.response.use(
       })
     }
 
-    // Network error. Desktop builds use a local Go backend, so surface the
-    // actual endpoint and the CORS prerequisite instead of a generic browser hint.
-    const networkMessage = isDesktopRuntime()
-      ? `无法连接 Sub2API 后端（${getAPIBaseURL()}）。请先启动后端，并将 http://tauri.localhost 加入 CORS 白名单。`
-      : 'Network error. Please check your connection.'
+    // Network error
     return Promise.reject({
       status: 0,
-      message: networkMessage
+      code: error.code || 'ERR_NETWORK',
+      message: 'Network error. Please check your connection.'
     })
   }
 )

@@ -1,46 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
-const {
-  copyToClipboardMock,
-  saveAsMock,
-  getNativeWorkingDirectoryMock,
-  pickNativeWorkingDirectoryMock,
-  previewNativeClientLaunchMock,
-  launchNativeClientMock,
-  getStoredNativeWorkingDirectoryMock,
-  storeNativeWorkingDirectoryMock
-} = vi.hoisted(() => ({
+const { copyToClipboardMock, saveAsMock } = vi.hoisted(() => ({
   copyToClipboardMock: vi.fn().mockResolvedValue(true),
-  saveAsMock: vi.fn(),
-  getNativeWorkingDirectoryMock: vi.fn().mockResolvedValue('C:\\Users\\reki'),
-  pickNativeWorkingDirectoryMock: vi.fn().mockResolvedValue(null),
-  getStoredNativeWorkingDirectoryMock: vi.fn((clientId: string) =>
-    localStorage.getItem(`sub2api.nativeClient.workingDirectory.${clientId}`) ||
-    localStorage.getItem('sub2api.nativeClient.workingDirectory') || ''
-  ),
-  storeNativeWorkingDirectoryMock: vi.fn((clientId: string, directory: string) => {
-    if (directory.trim() && directory.trim() !== '.') {
-      localStorage.setItem(`sub2api.nativeClient.workingDirectory.${clientId}`, directory.trim())
-    }
-  }),
-  previewNativeClientLaunchMock: vi.fn().mockResolvedValue({
-    client_id: 'opencode',
-    label: 'OpenCode',
-    executable: 'C:\\tools\\opencode.cmd',
-    working_directory: 'C:\\Users\\reki',
-    display_command: 'opencode (Sub2API runtime config)',
-    environment_keys: ['SUB2API_OPENCODE_API_KEY', 'OPENCODE_CONFIG_CONTENT'],
-    available: true,
-    message: '客户端已就绪'
-  }),
-  launchNativeClientMock: vi.fn().mockResolvedValue({
-    client_id: 'grok',
-    pid: 1234,
-    executable: 'C:\\tools\\grok.exe',
-    message: '客户端已启动'
-  })
+  saveAsMock: vi.fn()
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -59,19 +23,6 @@ vi.mock('file-saver', () => ({
   saveAs: saveAsMock
 }))
 
-vi.mock('@/api/url', () => ({
-  isDesktopRuntime: () => true
-}))
-
-vi.mock('@/api/nativeClientLauncher', () => ({
-  getNativeWorkingDirectory: getNativeWorkingDirectoryMock,
-  getStoredNativeWorkingDirectory: getStoredNativeWorkingDirectoryMock,
-  pickNativeWorkingDirectory: pickNativeWorkingDirectoryMock,
-  previewNativeClientLaunch: previewNativeClientLaunchMock,
-  launchNativeClient: launchNativeClientMock,
-  storeNativeWorkingDirectory: storeNativeWorkingDirectoryMock
-}))
-
 import UseKeyModal from '../UseKeyModal.vue'
 
 function readBlobAsText(blob: Blob): Promise<string> {
@@ -82,14 +33,6 @@ function readBlobAsText(blob: Blob): Promise<string> {
     reader.readAsText(blob)
   })
 }
-
-beforeEach(() => {
-  localStorage.clear()
-  getStoredNativeWorkingDirectoryMock.mockClear()
-  storeNativeWorkingDirectoryMock.mockClear()
-  getNativeWorkingDirectoryMock.mockReset().mockResolvedValue('C:\\Users\\reki')
-  pickNativeWorkingDirectoryMock.mockReset().mockResolvedValue(null)
-})
 
 describe('UseKeyModal', () => {
   afterEach(() => {
@@ -441,6 +384,45 @@ describe('UseKeyModal', () => {
     expect(wrapper.find('[data-testid="codex-api-key-restart-notice"]').exists()).toBe(false)
   })
 
+  it('normalizes OpenAI Codex and Claude base URLs independently', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com',
+        platform: 'openai',
+        allowMessagesDispatch: true
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const codexConfig = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('model_provider = "OpenAI"'))
+    expect(codexConfig).toContain('base_url = "https://example.com/v1"')
+
+    const claudeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.claudeCode')
+    )
+    expect(claudeTab).toBeDefined()
+    await claudeTab!.trigger('click')
+    await nextTick()
+
+    const claudeConfig = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.startsWith('export ANTHROPIC_BASE_URL'))
+    expect(claudeConfig).toContain('ANTHROPIC_BASE_URL="https://example.com"')
+  })
+
   it('renders API Key Mode authorization in OpenAI Codex config', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -686,12 +668,14 @@ describe('UseKeyModal', () => {
 
     const parsed = JSON.parse(wrapper.find('pre code').text())
     const models = parsed.provider.openai.models
-    for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+    for (const model of ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna']) {
       expect(models[model]).toBeDefined()
       expect(models[model].variants).toHaveProperty('max')
       expect(models[model].variants).toHaveProperty('xhigh')
     }
     expect(models['gpt-5.6'].name).toBe('GPT-5.6 (Sol)')
+    expect(models['gpt-6-sol'].variants).toHaveProperty('none')
+    expect(models['gpt-6-luna'].limit).toEqual({ context: 1050000, output: 128000 })
     expect(models['gpt-6']).toEqual({
       name: 'GPT-6 (Astra)',
       limit: { context: 1050000, output: 128000 },
@@ -704,6 +688,22 @@ describe('UseKeyModal', () => {
       options: { store: false },
       variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
     })
+  })
+
+  it('exports Opus 5.5 only on the Anthropic provider with adaptive defaults', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform: 'anthropic' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: { template: '<span />' } } }
+    })
+    const tab = wrapper.findAll('button').find(button => button.text().includes('keys.useKeyModal.cliTabs.opencode'))
+    expect(tab).toBeDefined()
+    await tab!.trigger('click')
+    await nextTick()
+    const model = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models['claude-opus-5-5']
+    expect(model.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(model.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'medium' })
+    expect(model.variants.xhigh.effort).toBe('xhigh')
+    expect(model.variants).not.toHaveProperty('none')
   })
 
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
@@ -981,198 +981,5 @@ describe('UseKeyModal', () => {
       .find((content) => content.includes('model_provider = "OpenAI"'))
     expect(configToml).toContain('model = "glm-5.3"')
     expect(configToml).not.toContain('model_reasoning_effort')
-  })
-
-  it('previews an OpenCode launch with the selected gateway profile', async () => {
-    previewNativeClientLaunchMock.mockClear()
-    const wrapper = mount(UseKeyModal, {
-      props: {
-        show: true,
-        apiKey: 'sk-open-code-test',
-        baseUrl: 'https://example.com/v1',
-        platform: 'gemini'
-      },
-      global: {
-        stubs: {
-          BaseDialog: {
-            template: '<div><slot /><slot name="footer" /></div>'
-          },
-          Icon: {
-            template: '<span />'
-          }
-        }
-      }
-    })
-    await flushPromises()
-
-    const opencodeTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.opencode')
-    )
-    expect(opencodeTab).toBeDefined()
-    await opencodeTab!.trigger('click')
-    await nextTick()
-
-    const previewButton = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.nativeLauncher.preview')
-    )
-    expect(previewButton).toBeDefined()
-    await previewButton!.trigger('click')
-
-    expect(previewNativeClientLaunchMock).toHaveBeenCalledWith({
-      client_id: 'opencode',
-      gateway_profile: 'gemini',
-      base_url: 'https://example.com/v1beta',
-      api_key: 'sk-open-code-test',
-      working_directory: 'C:\\Users\\reki'
-    })
-  })
-
-  it('launches Grok with the normalized models endpoint', async () => {
-    launchNativeClientMock.mockClear()
-    const wrapper = mount(UseKeyModal, {
-      props: {
-        show: true,
-        apiKey: 'sk-grok-launch-test',
-        baseUrl: 'https://example.com/v1',
-        platform: 'grok'
-      },
-      global: {
-        stubs: {
-          BaseDialog: {
-            template: '<div><slot /><slot name="footer" /></div>'
-          },
-          Icon: {
-            template: '<span />'
-          }
-        }
-      }
-    })
-    await flushPromises()
-
-    const launchButton = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.nativeLauncher.launch')
-    )
-    expect(launchButton).toBeDefined()
-    await launchButton!.trigger('click')
-
-    expect(launchNativeClientMock).toHaveBeenCalledWith({
-      client_id: 'grok',
-      gateway_profile: 'grok',
-      base_url: 'https://example.com/v1',
-      api_key: 'sk-grok-launch-test',
-      working_directory: 'C:\\Users\\reki'
-    })
-  })
-
-  it('shows Cursor protocol compatibility guidance', async () => {
-    const wrapper = mount(UseKeyModal, {
-      props: {
-        show: true,
-        apiKey: 'sk-cursor-test',
-        baseUrl: 'https://example.com/v1',
-        platform: 'openai'
-      },
-      global: {
-        stubs: {
-          BaseDialog: {
-            template: '<div><slot /><slot name="footer" /></div>'
-          },
-          Icon: {
-            template: '<span />'
-          }
-        }
-      }
-    })
-
-    const cursorTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.cursorAgent')
-    )
-    expect(cursorTab).toBeDefined()
-    await cursorTab!.trigger('click')
-    await nextTick()
-
-    expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorEndpointNotice')
-    expect(wrapper.text()).toContain('keys.useKeyModal.nativeLauncher.cursorDescription')
-  })
-
-  it('shows the selected directory and restores it when the modal reopens', async () => {
-    pickNativeWorkingDirectoryMock.mockResolvedValue('D:\\Projects\\codex')
-    const wrapper = mount(UseKeyModal, {
-      props: {
-        show: true,
-        apiKey: 'sk-test',
-        baseUrl: 'https://example.com/v1',
-        platform: 'openai'
-      },
-      global: {
-        stubs: {
-          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-          Icon: { template: '<span />' }
-        }
-      }
-    })
-    await flushPromises()
-
-    const selectButton = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.nativeLauncher.selectDirectory')
-    )
-    expect(selectButton).toBeDefined()
-    await selectButton!.trigger('click')
-    await flushPromises()
-
-    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
-      .toBe('D:\\Projects\\codex')
-    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.codex')).toBe('D:\\Projects\\codex')
-
-    await wrapper.setProps({ show: false })
-    await wrapper.setProps({ show: true })
-    await flushPromises()
-    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
-      .toBe('D:\\Projects\\codex')
-  })
-
-  it('keeps working directories separate for each native client', async () => {
-    pickNativeWorkingDirectoryMock.mockResolvedValueOnce('D:\\Projects\\codex')
-      .mockResolvedValueOnce('D:\\Projects\\opencode')
-    const wrapper = mount(UseKeyModal, {
-      props: {
-        show: true,
-        apiKey: 'sk-test',
-        baseUrl: 'https://example.com/v1',
-        platform: 'openai'
-      },
-      global: {
-        stubs: {
-          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-          Icon: { template: '<span />' }
-        }
-      }
-    })
-    await flushPromises()
-
-    const selectButton = () => wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.nativeLauncher.selectDirectory')
-    )!
-    await selectButton().trigger('click')
-    await flushPromises()
-
-    const opencodeTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.opencode')
-    )
-    expect(opencodeTab).toBeDefined()
-    await opencodeTab!.trigger('click')
-    await flushPromises()
-    await selectButton().trigger('click')
-    await flushPromises()
-
-    const codexTab = wrapper.findAll('button').find((button) =>
-      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
-    )
-    expect(codexTab).toBeDefined()
-    await codexTab!.trigger('click')
-    await flushPromises()
-    expect((wrapper.get('[data-testid="native-working-directory"]').element as HTMLInputElement).value)
-      .toBe('D:\\Projects\\codex')
-    expect(localStorage.getItem('sub2api.nativeClient.workingDirectory.opencode')).toBe('D:\\Projects\\opencode')
   })
 })

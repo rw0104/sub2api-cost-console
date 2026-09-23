@@ -311,7 +311,7 @@ func insertCostAdjustment(ctx context.Context, tx *sql.Tx, source *service.Accou
 		)
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING id, created_at
-	`, nullableInt64Ptr(source.AccountID), source.AccountIDSnapshot, source.AccountName, source.Platform, source.AccountType,
+	`, accountCostNullableInt64(source.AccountID), source.AccountIDSnapshot, source.AccountName, source.Platform, source.AccountType,
 		adjustment.EventType, reason, adjustment.Message, adjustment.OccurredAt.UTC(), source.Currency,
 		-consume, -consume, nullableTimePtr(source.BillingPeriodAt), nullableTimePtr(source.BillingPeriodTo), profileJSON,
 		source.ID, adjustment.Idempotency, service.AccountCostLossAlgorithmVersion,
@@ -426,7 +426,7 @@ func nullableTime(value time.Time) any {
 	return value.UTC()
 }
 
-func nullableInt64Ptr(value *int64) any {
+func accountCostNullableInt64(value *int64) any {
 	if value == nil {
 		return nil
 	}

@@ -1,0 +1,32 @@
+{
+  "source_repository": "https://github.com/gylive/ccodex-sleep-state",
+  "source_ref": "main",
+  "source_commit": "b18fabf9ad8e9d7af7d9d0306b623ba6091a39d6",
+  "retrieved_at": "2026-09-19",
+  "source_files": {
+    "README.md": "3e88bab96b7126ba3c6aa3f1c3fd8441088454c7519dd7eddf092b0270e1a83e",
+    "CHANGELOG.md": "3bbcbf0ee3a3fb965c049c5763902e870412680cf54b890e808307a3cd1e7f4d",
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "go.mod": "4907d82bed52acefee587146cf98bbe91f200c64b75d3ba12ee52d4e0c40bf69",
+    "internal/gateway/account.go": "add3341d2f7a0d8fa64c45e2abe317bcaaa6c881b6bc87b9375f9cfcd2ddf409",
+    "internal/gateway/compact.go": "f0c82467798e5bfe710a54485efed4bd82660319175d93921b34d33674cb9fb4",
+    "internal/gateway/encoding.go": "6803572ce09bd2f3d228344f7797971db0b01ecee2a8136eb867b9c37626429c",
+    "internal/gateway/engine.go": "52f50bbeb54d9b12bc615bd02e75de4f1e426f20699d14fe2d29955c5d4765b9",
+    "internal/gateway/events.go": "efb37ef4ad7b7372850b116e0c118bb1c26e55c0394eb742be9836ef45a116f0",
+    "internal/gateway/handler.go": "bcaf03aff64fb9a0c702968d6231b7be8fac79828d79c8ca0f3e06a255b82213",
+    "internal/gateway/pool.go": "02cffc903b2fbede895e9b2f60087175a9bffb3191adb750d14f867cb0129ae7",
+    "internal/turnstate/store.go": "e3895b8439ed9f0d145f1773bff5ebdc738930f1e4f9fc14be2570fffa574887",
+    "internal/turnstate/token.go": "32e45dee7d2359d7f0d013fec68269e56437732cb8726c106d41fa2baf965dac",
+    "internal/settings/settings.go": "2fd4243d52c81b4dce28b64e95dd922a901ced318dba86de06751dfbf9ba4df3",
+    "internal/routepool/store.go": "575300c61c86e864420df6c38ebd01a0d6466ab9da0298031ee9a78797fb7f1e",
+    "internal/fsutil/files.go": "f91e9cac16cf03a8c8ad862fc6b2d02d49dbd43a1e5eb66a70883f53e07e6cc2"
+  },
+  "adaptation_boundary": {
+    "included": ["embedded upstream gateway and turnstate core", "critical request header isolation and injection", "bounded serialized harvesting with shared credential limits", "held active and background standby modes", "personal and Team policies", "gzip and zstd request decoding", "V1 and V2 compaction", "persistent controlled route pool", "OAuth protection transport", "UI Bridge configuration and runtime state", "Mihomo v1.19.31 outbound adapters"],
+    "excluded": ["Codex config.toml takeover", "standalone service and local admin listener", "host-managed API key relay routing"],
+    "adapter_changes": ["local import paths and typed route bridge", "gRPC streaming request/response adapter", "shared limits and probe slot across immutable engine generations", "honor host configured harvest disable and exact byte/model limits", "post-dispatch failure marker preventing host replay", "cross-process locked route-pool persistence under validated installed plugin ID directory"]
+  },
+  "locked_dependencies": {
+    "github.com/metacubex/mihomo": "v1.19.31"
+  }
+}

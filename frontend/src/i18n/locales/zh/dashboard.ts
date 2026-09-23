@@ -177,28 +177,13 @@ export default {
         noteWindows:
           '按 Win+R，输入 %userprofile%\\.codex 打开配置目录。如目录不存在，请先手动创建。'
       },
-      nativeLauncher: {
-        title: 'Windows 原生启动器',
-        description: '优先使用已安装的 PowerShell 7；未安装时自动回退到系统 Windows PowerShell 5.1。在新的窗口中启动客户端，凭据和运行时覆盖仅作用于本次进程，不会修改第三方账号或配置文件。',
-        claudeTrustNotice: 'Claude Code 首次进入工作目录时可能显示安全确认，请在客户端窗口选择 1（Yes, I trust this folder）并回车；这是客户端的正常安全流程，不是启动失败。',
-        cursorDescription: '启动 Cursor Agent CLI，并通过 --endpoint 指向当前 API 地址。',
-        cursorEndpointNotice: 'Cursor Agent 使用 Cursor 自有的 Agent 协议；只有当前 API 地址兼容该协议时才能正常工作。OpenAI 兼容接口本身不足以保证兼容。',
-        workingDirectory: '工作目录',
-        workingDirectoryPlaceholder: '留空使用当前目录，例如 C:\\Projects\\demo',
-        selectDirectory: '选择目录',
-        detectedDirectory: '检测到的当前目录',
-        useDetectedDirectory: '使用检测目录',
-        preview: '检查客户端',
-        launch: '启动客户端'
-      },
       cliTabs: {
         claudeCode: 'Claude Code',
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
         grokCli: 'Grok CLI',
-        opencode: 'OpenCode',
-        cursorAgent: 'Cursor Agent'
+        opencode: 'OpenCode'
       },
       antigravity: {
         description: '为 Antigravity 分组配置 API 访问。请根据您使用的客户端选择对应的配置方式。',
@@ -640,6 +625,8 @@ export default {
       billingModePerRequest: '按次',
       billingModeImage: '按图片',
       billingModeVideo: '按视频',
+      videoPrice: '视频单价',
+      unitPerSecond: '/ 秒',
       inputPrice: '输入',
       outputPrice: '输出',
       cacheWritePrice: '缓存写入',
@@ -693,8 +680,8 @@ export default {
       cacheReadShort: '读',
       tierHint: '按单次请求的总上下文（输入 + 缓存写入 + 缓存读取）所在档位对整单计价',
       tierHintMarginal: '仅超过阈值的部分按该档计价，输出不加价',
-      maxReasoningMultiplierBadge: 'Max ×{multiplier}',
-      maxReasoningMultiplierHint: '最终转发的推理强度为 max 时，整次请求的计费与额度消耗乘以 {multiplier}',
+      reasoningMultiplierBadge: '{effort} ×{multiplier}',
+      reasoningMultiplierHint: '最终转发的思考等级为 {effort} 时，整次请求的计费与额度消耗乘以 {multiplier}；未配置的等级按 1 倍计费',
       marginalBadge: '超出部分计价',
       timePricingRowHint: '按 {timezone} 时间，在该时段内发起的请求按本行价格计费',
       timePricingRowHintWeekdays:

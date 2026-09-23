@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "id": "local.sub2api.ccodex-sleep-state",
+  "name": "Codex Sleep State",
+  "version": "0.5.1",
+  "description": "Embedded upstream turn-state core with bounded harvesting, critical header injection, credential isolation, compaction, persistent proxy pools and Mihomo subscriptions.",
+  "author": "Local publisher",
+  "requires": {
+    "sub2api": ">=0.2.5 <0.3.0",
+    "recommended_sub2api_version": "0.2.7",
+    "tested_sub2api_versions": ["0.2.7"],
+    "plugin_protocol": 2,
+    "extension_api": 1,
+    "ui_bridge": 1
+  },
+  "capabilities": [
+    {
+      "id": "openai.oauth.protection_transport.v1",
+      "kind": "provider",
+      "platform": "openai",
+      "account_type": "oauth",
+      "permissions": [
+        "request.metadata.read",
+        "request.body.read",
+        "request.credentials.forward",
+        "network.outbound",
+        "account.protection.read",
+        "request.original.read",
+        "host.log",
+        "host.metric",
+        "events.publish"
+      ],
+      "timeout_ms": 120000,
+      "failure_mode": "fail_closed",
+      "synchronous": true
+    }
+  ],
+  "runtimes": {},
+  "ui": {"entrypoint": "ui/index.html"},
+  "files": {}
+}

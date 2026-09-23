@@ -305,6 +305,7 @@ func TestOpenAI429FastPath_SparkShadowQuotaStaysModelScoped(t *testing.T) {
 	require.Equal(t, 1, repo.setModelRateLimitCalls)
 	require.Equal(t, "gpt-5.3-codex-spark", repo.lastModelRateLimitKey)
 }
+
 func TestOpenAI429FastPath_RetriesOAuthWhenNoQuotaSignalExists(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 424, Platform: PlatformOpenAI, Type: AccountTypeOAuth}

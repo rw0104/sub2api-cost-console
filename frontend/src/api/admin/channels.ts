@@ -50,7 +50,7 @@ export interface ChannelModelPricing {
   cache_read_price: number | null
   fast_multiplier?: number | null
   flex_multiplier?: number | null
-  max_reasoning_effort_multiplier?: number | null
+  reasoning_effort_multipliers?: Record<string, number> | null
   image_input_price: number | null
   image_output_price: number | null
   per_request_price: number | null
@@ -180,7 +180,7 @@ export interface ModelDefaultPricing {
   cache_read_price?: number
   image_input_price?: number
   image_output_price?: number
-  max_reasoning_effort_multiplier?: number | null
+  reasoning_effort_multipliers?: Record<string, number> | null
 }
 
 export async function getModelDefaultPricing(model: string): Promise<ModelDefaultPricing> {
@@ -194,16 +194,6 @@ export interface SyncPricingModelsResult {
   models: string[]
 }
 
-export interface PricingCatalogStatus {
-  model_count: number
-  last_updated: string
-  local_hash: string
-  catalog_source: string
-  configured_source: string
-  fallback_available: boolean
-  update_interval_hours: number
-}
-
 /**
  * Fetch the latest model names from the LiteLLM pricing catalog for the given platform
  */
@@ -214,15 +204,5 @@ export async function syncPricingModels(platform: string): Promise<SyncPricingMo
   return data
 }
 
-export async function getPricingStatus(): Promise<PricingCatalogStatus> {
-  const { data } = await apiClient.get<PricingCatalogStatus>('/admin/channels/pricing/status')
-  return data
-}
-
-export async function refreshPricing(): Promise<PricingCatalogStatus> {
-  const { data } = await apiClient.post<PricingCatalogStatus>('/admin/channels/pricing/refresh')
-  return data
-}
-
-const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels, getPricingStatus, refreshPricing }
+const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels }
 export default channelsAPI

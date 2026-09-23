@@ -3,17 +3,11 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "vite",
     "check:i18n": "vitest run src/i18n/__tests__/localeKeyCompleteness.spec.ts",
     "build": "pnpm run check:i18n && vue-tsc -b && vite build",
-    "build:desktop": "pnpm run check:i18n && vue-tsc -b && vite build --mode desktop",
     "preview": "vite preview",
-    "desktop:prepare-sidecar": "node scripts/prepare-desktop-sidecar.mjs",
-    "desktop:prepare-core-release": "node scripts/prepare-core-release.mjs",
-    "desktop:dev": "node scripts/desktop-command.mjs dev",
-    "desktop:build": "node scripts/desktop-command.mjs build",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
     "lint:check": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
     "typecheck": "vue-tsc --noEmit",
@@ -24,13 +18,8 @@
   "dependencies": {
     "@airwallex/components-sdk": "^1.30.2",
     "@lobehub/icons": "^4.0.2",
-    "@lucide/vue": "^1.28.0",
     "@stripe/stripe-js": "^9.0.1",
     "@tanstack/vue-virtual": "^3.13.23",
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-opener": "2.5.4",
-    "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.0",
     "@vueuse/core": "^10.7.0",
     "axios": "^1.18.0",
     "chart.js": "^4.4.1",
@@ -49,7 +38,6 @@
   },
   "devDependencies": {
     "@intlify/message-compiler": "9.14.5",
-    "@tauri-apps/cli": "^2.11.4",
     "@types/dompurify": "^3.0.5",
     "@types/file-saver": "^2.0.7",
     "@types/mdx": "^2.0.13",
@@ -76,7 +64,6 @@
     "overrides": {
       "js-cookie": "3.0.7",
       "form-data@<4.0.6": ">=4.0.6",
-      "nanoid@<3.3.18": "3.3.18",
       "postcss@<8.5.18": ">=8.5.18",
       "dompurify@<3.4.14": ">=3.4.14"
     }

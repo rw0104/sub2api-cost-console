@@ -280,15 +280,6 @@ type PluginOutboundIdentity struct {
 	Headers     http.Header
 }
 
-// PluginAccountDirectory 让插件枚举其能力所覆盖的账号，并按需解析这些账号的出站身份，
-// 无需等待一条真实请求流经插件。这是一项敏感能力（会把账号凭据交给插件进程），因此
-// 宿主只对「其声明能力确实覆盖这些账号」的插件开放（见 PluginManager.buildHostServices）。
-// 实现方自身也必须把返回范围收敛到该能力对应的账号集合。
-type PluginAccountDirectory interface {
-	ListPluginAccounts(ctx context.Context, platform, accountType string) ([]int64, error)
-	ResolvePluginOutboundIdentity(ctx context.Context, accountID int64) (*PluginOutboundIdentity, error)
-}
-
 // pluginHostServiceServer 实现 pluginv1.HostServiceServer，是宿主经 go-plugin broker
 // 反向暴露给单个插件进程的服务端点。它绑定到具体插件的 pluginKey，因此每个运行时都有
 // 自己的实例；所有键值操作都被强制限定在该插件的命名空间内。
@@ -296,11 +287,16 @@ type pluginHostServiceServer struct {
 	pluginv1.UnimplementedHostServiceServer
 	pluginKey string
 	store     PluginKVStore
-	directory PluginAccountDirectory
+	directory any
+	scope     PluginAccountScope
 }
 
-func newPluginHostServiceServer(pluginKey string, store PluginKVStore, directory PluginAccountDirectory) *pluginHostServiceServer {
-	return &pluginHostServiceServer{pluginKey: pluginKey, store: store, directory: directory}
+func newPluginHostServiceServer(pluginKey string, store PluginKVStore, directory any, scopes ...PluginAccountScope) *pluginHostServiceServer {
+	server := &pluginHostServiceServer{pluginKey: pluginKey, store: store, directory: directory}
+	if len(scopes) > 0 {
+		server.scope = scopes[0]
+	}
+	return server
 }
 
 func (s *pluginHostServiceServer) ready() bool {
@@ -411,11 +407,35 @@ func (s *pluginHostServiceServer) ListAccounts(ctx context.Context, req *pluginv
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "请求为空")
 	}
-	ids, err := s.directory.ListPluginAccounts(ctx, req.Platform, req.AccountType)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "列举账号失败: %v", err)
+	switch directory := s.directory.(type) {
+	case ScopedPluginAccountDirectory:
+		infos, err := directory.ListPluginAccounts(ctx, s.scope, req.Platform, req.AccountType)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "列举账号失败: %v", err)
+		}
+		ids := make([]int64, 0, len(infos))
+		for _, info := range infos {
+			ids = append(ids, info.ID)
+		}
+		return &pluginv1.ListAccountsResponse{AccountIds: ids}, nil
+	case PluginAccountDirectory:
+		ids, err := directory.ListPluginAccounts(ctx, req.Platform, req.AccountType)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "列举账号失败: %v", err)
+		}
+		if len(s.scope.entries) > 0 {
+			filtered := ids[:0]
+			for _, id := range ids {
+				if s.scope.allowsID(id) {
+					filtered = append(filtered, id)
+				}
+			}
+			ids = filtered
+		}
+		return &pluginv1.ListAccountsResponse{AccountIds: ids}, nil
+	default:
+		return nil, status.Error(codes.Unavailable, "账号目录实现不支持作用域接口")
 	}
-	return &pluginv1.ListAccountsResponse{AccountIds: ids}, nil
 }
 
 func (s *pluginHostServiceServer) ResolveOutboundIdentity(ctx context.Context, req *pluginv1.ResolveOutboundIdentityRequest) (*pluginv1.ResolveOutboundIdentityResponse, error) {
@@ -425,7 +445,19 @@ func (s *pluginHostServiceServer) ResolveOutboundIdentity(ctx context.Context, r
 	if req == nil || req.AccountId <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "account_id 无效")
 	}
-	identity, err := s.directory.ResolvePluginOutboundIdentity(ctx, req.AccountId)
+	var identity *PluginOutboundIdentity
+	var err error
+	switch directory := s.directory.(type) {
+	case ScopedPluginAccountDirectory:
+		identity, err = directory.ResolvePluginOutboundIdentityScoped(ctx, s.scope, req.AccountId)
+	case PluginAccountDirectory:
+		if len(s.scope.entries) > 0 && !s.scope.allowsID(req.AccountId) {
+			return &pluginv1.ResolveOutboundIdentityResponse{Found: false}, nil
+		}
+		identity, err = directory.ResolvePluginOutboundIdentity(ctx, req.AccountId)
+	default:
+		return nil, status.Error(codes.Unavailable, "账号目录实现不支持作用域接口")
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "解析账号出站身份失败: %v", err)
 	}

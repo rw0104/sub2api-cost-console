@@ -51,7 +51,7 @@ type PluginManager struct {
 	kvStore PluginKVStore
 	// accountDirectory 为声明了对应能力的插件提供账号目录与出站身份解析（敏感能力）；
 	// 通过 SetAccountDirectory 在启动装配阶段注入，为 nil 时插件拿不到该能力。
-	accountDirectory PluginAccountDirectory
+	accountDirectory any
 
 	operationMu        sync.Mutex
 	mu                 sync.Mutex
@@ -1241,7 +1241,7 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 
 // SetAccountDirectory 注入账号目录实现（敏感能力）。仅在启动装配阶段调用一次，
 // 早于 Start，因此运行期读取无需额外同步。
-func (m *PluginManager) SetAccountDirectory(directory PluginAccountDirectory) {
+func (m *PluginManager) SetAccountDirectory(directory any) {
 	m.mu.Lock()
 	m.accountDirectory = directory
 	m.mu.Unlock()
@@ -1255,13 +1255,21 @@ func (m *PluginManager) buildHostServices(installation *PluginInstallation) plug
 	if m.kvStore == nil || installation == nil || strings.TrimSpace(installation.PluginKey) == "" {
 		return nil
 	}
-	var directory PluginAccountDirectory
+	var directory any
+	scope := PluginAccountScope{}
 	if pluginDeclaresOpenAIOAuthCapability(installation.Manifest) {
 		m.mu.Lock()
 		directory = m.accountDirectory
 		m.mu.Unlock()
+		entries := make([]pluginAccountScopeEntry, 0, len(installation.Bindings))
+		for _, binding := range installation.Bindings {
+			if binding.Enabled && binding.Capability == PluginCapabilityOpenAIOAuthOutbound {
+				entries = append(entries, pluginAccountScopeEntry{Platform: binding.Platform, AccountType: binding.AccountType, AccountIDs: append([]int64(nil), binding.AccountIDs...), UserIDs: append([]int64(nil), binding.UserIDs...), GroupIDs: append([]int64(nil), binding.GroupIDs...)})
+			}
+		}
+		scope = newPluginAccountScope(entries...)
 	}
-	return newPluginHostServiceServer(installation.PluginKey, m.kvStore, directory)
+	return newPluginHostServiceServer(installation.PluginKey, m.kvStore, directory, scope)
 }
 
 // pluginDeclaresOpenAIOAuthCapability reports whether the (install-validated)

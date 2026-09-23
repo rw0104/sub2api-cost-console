@@ -22,11 +22,9 @@ import (
 )
 
 const (
-	// 1M 输入 token 下，渠道价与成本控制台本地兜底价的期望费用（USD）。
-	// 本地价卡保留 GPT-5.6 Luna 的 $1/M 口径；上游 0.1.184 的公共价卡为
-	// $0.2/M，但不应覆盖成本扩展的既有事实合同。
+	// 1M 输入 token 下，渠道价与官方兜底价的期望费用（USD）
 	channelPricingExpectedChannelCost  = 0.4
-	channelPricingExpectedOfficialCost = 1.0
+	channelPricingExpectedOfficialCost = 0.2
 	// 用于验证「不相关的渠道配置不会被误命中」的对照价
 	channelPricingUnrelatedCost = 0.9
 )

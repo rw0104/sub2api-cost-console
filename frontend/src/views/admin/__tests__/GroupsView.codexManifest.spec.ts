@@ -49,10 +49,6 @@ vi.mock("@/stores/app", () => ({
   }),
 }));
 
-vi.mock("@/stores/auth", () => ({
-  useAuthStore: () => ({ isSimpleMode: false }),
-}));
-
 vi.mock("@/stores/onboarding", () => ({
   useOnboardingStore: () => ({
     isCurrentStep: vi.fn(() => false),
@@ -127,7 +123,7 @@ const sourceGroup = {
   account_count: 1,
   active_account_count: 1,
   rate_limited_account_count: 0,
-  model_allowlist: undefined,
+  models_list_config: undefined,
   codex_models_manifest_config: {
     enabled: false,
     account_ids: [],

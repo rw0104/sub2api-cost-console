@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Sleep State</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="toolbar">
+      <div class="brand-mark" aria-hidden="true">CS</div>
+      <div class="brand-copy">
+        <p class="eyebrow">SUB2API PLUGIN</p>
+        <h1>Codex Sleep State</h1>
+      </div>
+      <div class="runtime-state" id="runtime-state">
+        <span class="status-dot" id="runtime-dot" aria-hidden="true"></span>
+        <span id="runtime-label">未启用</span>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <nav class="section-nav" aria-label="配置分区">
+        <button class="nav-item is-active" type="button" data-scroll="policy">请求头保护</button>
+        <button class="nav-item" type="button" data-scroll="transport">来源与节点</button>
+        <button class="nav-item" type="button" data-scroll="model-scope">模型</button>
+        <button class="nav-item" type="button" data-scroll="advanced">高级</button>
+      </nav>
+
+      <main class="workspace">
+        <section class="panel" id="policy">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">核心保护</p>
+              <h2>让请求携带有效 turn-state</h2>
+            </div>
+            <span class="section-meta" id="revision">修订 0</span>
+          </div>
+          <div class="state-intro">
+            <div><code>X-Codex-Turn-State</code><p>按凭据、工作区与模型隔离采集、缓存并注入关键请求头。正式请求默认沿用采集 state 的出口。</p></div>
+            <button id="enable-protection" class="button button-primary" type="button" data-command>一键启用保护</button>
+          </div>
+          <p class="field-hint policy-hint">一键开启策略、注入与按需采集；保留你选择的失败处理方式。还需在宿主启用插件并绑定 OAuth 路由。</p>
+          <div class="nodes-toolbar"><p class="field-hint">严格模式会在没有合格 state 时拒绝请求。兼容模式允许正常转发，合格 state 就绪后再注入；节点格式不匹配不代表代理故障。</p><button id="allow-passthrough" class="button button-secondary" type="button" data-command>允许无 state 时正常转发</button></div>
+          <div class="toggle-grid">
+            <label class="toggle-card">
+              <span class="toggle-copy"><strong>启用策略</strong><small>接管匹配的 OAuth 请求</small></span>
+              <input id="enabled" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-card">
+              <span class="toggle-copy"><strong>注入 turn-state</strong><small>使用内存中的有效值</small></span>
+              <input id="inject" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-card">
+              <span class="toggle-copy"><strong>按需采集 state</strong><small>缺少时随真实请求采集，消耗额度</small></span>
+              <input id="harvest" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-card is-danger">
+              <span class="toggle-copy"><strong>失败关闭</strong><small>没有有效 state 时阻止请求</small></span>
+              <input id="closed" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="field-grid core-options">
+            <label class="field"><span class="field-label">账号模式</span><select id="account-mode"><option value="auto">自动识别</option><option value="personal">个人账号</option><option value="team">团队账号</option><option value="custom">自定义长度</option></select><small class="field-hint">按登录令牌中的套餐提示选择；不明确时用个人规则，可手动选择团队。自定义模式使用下方长度。</small></label>
+            <label class="field"><span class="field-label">state 采集方式</span><select id="state-refresh-mode"><option value="on_demand">拿到后固定使用</option><option value="standby">主用与备用</option></select><small class="field-hint">备用模式允许提前准备下一份 state；采集请求会消耗账号额度。</small></label>
+            <label class="field"><span class="field-label">每轮最多采集</span><span class="input-unit"><input id="max-probes" type="number" min="1" max="20"><em>次</em></span></label>
+            <label class="field"><span class="field-label">自定义 state 长度</span><span class="input-unit"><input id="length" type="number" min="100" max="2040"><em>字符</em></span></label>
+          </div>
+          <div class="state-sessions" id="state-sessions">
+            <div class="nodes-toolbar"><div><h3>请求头状态</h3><p id="core-status" role="status" aria-live="polite">尚未读取运行状态。</p></div><button id="refresh-core" class="button button-secondary" type="button" data-command>刷新运行状态</button></div>
+            <p class="field-hint">刷新只读取已保存配置对应的运行快照，不会保存表单改动或自动采集。真实请求建立会话后才可重试采集；不会显示凭据或完整 state。</p>
+            <label class="field retry-route-control"><span class="field-label">手动采集出口</span><select id="retry-route"><option value="">自动选择采集节点</option></select></label>
+            <p id="core-snapshot" class="snapshot-label">尚无快照</p>
+            <div class="node-table-scroll"><table class="node-table session-table"><thead><tr><th>账号 / 模型</th><th>state / 有效期</th><th>采集状态 / 操作</th></tr></thead><tbody id="sessions-body"><tr><td colspan="3">暂无运行会话。启用插件并发送匹配的 OAuth 请求后再刷新。</td></tr></tbody></table></div>
+          </div>
+          <div class="state-sessions" id="state-verification">
+            <div class="nodes-toolbar"><div><h3>逐节点验证 X-Codex-Turn-State</h3><p id="verification-status" role="status" aria-live="polite">选择运行会话，验证节点能否取得符合规则的状态头。</p></div><button id="refresh-verification" class="button button-secondary" type="button" data-command>刷新验证进度</button></div>
+            <p class="field-hint">这是实际模型短请求，会消耗所选账号额度。每轮按上限逐个验证，轮次之间遵守冷却；遇到登录、访问拒绝或限流会暂停。不开启注入也能手动验证；需要先有一次请求经过插件提供会话。连通性测试不执行此验证。</p>
+            <label class="field"><span class="field-label">用于验证的账号 / 模型会话</span><select id="verification-session"><option value="">先刷新运行状态</option></select></label>
+            <div class="nodes-toolbar verification-actions"><button id="verify-all-states" class="button button-primary" type="button" data-command data-core-blocked="true">验证全部节点的 state（消耗额度）</button><button id="verify-one-state" class="button button-secondary" type="button" data-command data-core-blocked="true">验证上方所选节点</button><button id="cancel-verification" class="button button-secondary" type="button" data-command data-core-blocked="true">取消验证</button></div>
+            <p id="verification-progress" class="snapshot-label">尚无验证结果。节点数量不代表独立公网 IP 数量。</p>
+            <div class="node-table-scroll"><table class="node-table"><thead><tr><th>节点 / HTTP</th><th>状态头 / 规则</th><th>验证结果</th></tr></thead><tbody id="verification-body"><tr><td colspan="3">尚未验证</td></tr></tbody></table></div>
+          </div>
+        </section>
+
+        <section class="panel" id="transport">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">连接参数</p>
+              <h2>节点与请求出口</h2>
+            </div>
+          </div>
+          <div class="toggle-grid transport-toggles">
+            <label class="toggle-card">
+              <span class="toggle-copy"><strong>允许直连</strong><small>把宿主网络作为一个候选出口</small></span>
+              <input id="direct" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="field">
+              <span class="field-label">state 采集出口</span>
+              <select id="route-mode">
+                <option value="round_robin">按顺序轮换</option>
+                <option value="fixed">固定采集节点</option>
+              </select>
+              <small class="field-hint">决定从哪些出口采集 state；与正式请求出口分开设置。</small>
+            </label>
+            <label class="field">
+              <span class="field-label">固定采集节点</span>
+              <select id="fixed-route-id"><option value="">先获取节点，再从列表选择</option></select>
+              <small class="field-hint">节点列表中的“使用此节点”设置此项；正式请求默认跟随采集出口。</small>
+            </label>
+            <label class="field"><span class="field-label">正式请求出口</span><select id="egress-mode"><option value="state">沿用 state 的出口（推荐）</option><option value="random">随机出口</option><option value="fixed">固定出口</option></select><small class="field-hint">随机或固定出口可能与采集 state 的出口不同。</small></label>
+            <label class="field"><span class="field-label">固定请求节点</span><select id="egress-route"><option value="">先获取节点，再从列表选择</option></select><small class="field-hint">仅在正式请求选择固定出口时生效。</small></label>
+            <label class="toggle-card"><span class="toggle-copy"><strong>启用节点生命周期池</strong><small>记录采集次数、耗尽与停用状态</small></span><input id="pool-enabled" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
+            <div id="route-summary" class="route-summary field-wide" role="status" aria-live="polite"></div>
+          </div>
+          <div class="field-grid">
+            <label class="field field-wide">
+              <span class="field-label">代理出口</span>
+              <textarea id="proxy" rows="3" maxlength="32768" spellcheck="false" wrap="off" placeholder="http://127.0.0.1:10808&#10;socks5h://127.0.0.1:10809"></textarea>
+              <small class="field-hint">每行一个 URL；支持含凭据的 HTTP/HTTPS、SOCKS5 和 SOCKS5H。保存后按顺序轮换探测。</small>
+              <small class="field-hint">127.0.0.1 指运行 Sub2API 内核的机器；远程或容器内核需填写它能访问的代理地址。</small>
+            </label>
+            <label class="field">
+              <span class="field-label">代理环境变量</span>
+              <textarea id="proxy-envs" rows="2" maxlength="2048" spellcheck="false" placeholder="CCODEX_PROXY"></textarea>
+              <small class="field-hint">每行一个变量名，值只在插件进程内读取。</small>
+            </label>
+            <label class="field">
+              <span class="field-label">订阅来源</span>
+              <textarea id="subscriptions" rows="3" maxlength="8192" spellcheck="false" wrap="off" placeholder="https://example.test/subscription"></textarea>
+              <small class="field-hint">每行一条完整地址。支持 Clash YAML、URI 和 Base64；env: / file: 来源由内核所在机器读取。</small>
+            </label>
+            <div class="nodes-panel field-wide" id="nodes">
+              <div class="nodes-toolbar">
+                <div><h3>代理节点</h3><p id="nodes-status" role="status" aria-live="polite">获取节点后，可逐个测试并选择出口。</p></div>
+                <div class="actions"><button id="fetch-nodes" class="button button-secondary" type="button" data-command>保存并获取节点</button><button id="test-nodes" class="button button-primary" type="button" data-command>测试全部连通性</button></div>
+              </div>
+              <p class="field-hint">连通性测试不携带 OAuth 凭据，不调用模型。403 / 429 表示已连通但目标限制访问。</p>
+              <div class="node-table-scroll"><table class="node-table"><thead><tr><th>节点 / 协议</th><th>测试结果</th><th>操作</th></tr></thead><tbody id="nodes-body"><tr><td colspan="3">尚未获取节点</td></tr></tbody></table></div>
+            </div>
+            <div class="nodes-panel field-wide" id="pool-panel"><div class="nodes-toolbar"><div><h3>节点生命周期</h3><p id="pool-status">启用生命周期池后可查看节点采集状态。</p></div><button id="refresh-pool" class="button button-secondary" type="button" data-command>刷新节点状态</button></div><p class="field-hint">回收将节点重新加入可用池；停用保留记录，后续可回收。此处状态来自运行快照，与连通性测试结果独立。</p><div class="node-table-scroll"><table class="node-table"><thead><tr><th>节点 / 协议</th><th>生命周期 / 采集次数</th><th>操作</th></tr></thead><tbody id="pool-body"><tr><td colspan="3">暂无节点生命周期记录</td></tr></tbody></table></div></div>
+            <label class="field"><span class="field-label">有效期</span><span class="input-unit"><input id="ttl" type="number" min="60" max="86400"><em>秒</em></span></label>
+            <label class="field"><span class="field-label">提前刷新</span><span class="input-unit"><input id="refresh" type="number" min="0" max="86399"><em>秒</em></span></label>
+            <label class="field"><span class="field-label">认证/限流冷却</span><span class="input-unit"><input id="cooldown" type="number" min="1" max="3600"><em>秒</em></span></label>
+            <label class="field"><span class="field-label">订阅刷新</span><span class="input-unit"><input id="subscription-refresh" type="number" min="60" max="86400"><em>秒</em></span><small class="field-hint">默认 900 秒；连接池全部失败时会提前重载。</small></label>
+            <label class="field"><span class="field-label">探测超时</span><span class="input-unit"><input id="probe" type="number" min="1" max="120"><em>秒</em></span></label>
+            <label class="field"><span class="field-label">首次请求采集总预算</span><span class="input-unit"><input id="probe-round" type="number" min="1" max="60"><em>秒</em></span><small class="field-hint">默认 20 秒，为正式转发保留时间；这是整轮上限，不是每个节点的上限。</small></label>
+            <label class="field"><span class="field-label">响应头超时</span><span class="input-unit"><input id="header-timeout" type="number" min="1" max="120"><em>秒</em></span></label>
+            <label class="field"><span class="field-label">请求体上限</span><span class="input-unit"><input id="body-limit" type="number" min="1024" max="134217728"><em>字节</em></span><small class="field-hint">默认 64 MiB；升级保留已设置的上限，最大 128 MiB。</small></label>
+            <label class="field"><span class="field-label">Zstd 解压窗口</span><span class="input-unit"><input id="zstd-window" type="number" min="16" max="128"><em>MiB</em></span></label>
+            <label class="field"><span class="field-label">Compact 请求上限</span><span class="input-unit"><input id="compact-limit" type="number" min="16" max="128"><em>MiB</em></span></label>
+          </div>
+        </section>
+
+        <section class="panel" id="model-scope">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">请求范围</p>
+              <h2>匹配模型</h2>
+            </div>
+            <span class="section-meta">每行一个</span>
+          </div>
+          <label class="field">
+            <span class="field-label">模型名称</span>
+            <textarea id="models" rows="3" spellcheck="false"></textarea>
+            <small class="field-hint">只处理列表中的模型，最多 32 个。</small>
+          </label>
+        </section>
+
+        <details class="advanced-panel" id="advanced">
+          <summary><span>高级 JSON 与账号覆盖</span><span class="summary-hint">用于指定账号级策略</span></summary>
+          <div class="advanced-content">
+            <textarea id="advanced-json" rows="14" spellcheck="false"></textarea>
+            <button id="save-json" class="button button-secondary" type="button">应用 JSON</button>
+          </div>
+        </details>
+      </main>
+    </div>
+
+    <footer class="actionbar">
+      <div class="status-copy" id="status" role="status" aria-live="polite">正在连接宿主…</div>
+      <div class="actions">
+        <button id="reload" class="button button-secondary" type="button">重新读取</button>
+        <button id="save" class="button button-secondary" type="button" data-command>保存</button>
+        <button id="test" class="button button-primary" type="button" data-command>保存并测试连通性</button>
+      </div>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -6,7 +6,6 @@ import ops from './ops'
 import settings from './settings'
 import audit from './audit'
 import promptAudit from './promptAudit'
-import costCenter from './costCenter'
 import plugins from './plugins'
 
 export default {
@@ -18,6 +17,5 @@ export default {
   ...settings,
   ...audit,
   ...promptAudit,
-  ...costCenter,
   ...plugins,
 }

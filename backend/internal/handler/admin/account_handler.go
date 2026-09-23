@@ -67,6 +67,7 @@ type AccountHandler struct {
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	accountCostLoss         *service.AccountCostLossService
 	accountEconomics        *service.AccountEconomicsService
+	opencodeGoUsage         *service.OpenCodeGoUsageService
 	cfg                     *config.Config
 }
 
@@ -85,6 +86,10 @@ func (h *AccountHandler) SetAccountCostLossService(costLoss *service.AccountCost
 
 func (h *AccountHandler) SetAccountEconomicsService(economics *service.AccountEconomicsService) {
 	h.accountEconomics = economics
+}
+
+func (h *AccountHandler) SetOpenCodeGoUsageService(usage *service.OpenCodeGoUsageService) {
+	h.opencodeGoUsage = usage
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -1619,7 +1624,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 
-	// Drop SSO/password residue; re-auth must leave only OAuth tokens on disk.
+	// Re-auth replaces token material while preserving readable, non-auth account
+	// metadata such as model mappings and workspace identity. Sensitive residue is
+	// removed after the merge so passwords/cookies cannot survive the transition.
+	req.Credentials = service.MergeCredentials(existing.Credentials, req.Credentials)
 	req.Credentials = service.SanitizeStoredCredentials(existing.Platform, req.Credentials)
 
 	updatedAccount, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -31,7 +30,6 @@ type RateLimitService struct {
 	openAI403CounterCache OpenAI403CounterCache
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
-	accountCostLoss       *AccountCostLossService
 	runtimeBlocker        AccountRuntimeBlocker
 	// ollamaCloudUsageProbe is the optional Ollama Cloud usage probe scheduler
 	// injected via SetOllamaCloudUsageProbeScheduler. See
@@ -132,10 +130,6 @@ func (s *RateLimitService) SetSettingService(settingService *SettingService) {
 // SetTokenCacheInvalidator 设置 token 缓存清理器（可选依赖）
 func (s *RateLimitService) SetTokenCacheInvalidator(invalidator TokenCacheInvalidator) {
 	s.tokenCacheInvalidator = invalidator
-}
-
-func (s *RateLimitService) SetAccountCostLossService(costLoss *AccountCostLossService) {
-	s.accountCostLoss = costLoss
 }
 
 func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocker) {
@@ -340,20 +334,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
-	// A deactivated OpenAI workspace is a confirmed terminal failure. Evaluate
-	// it before pool/custom/temporary policies so no local rule can keep a dead
-	// K12/Team workspace active or hide its impairment loss.
-	if statusCode == http.StatusPaymentRequired && account.Platform == PlatformOpenAI && isOpenAIWorkspaceDeactivated(responseBody) {
-		msg := "Workspace deactivated (402): workspace has been deactivated"
-		if upstreamMsg := strings.TrimSpace(sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(responseBody))); upstreamMsg != "" {
-			msg = "Workspace deactivated (402): " + upstreamMsg
-		}
-		s.handleTerminalAccountFailure(ctx, account, TerminalFailure{
-			Reason: TerminalFailureWorkspaceDeactivated, StatusCode: http.StatusPaymentRequired,
-			UpstreamCode: "deactivated_workspace", Message: msg,
-		}, msg)
-		return true
-	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
@@ -455,10 +435,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if upstreamMsg != "" {
 				msg = "Token revoked (401): " + upstreamMsg
 			}
-			s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
-				Reason: TerminalFailureTokenRevoked, StatusCode: http.StatusUnauthorized,
-				UpstreamCode: openai401Code, Message: msg,
-			}, msg)
+			s.handleAuthError(ctx, authAccount, msg)
 			shouldDisable = true
 			break
 		}
@@ -468,10 +445,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if upstreamMsg != "" {
 				msg = "Unauthorized (401): " + upstreamMsg
 			}
-			s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
-				Reason: TerminalFailureUnauthorizedPermanent, StatusCode: http.StatusUnauthorized,
-				UpstreamCode: "unauthorized", Message: msg,
-			}, msg)
+			s.handleAuthError(ctx, authAccount, msg)
 			shouldDisable = true
 			break
 		}
@@ -490,10 +464,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 				if upstreamMsg != "" {
 					msg = "OAuth 401 (no refresh_token): " + upstreamMsg
 				}
-				s.handleTerminalAccountFailure(ctx, authAccount, TerminalFailure{
-					Reason: TerminalFailureRefreshUnavailable, StatusCode: http.StatusUnauthorized,
-					UpstreamCode: "refresh_token_missing", Message: msg,
-				}, msg)
+				s.handleAuthError(ctx, authAccount, msg)
 				shouldDisable = true
 				break
 			}
@@ -994,31 +965,6 @@ func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account
 	slog.Warn("account_disabled_auth_error", "account_id", account.ID, "error", errorMsg)
 }
 
-// handleTerminalAccountFailure is the narrow Interface into the cost-loss Module.
-// Only callers that already possess a confirmed terminal reason may use it.
-func (s *RateLimitService) handleTerminalAccountFailure(ctx context.Context, account *Account, failure TerminalFailure, errorMsg string) {
-	if account == nil {
-		return
-	}
-	failure.OccurredAt = time.Now().UTC()
-	if failure.Message == "" {
-		failure.Message = errorMsg
-	}
-	if s.accountCostLoss != nil {
-		event, created, err := s.accountCostLoss.ConfirmTerminalFailure(ctx, account, failure, errorMsg)
-		if err == nil {
-			s.notifyAccountSchedulingBlocked(account, time.Time{}, "terminal_account_failure")
-			slog.Warn("account_terminal_cost_loss_recorded", "account_id", account.ID, "event_id", event.ID, "created", created, "reason", failure.Reason)
-			return
-		}
-		if !errors.Is(err, ErrAccountCostLossIneligible) {
-			slog.Warn("account_terminal_cost_loss_failed", "account_id", account.ID, "reason", failure.Reason, "error", err)
-		}
-	}
-	// Ineligible account types and persistence failures retain the existing safety behavior.
-	s.handleAuthError(ctx, account, errorMsg)
-}
-
 func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody []byte, fallback string) string {
 	prefix = strings.TrimSpace(prefix)
 	if prefix != "" && !strings.HasSuffix(prefix, " ") {
@@ -1104,6 +1050,15 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		)
 		return false
 	}
+	if isCloudflareBotBlockResponse(responseBody) {
+		slog.Warn(
+			"openai_403_cloudflare_bot_block_skips_account_penalty",
+			"account_id", account.ID,
+			"platform", account.Platform,
+			"upstream_message", upstreamMsg,
+		)
+		return false
+	}
 
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
@@ -1147,6 +1102,14 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"threshold", openAI403DisableThreshold,
 	)
 	return true
+}
+
+// isCloudflareBotBlockResponse reports Cloudflare's WAF bot-signature response
+// (error code 1010). The upstream never reached the account API, so this is a
+// request/edge-level failure and must not consume the account 403 strike budget.
+func isCloudflareBotBlockResponse(body []byte) bool {
+	normalized := strings.ToLower(strings.TrimSpace(string(body)))
+	return strings.Contains(normalized, "error code: 1010")
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
@@ -2197,11 +2160,6 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 			return nil, err
 		}
 		result.ClearedError = true
-		if s.accountCostLoss != nil {
-			if _, reverseErr := s.accountCostLoss.ReverseActiveLossesForAccount(ctx, accountID, time.Now().UTC(), "account state recovered"); reverseErr != nil {
-				slog.Warn("account_cost_loss_reversal_failed", "account_id", accountID, "error", reverseErr)
-			}
-		}
 		if options.InvalidateToken && s.tokenCacheInvalidator != nil && account.IsOAuth() {
 			if invalidateErr := s.tokenCacheInvalidator.InvalidateToken(ctx, account); invalidateErr != nil {
 				slog.Warn("recover_account_state_invalidate_token_failed", "account_id", accountID, "error", invalidateErr)
@@ -2521,6 +2479,7 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 
 const upstreamModelNotFoundCooldown = 30 * time.Minute
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
+const upstreamModelNotFound401Reason = "upstream_401_model_not_found"
 const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
@@ -2546,6 +2505,8 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	switch {
 	case isUpstreamModelNotFoundError(statusCode, responseBody):
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
+	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
+		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
 	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
 		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
 	default:

@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from '../client'
+import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
 import type {
   Account,
   AccountListItem,
@@ -28,179 +29,10 @@ import type {
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState
+  GrokMediaEligibilityState,
+  OpenCodeGoUsageSettings,
+  OpenCodeGoUsageState
 } from '@/types'
-
-export interface AccountCostLossState {
-  account_id: number
-  account_name: string
-  platform: string
-  account_type: string
-  terminal_event_id: number
-  terminal_event_ids?: number[]
-  occurred_at: string
-  currency: 'USD' | 'CNY'
-  accrued_cost: number
-  gross_loss: number
-  refund_amount: number
-  reversal_amount: number
-  net_loss: number
-  recognized_cost: number
-  cost_profile: {
-    amount: number
-    currency: 'USD' | 'CNY'
-    billing_cycle: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'one_time'
-    started_at: string
-    source: 'default' | 'custom'
-    algorithm_version: string
-  }
-  active: boolean
-  account_deleted: boolean
-}
-
-export interface AccountCostLossStatesResponse {
-  algorithm_version: string
-  states: AccountCostLossState[]
-}
-
-export interface AccountEconomicsSnapshot {
-  window_start?: string
-  window_end?: string
-  timezone?: string
-  algorithm_version: string
-  projection_version: string
-  sampled_at: string
-  scope: { platform?: string }
-  cny_per_usd: number
-  health: {
-    account_count: number
-    normal_count: number
-    rate_limited_count: number
-    error_count: number
-    healthy_ratio: number
-    membership_hash: string
-  }
-  actual: {
-    billed_usd: number
-    account_cost_usd: number
-    procurement_accrued_cny: number
-    impairment_loss_cny: number
-    economic_cost_cny: number
-    window_procurement_cny: number
-    window_impairment_loss_cny: number
-    window_economic_cost_cny: number
-    month_one_time_procurement_cny: number
-    month_one_time_purchase_count: number
-    month_deleted_one_time_purchase_count: number
-    month_deleted_recurring_procurement_cny: number
-    month_deleted_recurring_purchase_count: number
-    contribution_margin_cny: number
-    cny_per_billed_usd: number | null
-    payback_ratio: number | null
-    projected_contribution_cny_per_hour: number | null
-    estimated_payback_hours: number | null
-  }
-  projection: {
-    version: string
-    confidence: 'unavailable' | 'low' | 'medium' | 'high'
-    warning?: string
-    valid_intervals: number
-    reset_intervals: number
-    coverage_hours: number
-    billed_usd_per_hour: number | null
-    account_cost_usd_per_hour: number | null
-    capacity_adjusted_billed_usd_per_hour: number | null
-    capacity_adjusted_account_cost_usd_per_hour: number | null
-    capacity_adjustment: number
-    healthy_capacity_ratio: number
-  }
-  data_quality: {
-    status: 'complete' | 'partial'
-    sample_count: number
-    invalid_cost_profile_count: number
-    exchange_rate_source: string
-  }
-  series: Array<{
-    sampled_at: string
-    normal_count: number
-    rate_limited_count: number
-    error_count: number
-    billed_usd_per_hour: number | null
-    account_cost_usd_per_hour: number | null
-    stable: boolean
-  }>
-  events: Array<{
-    occurred_at: string
-    kind: 'core_started' | 'pool_membership_changed' | 'counter_regression' | 'sampling_gap' | 'impairment_confirmed' | string
-    label: string
-    severity: 'info' | 'warning' | string
-  }>
-}
-
-export async function getEconomicsSnapshot(input: {
-  scope?: string
-  platform?: string
-  account_ids?: string
-  cny_per_usd: number
-  exchange_rate_source?: string
-  window_hours?: number
-  start_time?: string
-  end_time?: string
-  timezone?: string
-}): Promise<AccountEconomicsSnapshot> {
-  const { data } = await apiClient.get<AccountEconomicsSnapshot>('/admin/accounts/economics/snapshot', { params: input })
-  return data
-}
-
-export interface AccountCostLossEvent {
-  id: number
-  account_id?: number
-  account_id_snapshot: number
-  account_name: string
-  platform: string
-  account_type: string
-  event_type: 'terminal_loss' | 'refund' | 'reversal'
-  reason: string
-  occurred_at: string
-  currency: 'USD' | 'CNY'
-  amount: number
-  accrued_cost: number
-  recognized_cost: number
-  source_event_id?: number
-  idempotency_key: string
-  algorithm_version: string
-}
-
-export async function listCostLossStates(): Promise<AccountCostLossStatesResponse> {
-  const { data } = await apiClient.get<AccountCostLossStatesResponse>('/admin/accounts/cost-loss-states')
-  return data
-}
-
-export async function confirmCostLoss(id: number, input: {
-  message?: string
-  status_code?: number
-  upstream_code?: string
-  occurred_at?: string
-  idempotency_key?: string
-} = {}): Promise<{ event: AccountCostLossEvent; created: boolean }> {
-  const { data } = await apiClient.post<{ event: AccountCostLossEvent; created: boolean }>(`/admin/accounts/${id}/cost-loss/confirm`, input)
-  return data
-}
-
-export async function recordCostLossRefund(eventId: number, input: {
-  amount: number
-  message?: string
-  occurred_at?: string
-  idempotency_key: string
-}): Promise<{ event: AccountCostLossEvent; created: boolean }> {
-  const { data } = await apiClient.post<{ event: AccountCostLossEvent; created: boolean }>(`/admin/accounts/cost-loss-events/${eventId}/refund`, input)
-  return data
-}
-
-export async function reverseCostLoss(id: number): Promise<{ reversed: number }> {
-  const { data } = await apiClient.post<{ reversed: number }>(`/admin/accounts/${id}/cost-loss/reverse`)
-  return data
-}
 
 /**
  * List all accounts with pagination
@@ -459,77 +291,22 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
-export interface AccountTestResult {
+/**
+ * Test account connectivity
+ * @param id - Account ID
+ * @returns Test result
+ */
+export async function testAccount(id: number): Promise<{
   success: boolean
   message: string
   latency_ms?: number
-}
-
-interface AccountTestEvent {
-  type?: string
-  text?: string
-  status?: string
-  success?: boolean
-  error?: string
-}
-
-/**
- * The account test endpoint intentionally streams SSE events so the native
- * account test dialog can show progress. The cost console only needs the
- * terminal result, so normalize the stream into the small result shape used
- * by the latency table.
- */
-export function parseAccountTestSse(payload: unknown, elapsedMs: number): AccountTestResult {
-  if (payload && typeof payload === 'object' && 'success' in payload) {
-    const result = payload as Partial<AccountTestResult>
-    return {
-      success: Boolean(result.success),
-      message: String(result.message || (result.success ? '连接成功' : '连接测试失败')),
-      latency_ms: result.latency_ms ?? Math.max(1, Math.round(elapsedMs)),
-    }
-  }
-
-  const events: AccountTestEvent[] = []
-  const text = String(payload || '')
-  for (const block of text.split(/\r?\n\r?\n/)) {
-    const data = block
-      .split(/\r?\n/)
-      .filter((line) => line.trimStart().startsWith('data:'))
-      .map((line) => line.replace(/^\s*data:\s?/, ''))
-      .join('\n')
-      .trim()
-    if (!data) continue
-    try {
-      const event = JSON.parse(data) as AccountTestEvent
-      events.push(event)
-    } catch {
-      // Ignore keep-alive or non-JSON SSE frames and use the terminal event.
-    }
-  }
-
-  const error = [...events].reverse().find((event) => event.type === 'error')
-  const complete = [...events].reverse().find((event) => event.type === 'test_complete')
-  const success = Boolean(complete?.success) && !error
-  const message = error?.error || (success
-    ? [...events].reverse().find((event) => event.type === 'status' || event.type === 'content')?.text || '连接成功'
-    : '连接测试失败：未收到有效的完成事件')
-
-  return {
-    success,
-    message,
-    latency_ms: Math.max(1, Math.round(elapsedMs)),
-  }
-}
-
-/** Test account connectivity and normalize the backend SSE response. */
-export async function testAccount(id: number): Promise<AccountTestResult> {
-  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const { data } = await apiClient.post<string>(`/admin/accounts/${id}/test`, undefined, {
-    responseType: 'text',
-    timeout: 60000,
-  })
-  const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  return parseAccountTestSse(data, finishedAt - startedAt)
+}> {
+  const { data } = await apiClient.post<{
+    success: boolean
+    message: string
+    latency_ms?: number
+  }>(`/admin/accounts/${id}/test`)
+  return data
 }
 
 /**
@@ -800,10 +577,9 @@ export interface BatchTodayStatsResponse {
  * @param accountIds - 账号 ID 列表
  * @returns 以账号 ID（字符串）为键的统计映射
  */
-export async function getBatchTodayStats(accountIds: number[], startTime?: string): Promise<BatchTodayStatsResponse> {
+export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTodayStatsResponse> {
   const { data } = await apiClient.post<BatchTodayStatsResponse>('/admin/accounts/today-stats/batch', {
-    account_ids: accountIds,
-    start_time: startTime
+    account_ids: accountIds
   })
   return data
 }
@@ -1145,7 +921,14 @@ export interface OpenAIQuotaUsage {
   rate_limit?: OpenAIRateLimit | null
   additional_rate_limits?: OpenAIAdditionalRateLimit[]
   rate_limit_reset_credits?: OpenAIRateLimitResetCredits | null
+  credits?: OpenAICredits | null
   fetched_at: number
+}
+
+export interface OpenAICredits {
+  has_credits: boolean
+  unlimited: boolean
+  balance: string | null
 }
 
 export interface OpenAIQuotaResetCredit {
@@ -1175,6 +958,7 @@ export interface OpenAIQuotaResetResult {
 /** Usage payload plus whether the reset-credit snapshot was persisted. */
 export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
   cache_persisted: boolean
+  credits_cache_persisted?: boolean
 }
 
 /**
@@ -1189,6 +973,23 @@ export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
 export async function refreshOpenAIQuota(id: number): Promise<OpenAIQuotaRefreshResult> {
   const { data } = await apiClient.post<OpenAIQuotaRefreshResult>(
     `/admin/openai/accounts/${id}/quota/refresh`
+  )
+  return data
+}
+
+export async function refreshOpenAIReferrals(id: number): Promise<OpenAIReferralRefreshResult> {
+  const { data } = await apiClient.post<OpenAIReferralRefreshResult>(
+    `/admin/openai/accounts/${id}/referrals/refresh`
+  )
+  return data
+}
+
+export async function sendOpenAIReferralInvite(
+  id: number,
+  input: { email: string; program_id: string; confirmed: boolean }
+): Promise<OpenAIReferralSendResult> {
+  const { data } = await apiClient.post<OpenAIReferralSendResult>(
+    `/admin/openai/accounts/${id}/referrals/invite`, input, { timeout: 90_000 }
   )
   return data
 }
@@ -1298,6 +1099,38 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export async function getOpenCodeGoUsageSettings(): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.get<OpenCodeGoUsageSettings>('/admin/accounts/opencode-go-usage/settings')
+  return data
+}
+
+export async function updateOpenCodeGoUsageSettings(
+  settings: OpenCodeGoUsageSettings
+): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.put<OpenCodeGoUsageSettings>(
+    '/admin/accounts/opencode-go-usage/settings',
+    settings
+  )
+  return data
+}
+
+export async function getOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.get<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage`)
+  return data
+}
+
+export async function setOpenCodeGoUsageAutoRefresh(id: number, enabled: boolean): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.put<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/auto-refresh`, {
+    enabled
+  })
+  return data
+}
+
+export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.post<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/refresh`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1362,11 +1195,11 @@ export const accountsAPI = {
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
   refreshOllamaCloudUsage,
-  listCostLossStates,
-  confirmCostLoss,
-  recordCostLossRefund,
-  reverseCostLoss,
-  getEconomicsSnapshot
+  getOpenCodeGoUsageSettings,
+  updateOpenCodeGoUsageSettings,
+  getOpenCodeGoUsage,
+  setOpenCodeGoUsageAutoRefresh,
+  refreshOpenCodeGoUsage
 }
 
 export default accountsAPI

@@ -22,6 +22,7 @@ type OpenAIOAuthHandler struct {
 	adminService       service.AdminService
 	quotaService       openAIQuotaService
 	rateLimitService   openAIAccountStateRecoverer
+	referralService    openAIReferralService
 }
 
 type openAIQuotaService interface {
@@ -82,6 +83,7 @@ func NewOpenAIOAuthHandler(
 	adminService service.AdminService,
 	quotaService *service.OpenAIQuotaService,
 	rateLimitService *service.RateLimitService,
+	referralServices ...openAIReferralService,
 ) *OpenAIOAuthHandler {
 	h := &OpenAIOAuthHandler{
 		openaiOAuthService: openaiOAuthService,
@@ -96,7 +98,14 @@ func NewOpenAIOAuthHandler(
 	if rateLimitService != nil {
 		h.rateLimitService = rateLimitService
 	}
+	if len(referralServices) > 0 {
+		h.referralService = referralServices[0]
+	}
 	return h
+}
+
+func (h *OpenAIOAuthHandler) SetReferralService(service openAIReferralService) {
+	h.referralService = service
 }
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
