@@ -413,7 +413,10 @@ jobs:
 
       - name: Sync VERSION file to released tag
         run: |
-          VERSION="$RELEASE_VERSION"
+          # backend/cmd/server/VERSION is the managed core identity. The
+          # desktop shell version lives in tauri.conf.json and may advance
+          # independently, so never overwrite the core version with it.
+          VERSION=$(tr -d '\r\n' < frontend/CORE_VERSION)
 
           CURRENT_VERSION=$(tr -d '\r\n' < backend/cmd/server/VERSION || true)
           if [ "$CURRENT_VERSION" = "$VERSION" ]; then
@@ -426,5 +429,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/cmd/server/VERSION
-          git commit -m "chore: sync VERSION to ${VERSION} [skip ci]"
+          git commit -m "chore: sync core VERSION to ${VERSION} [skip ci]"
           git push origin HEAD:${{ github.event.repository.default_branch }}
