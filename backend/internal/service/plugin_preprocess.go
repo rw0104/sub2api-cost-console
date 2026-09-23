@@ -38,27 +38,20 @@ func (e *PluginPreprocessError) Error() string {
 }
 
 func (m *PluginManager) preprocessRoute(ctx context.Context, account *Account) *extensionRoute {
-	if m == nil || account == nil {
-		return nil
-	}
-	table := m.extensions.Load()
-	if table == nil {
-		return nil
-	}
-	principal := pluginPrincipalFromContext(ctx)
-	for _, route := range table.routes {
-		b := route.binding
-		if b.Enabled && b.Capability == pluginv2.CapabilityRequestPreprocess && b.Platform == account.Platform &&
-			b.AccountType == account.Type && b.RolloutPercent > 0 && int(stablePluginBucket(account.ID)) < b.RolloutPercent &&
-			pluginScopeContains(b.AccountIDs, account.ID) && pluginScopeContains(b.UserIDs, principal.userID) && pluginScopeContains(b.GroupIDs, principal.groupID) {
-			return route
+	return m.preprocessRouteEvaluation(ctx, account).route
+}
+
+func (m *PluginManager) preprocessRouteEvaluation(ctx context.Context, account *Account) pluginRouteEvaluation {
+	evaluation := m.evaluateRoute(ctx, pluginv2.CapabilityRequestPreprocess, account, true)
+	if evaluation.route == nil && evaluation.decision.Stale && account != nil && account.Platform == PlatformOpenAI &&
+		(account.Type == AccountTypeOAuth || account.Type == AccountTypeAPIKey) {
+		evaluation.route = &extensionRoute{
+			capability:  PluginCapability{ID: pluginv2.CapabilityRequestPreprocess, FailureMode: pluginv2.FailureModeClosed},
+			unavailable: "插件启用状态暂时无法读取",
+			calls:       &extensionCallState{},
 		}
 	}
-	if table.stateUnavailable && account.Platform == PlatformOpenAI && (account.Type == AccountTypeOAuth || account.Type == AccountTypeAPIKey) {
-		return &extensionRoute{capability: PluginCapability{ID: pluginv2.CapabilityRequestPreprocess, FailureMode: pluginv2.FailureModeClosed},
-			unavailable: "插件启用状态暂时无法读取", calls: &extensionCallState{}}
-	}
-	return nil
+	return evaluation
 }
 func (m *PluginManager) ShouldPreprocess(account *Account) bool {
 	return m.ShouldPreprocessForRequest(context.Background(), account)
@@ -70,7 +63,11 @@ func (m *PluginManager) ShouldPreprocessForRequest(ctx context.Context, account 
 // PreprocessOpenAI dispatches the first hook at the prepared HTTP request boundary.
 // It never gives the plugin credentials, proxy data, or arbitrary inbound headers.
 func (m *PluginManager) PreprocessOpenAI(ctx context.Context, request *http.Request, account *Account) (*http.Request, error) {
-	route := m.preprocessRoute(ctx, account)
+	evaluation := m.preprocessRouteEvaluation(ctx, account)
+	route := evaluation.route
+	if request != nil && request.URL != nil {
+		logPluginRouteDecision(evaluation.decision)
+	}
 	if route == nil || request == nil || request.URL == nil || request.Method != http.MethodPost {
 		return request, nil
 	}
@@ -117,11 +114,13 @@ func (m *PluginManager) PreprocessOpenAI(ctx context.Context, request *http.Requ
 	if _, err := rand.Read(requestID); err != nil {
 		return failed()
 	}
-	input := pluginv2.PreprocessRequest{Capability: route.capability.ID, Context: pluginv2.RequestContext{
-		RequestID: hex.EncodeToString(requestID), Deadline: deadline, Platform: account.Platform, AccountType: account.Type,
-		AccountID: account.ID, Method: request.Method, Path: request.URL.Path, Host: request.URL.Hostname(),
-		Headers: map[string][]string{},
-	}}
+	requestContext := buildPluginRequestContext(ctx, request, account, deadline, "SELECTED")
+	requestContext.RequestID = hex.EncodeToString(requestID)
+	requestContext.Method = request.Method
+	requestContext.Path = request.URL.Path
+	requestContext.Host = request.URL.Hostname()
+	requestContext.Headers = map[string][]string{}
+	input := pluginv2.PreprocessRequest{Capability: route.capability.ID, Context: requestContext}
 	input.Context.TraceID = input.Context.RequestID
 	if trace, ok := ctx.Value(ctxkey.RequestID).(string); ok && validPluginTraceID(trace) {
 		input.Context.TraceID = trace

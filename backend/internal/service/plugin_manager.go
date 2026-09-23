@@ -67,6 +67,7 @@ type PluginManager struct {
 	extensions         atomic.Pointer[extensionRouteTable]
 	retiring           sync.WaitGroup
 	retired            map[*pluginRuntime]struct{}
+	controlPlaneStale  atomic.Bool
 }
 
 func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo, kvStores ...PluginKVStore) *PluginManager {
@@ -315,9 +316,12 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 		// Repository availability is a control-plane concern. Keep the last
 		// authoritative route and live runtimes serving while the next reconcile
 		// retries; a transient list failure must never drain every plugin.
+		m.controlPlaneStale.Store(true)
 		m.markExtensionsStale("插件启用状态暂时无法读取")
 		return fmt.Errorf("读取插件启用状态: %w", err)
 	}
+	m.controlPlaneStale.Store(false)
+	m.clearExtensionsStale()
 	if err := m.prepareDesktopPlugins(ctx, installations); err != nil {
 		m.publishUnavailableExtensions("桌面升级后的插件停用尚未完成")
 		m.publishUnavailableRoute(0, 100, "桌面升级后的插件停用尚未完成")
@@ -926,7 +930,21 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthResponse, error) {
 	installation, err := m.repo.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		// Status is a read-only data-plane view. During a short control-plane
+		// outage, prefer the runtime's last installation snapshot so the UI can
+		// show a stale report instead of turning a repository blip into "offline".
+		m.mu.Lock()
+		runtime := m.runtimes[id]
+		local := m.localInstallations[id]
+		m.mu.Unlock()
+		if runtime != nil && runtime.installation != nil {
+			installation = runtime.installation
+		} else if local != nil {
+			installation = local
+		} else {
+			return nil, err
+		}
+		m.controlPlaneStale.Store(true)
 	}
 	m.mu.Lock()
 	runtime := m.runtimes[id]
@@ -1028,9 +1046,11 @@ func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, run
 	inFlight := int64(0)
 	errorsTotal := uint64(0)
 	deniedTotal := uint64(0)
-	stale := false
+	stale := m.controlPlaneStale.Load()
 	routeDecision := "NOT_SELECTED"
+	timeline := pluginRuntimeTimelineSnapshot{}
 	if runtime != nil {
+		timeline = runtime.runtimeTimelineSnapshot()
 		instanceID = runtime.instanceID
 		if runtime.client != nil && !runtime.client.Exited() {
 			liveness = "alive"
@@ -1068,8 +1088,15 @@ func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, run
 		}
 	}
 	lastErrorCode := lastPluginErrorCode(installation)
+	if timeline.LastErrorCode != "" && liveness == "alive" {
+		lastErrorCode = timeline.LastErrorCode
+	}
 	if lastErrorCode == "" && liveness != "alive" {
 		lastErrorCode = codeForUnavailableRuntime(runtime)
+	}
+	var lastErrorAt any
+	if !timeline.LastErrorAt.IsZero() {
+		lastErrorAt = timeline.LastErrorAt.UTC().Format(time.RFC3339Nano)
 	}
 	envelope := map[string]any{
 		"schema":               1,
@@ -1089,8 +1116,9 @@ func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, run
 		"errors_total":         errorsTotal,
 		"denied_total":         deniedTotal,
 		"last_error_code":      lastErrorCode,
-		"last_error_at":        nil,
+		"last_error_at":        lastErrorAt,
 		"route_decision":       routeDecision,
+		"timeline":             timeline.mapValue(),
 		"error_code":           lastErrorCode,
 		"message":              message,
 		"payload":              payload,
@@ -1415,6 +1443,7 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 			process.kill()
 			return nil, errors.New("连接插件 Host API 失败")
 		}
+		process.markRuntimeHostAttached()
 	}
 	// Host API attachment precedes readiness: initialization may legitimately
 	// call host services before the plugin can report healthy.
@@ -1425,6 +1454,7 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 		process.kill()
 		return nil, err
 	}
+	process.markRuntimeReadiness(nil)
 	return process, nil
 }
 

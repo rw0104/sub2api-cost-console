@@ -51,20 +51,47 @@ func headersFromWire(h map[string]*wire.HeaderValues) map[string][]string {
 }
 func requestToWire(r PreprocessRequest) *wire.PreprocessRequest {
 	c := r.Context
+	headers := headersToWire(c.Headers)
+	if headers == nil {
+		headers = map[string]*wire.HeaderValues{}
+	}
+	putProvenanceHeader(headers, ProvenanceCorrelationHeader, c.CorrelationID)
+	putProvenanceHeader(headers, ProvenanceClientFamilyHeader, c.ClientFamily)
+	putProvenanceHeader(headers, ProvenanceClientVersionHeader, c.ClientVersion)
+	putProvenanceHeader(headers, ProvenanceIngressHeader, c.OriginalIngress)
+	putProvenanceHeader(headers, ProvenanceRouteDecisionHeader, c.RouteDecision)
 	return &wire.PreprocessRequest{Capability: r.Capability, BodyJson: r.BodyJSON, Context: &wire.RequestContext{
 		RequestId: c.RequestID, TraceId: c.TraceID, DeadlineUnixMillis: c.Deadline.UnixMilli(), Platform: c.Platform,
 		AccountType: c.AccountType, AccountId: c.AccountID, UserId: c.UserID, GroupId: c.GroupID,
-		Method: c.Method, Path: c.Path, Host: c.Host, Model: c.Model, Headers: headersToWire(c.Headers),
+		Method: c.Method, Path: c.Path, Host: c.Host, Model: c.Model, Headers: headers,
 	}}
 }
 func requestFromWire(r *wire.PreprocessRequest) PreprocessRequest {
 	c := r.GetContext()
+	headers := headersFromWire(c.GetHeaders())
+	provenance := func(name string) string {
+		values := headers[name]
+		if len(values) == 0 {
+			return ""
+		}
+		delete(headers, name)
+		return values[0]
+	}
 	return PreprocessRequest{Capability: r.GetCapability(), BodyJSON: r.GetBodyJson(), Context: RequestContext{
 		RequestID: c.GetRequestId(), TraceID: c.GetTraceId(), Deadline: time.UnixMilli(c.GetDeadlineUnixMillis()),
 		Platform: c.GetPlatform(), AccountType: c.GetAccountType(), AccountID: c.GetAccountId(), UserID: c.GetUserId(),
 		GroupID: c.GetGroupId(), Method: c.GetMethod(), Path: c.GetPath(), Host: c.GetHost(), Model: c.GetModel(),
-		Headers: headersFromWire(c.GetHeaders()),
+		CorrelationID: provenance(ProvenanceCorrelationHeader), ClientFamily: provenance(ProvenanceClientFamilyHeader),
+		ClientVersion: provenance(ProvenanceClientVersionHeader), OriginalIngress: provenance(ProvenanceIngressHeader),
+		RouteDecision: provenance(ProvenanceRouteDecisionHeader), Headers: headers,
 	}}
+}
+
+func putProvenanceHeader(headers map[string]*wire.HeaderValues, name, value string) {
+	if value == "" {
+		return
+	}
+	headers[name] = &wire.HeaderValues{Values: []string{value}}
 }
 func responseToWire(r PreprocessResponse) *wire.PreprocessResponse {
 	out := &wire.PreprocessResponse{Decision: string(r.Decision), Code: r.Code, Reason: r.Reason}

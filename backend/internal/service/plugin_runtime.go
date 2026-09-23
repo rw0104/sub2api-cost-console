@@ -32,6 +32,8 @@ import (
 type pluginRuntime struct {
 	installation      *PluginInstallation
 	instanceID        string
+	timelineMu        sync.Mutex
+	timeline          *pluginRuntimeTimeline
 	client            *hcplugin.Client
 	api               pluginv1.TransportPluginClient
 	transport         pluginv2.TransportClient
@@ -46,6 +48,7 @@ type pluginRuntime struct {
 	readinessAt       time.Time
 	readinessErr      error
 	readinessFailures int
+	readinessInFlight bool
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -130,6 +133,7 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	runtime := &pluginRuntime{
 		installation: installation,
 		instanceID:   fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano()),
+		timeline:     newPluginRuntimeTimeline(time.Now()),
 		client:       client,
 		done:         make(chan struct{}),
 		isolation:    isolation,
@@ -137,9 +141,11 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
 	if err := runtime.initializeAPI(infoCtx, dispensed); err != nil {
+		runtime.markRuntimeError(err)
 		runtime.kill()
 		return nil, err
 	}
+	runtime.markRuntimeAPIReady()
 	// v1 plugins may opt into the generic host service over the same broker. v2
 	// extension plugins keep their dedicated host connector path in PluginManager.
 	if transportClient, ok := dispensed.(*pluginv1.TransportClient); ok {
@@ -260,18 +266,24 @@ func (r *pluginRuntime) applyNormalizedConfig(ctx context.Context, configJSON []
 
 func (r *pluginRuntime) checkHealth(ctx context.Context) error {
 	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
-		return errors.New("插件进程已退出")
+		err := errors.New("插件进程已退出")
+		r.markRuntimeError(err)
+		return err
 	}
 	health, err := r.health(ctx)
 	if err != nil {
-		return fmt.Errorf("插件健康检查失败: %w", err)
+		wrapped := fmt.Errorf("插件健康检查失败: %w", err)
+		r.markRuntimeError(wrapped)
+		return wrapped
 	}
 	if health == nil || !health.Healthy {
 		message := "插件报告不健康"
 		if health != nil && strings.TrimSpace(health.Message) != "" {
 			message = "插件不健康: " + health.Message
 		}
-		return errors.New(message)
+		err := errors.New(message)
+		r.markRuntimeError(err)
+		return err
 	}
 	return nil
 }
@@ -282,32 +294,53 @@ func (r *pluginRuntime) checkHealth(ctx context.Context) error {
 // therefore never kill an otherwise serving runtime.
 func (r *pluginRuntime) checkReadiness(ctx context.Context) error {
 	if r == nil || r.client == nil || r.client.Exited() {
-		return errors.New("插件进程已退出")
+		err := errors.New("插件进程已退出")
+		r.markRuntimeReadiness(err)
+		return err
 	}
 	now := time.Now()
 	r.readinessMu.Lock()
+	if r.readinessInFlight {
+		err := r.readinessDecisionLocked()
+		r.readinessMu.Unlock()
+		return err
+	}
 	if !r.readinessAt.IsZero() && now.Sub(r.readinessAt) < pluginReadinessInterval {
-		err := r.readinessErr
+		err := r.readinessDecisionLocked()
 		r.readinessMu.Unlock()
 		return err
 	}
 	r.readinessAt = now
+	r.readinessInFlight = true
+	previous := r.readinessDecisionLocked()
 	r.readinessMu.Unlock()
 
-	err := r.checkHealth(ctx)
-	r.readinessMu.Lock()
-	defer r.readinessMu.Unlock()
-	if err == nil {
-		r.readinessErr = nil
-		r.readinessFailures = 0
-		return nil
+	// The reconcile loop must never wait on a remote readiness RPC. One probe
+	// is allowed per interval; its result is consumed by later iterations.
+	probeCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
+	go func() {
+		err := r.checkHealth(probeCtx)
+		cancel()
+		r.markRuntimeReadiness(err)
+		r.readinessMu.Lock()
+		r.readinessInFlight = false
+		if err == nil {
+			r.readinessErr = nil
+			r.readinessFailures = 0
+		} else {
+			r.readinessErr = err
+			r.readinessFailures++
+		}
+		r.readinessMu.Unlock()
+	}()
+	return previous
+}
+
+func (r *pluginRuntime) readinessDecisionLocked() error {
+	if r.readinessFailures >= pluginReadinessFailureThreshold {
+		return r.readinessErr
 	}
-	r.readinessErr = err
-	r.readinessFailures++
-	if r.readinessFailures < pluginReadinessFailureThreshold {
-		return nil
-	}
-	return err
+	return nil
 }
 
 // status returns the plugin's passive Health response, including any status_json
@@ -362,6 +395,7 @@ func (r *pluginRuntime) drain(timeout time.Duration) {
 	if r == nil {
 		return
 	}
+	r.markRuntimeDrainRequested()
 	r.draining.Store(true)
 	if r.inFlight.Load() == 0 {
 		r.doneOnce.Do(func() { close(r.done) })
@@ -372,16 +406,21 @@ func (r *pluginRuntime) drain(timeout time.Duration) {
 	case <-r.done:
 	case <-timer.C:
 	}
+	r.markRuntimeDrainFinished()
 	r.kill()
 }
 
 func (r *pluginRuntime) kill() {
-	if r != nil && r.host != nil {
+	if r == nil {
+		return
+	}
+	if r.host != nil {
 		r.host.Close()
 	}
-	if r != nil && r.client != nil {
+	if r.client != nil {
 		r.client.Kill()
 	}
+	r.markRuntimeExited()
 }
 
 func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {

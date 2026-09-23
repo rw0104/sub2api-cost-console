@@ -157,19 +157,26 @@ type HealthStatus struct {
 // RequestContext is the sanitized, minimum context sent to synchronous hooks.
 // Sensitive headers must be removed by the host before this structure is built.
 type RequestContext struct {
-	RequestID   string              `json:"request_id"`
-	TraceID     string              `json:"trace_id,omitempty"`
-	Deadline    time.Time           `json:"deadline"`
-	Platform    string              `json:"platform"`
-	AccountType string              `json:"account_type"`
-	AccountID   int64               `json:"account_id,omitempty"`
-	UserID      int64               `json:"user_id,omitempty"`
-	GroupID     int64               `json:"group_id,omitempty"`
-	Method      string              `json:"method"`
-	Path        string              `json:"path"`
-	Host        string              `json:"host"`
-	Model       string              `json:"model,omitempty"`
-	Headers     map[string][]string `json:"headers,omitempty"`
+	RequestID string `json:"request_id"`
+	TraceID   string `json:"trace_id,omitempty"`
+	// CorrelationID is stable for the logical inbound request. RequestID may
+	// change for a plugin attempt or retry, while this value must not.
+	CorrelationID   string              `json:"correlation_id,omitempty"`
+	ClientFamily    string              `json:"client_family,omitempty"`
+	ClientVersion   string              `json:"client_version,omitempty"`
+	OriginalIngress string              `json:"original_ingress,omitempty"`
+	RouteDecision   string              `json:"route_decision,omitempty"`
+	Deadline        time.Time           `json:"deadline"`
+	Platform        string              `json:"platform"`
+	AccountType     string              `json:"account_type"`
+	AccountID       int64               `json:"account_id,omitempty"`
+	UserID          int64               `json:"user_id,omitempty"`
+	GroupID         int64               `json:"group_id,omitempty"`
+	Method          string              `json:"method"`
+	Path            string              `json:"path"`
+	Host            string              `json:"host"`
+	Model           string              `json:"model,omitempty"`
+	Headers         map[string][]string `json:"headers,omitempty"`
 }
 
 func (c RequestContext) Validate() error {
@@ -186,6 +193,17 @@ func (c RequestContext) Validate() error {
 	}
 	if c.Deadline.IsZero() {
 		return errors.New("请求上下文必须包含截止时间")
+	}
+	for name, value := range map[string]string{
+		"correlation_id":   c.CorrelationID,
+		"client_family":    c.ClientFamily,
+		"client_version":   c.ClientVersion,
+		"original_ingress": c.OriginalIngress,
+		"route_decision":   c.RouteDecision,
+	} {
+		if len(value) > 128 || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("请求上下文 %s 超出长度或包含控制字符", name)
+		}
 	}
 	if len(c.Headers) > MaxHeaderCount {
 		return fmt.Errorf("请求头数量超过限制: %d", len(c.Headers))
@@ -214,6 +232,17 @@ func (c RequestContext) Validate() error {
 	}
 	return nil
 }
+
+// The generated wire contract predates provenance fields. These host-owned
+// headers carry the optional fields through old v2 wire binaries without ever
+// being copied to an upstream HTTP request.
+const (
+	ProvenanceCorrelationHeader   = "x-sub2api-provenance-correlation-id"
+	ProvenanceClientFamilyHeader  = "x-sub2api-provenance-client-family"
+	ProvenanceClientVersionHeader = "x-sub2api-provenance-client-version"
+	ProvenanceIngressHeader       = "x-sub2api-provenance-original-ingress"
+	ProvenanceRouteDecisionHeader = "x-sub2api-provenance-route-decision"
+)
 
 // PreprocessRequest is the first synchronous generic hook contract.
 type PreprocessRequest struct {

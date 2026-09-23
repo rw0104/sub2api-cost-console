@@ -42,6 +42,38 @@ func TestRequestContextRejectsSensitiveHeaders(t *testing.T) {
 	}
 }
 
+func TestRequestContextProvenanceSurvivesLegacyWireAdapter(t *testing.T) {
+	request := PreprocessRequest{Capability: CapabilityRequestPreprocess, Context: RequestContext{
+		RequestID: "attempt-1", TraceID: "trace-1", CorrelationID: "corr-1", ClientFamily: "codex_cli",
+		ClientVersion: "0.146.0", OriginalIngress: "http_api", RouteDecision: "SELECTED",
+		Deadline: time.Now().Add(time.Second), Platform: "openai", AccountType: "oauth", Method: "POST",
+		Path: "/v1/responses", Host: "api.openai.com", Headers: map[string][]string{"accept": {"application/json"}},
+	}}
+	wireRequest := requestToWire(request)
+	decoded := requestFromWire(wireRequest)
+	if decoded.Context.CorrelationID != "corr-1" || decoded.Context.ClientFamily != "codex_cli" ||
+		decoded.Context.ClientVersion != "0.146.0" || decoded.Context.OriginalIngress != "http_api" ||
+		decoded.Context.RouteDecision != "SELECTED" {
+		t.Fatalf("provenance was not preserved: %#v", decoded.Context)
+	}
+	if _, ok := decoded.Context.Headers[ProvenanceCorrelationHeader]; ok {
+		t.Fatal("reserved provenance header leaked into plugin-visible headers")
+	}
+	if got := decoded.Context.Headers["accept"]; len(got) != 1 || got[0] != "application/json" {
+		t.Fatalf("ordinary headers changed during adaptation: %#v", decoded.Context.Headers)
+	}
+}
+
+func TestRequestContextRejectsInvalidProvenance(t *testing.T) {
+	request := PreprocessRequest{Capability: CapabilityRequestPreprocess, Context: RequestContext{
+		RequestID: "attempt-1", CorrelationID: "bad\nvalue", Deadline: time.Now().Add(time.Second),
+		Platform: "openai", AccountType: "oauth", Method: "POST", Path: "/v1/responses",
+	}}
+	if err := request.Validate(); err == nil {
+		t.Fatal("控制字符 provenance 应该被拒绝")
+	}
+}
+
 func TestPreprocessResponseDecisions(t *testing.T) {
 	valid := PreprocessResponse{
 		Decision: DecisionModify,

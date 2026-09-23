@@ -211,6 +211,21 @@ func (m *PluginManager) markExtensionsStale(message string) {
 	}
 	m.extensions.Store(next)
 }
+
+// clearExtensionsStale is called after an authoritative repository snapshot
+// has been read successfully. It keeps the last route pointers and counters,
+// but removes the control-plane stale marker so status and diagnostics converge
+// on the next successful reconcile.
+func (m *PluginManager) clearExtensionsStale() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.extensions.Load()
+	if old == nil || !old.stateUnavailable {
+		return
+	}
+	next := &extensionRouteTable{routes: append([]*extensionRoute(nil), old.routes...)}
+	m.extensions.Store(next)
+}
 func (m *PluginManager) extensionStatus(id int64) []PluginCapabilityRuntime {
 	var out []PluginCapabilityRuntime
 	table := m.extensions.Load()

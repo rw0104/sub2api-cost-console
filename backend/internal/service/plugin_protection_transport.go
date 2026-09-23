@@ -147,26 +147,15 @@ func (m *PluginManager) protectionTransportRoute(ctx context.Context, account *A
 	if m == nil || account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return nil
 	}
-	table := m.extensions.Load()
-	if table == nil {
-		return nil
-	}
-	principal := pluginPrincipalFromContext(ctx)
-	for _, route := range table.routes {
-		b := route.binding
-		if b.Enabled && b.Capability == pluginv2.CapabilityProtectionTransport && b.Platform == account.Platform &&
-			b.AccountType == account.Type && b.RolloutPercent > int(stablePluginBucket(account.ID)) && pluginScopeContains(b.AccountIDs, account.ID) &&
-			(!scope || (pluginScopeContains(b.UserIDs, principal.userID) && pluginScopeContains(b.GroupIDs, principal.groupID))) {
-			return route
-		}
-	}
-	return nil
+	return m.evaluateRoute(ctx, pluginv2.CapabilityProtectionTransport, account, scope).route
 }
 func (m *PluginManager) hasProtectionTransport(account *Account) bool {
 	return m.protectionTransportRoute(context.Background(), account, false) != nil
 }
 func (m *PluginManager) roundTripProtection(ctx context.Context, req *http.Request, proxyURL string, account *Account) (*http.Response, bool, error) {
-	route := m.protectionTransportRoute(ctx, account, true)
+	evaluation := m.evaluateRoute(ctx, pluginv2.CapabilityProtectionTransport, account, true)
+	logPluginRouteDecision(evaluation.decision)
+	route := evaluation.route
 	if route == nil {
 		return nil, false, nil
 	}

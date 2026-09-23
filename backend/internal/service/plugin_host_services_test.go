@@ -364,7 +364,8 @@ func TestPluginHostServiceServer_AccountDirectory(t *testing.T) {
 			Token: "tok", Headers: http.Header{"Originator": {"codex-tui"}},
 		},
 	}
-	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), dir)
+	scope := newPluginAccountScope(pluginAccountScopeEntry{Platform: "openai", AccountType: "oauth", AccountIDs: []int64{3, 7}})
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), dir, scope)
 
 	list, err := server.ListAccounts(ctx, &pluginv1.ListAccountsRequest{Platform: "openai", AccountType: "oauth"})
 	require.NoError(t, err)
@@ -397,6 +398,19 @@ func TestPluginHostServiceServer_DirectoryUnavailableWithoutDirectory(t *testing
 	// KV 仍可用
 	_, kvErr := server.KVGet(context.Background(), &pluginv1.KVGetRequest{Namespace: "state", Key: "k"})
 	require.NoError(t, kvErr)
+}
+
+func TestPluginHostServiceServer_LegacyDirectoryCannotBypassEmptyScope(t *testing.T) {
+	dir := &fakeAccountDirectory{ids: []int64{1, 2}, identity: &PluginOutboundIdentity{AccountID: 1, Token: "secret"}}
+	server := newPluginHostServiceServer("local.example.plugin", newFakePluginKVStore(), dir)
+
+	list, err := server.ListAccounts(context.Background(), &pluginv1.ListAccountsRequest{Platform: "openai", AccountType: "oauth"})
+	require.NoError(t, err)
+	assert.Empty(t, list.AccountIds)
+
+	resolved, err := server.ResolveOutboundIdentity(context.Background(), &pluginv1.ResolveOutboundIdentityRequest{AccountId: 1})
+	require.NoError(t, err)
+	assert.False(t, resolved.Found)
 }
 
 func TestPluginDeclaresOpenAIOAuthCapability(t *testing.T) {

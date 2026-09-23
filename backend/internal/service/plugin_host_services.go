@@ -407,6 +407,12 @@ func (s *pluginHostServiceServer) ListAccounts(ctx context.Context, req *pluginv
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "请求为空")
 	}
+	// A host service without an explicit binding scope is never allowed to
+	// fall back to a legacy directory implementation. Empty scope means the
+	// capability has no currently enabled grant, not "all accounts".
+	if len(s.scope.entries) == 0 {
+		return &pluginv1.ListAccountsResponse{AccountIds: []int64{}}, nil
+	}
 	switch directory := s.directory.(type) {
 	case ScopedPluginAccountDirectory:
 		infos, err := directory.ListPluginAccounts(ctx, s.scope, req.Platform, req.AccountType)
@@ -444,6 +450,9 @@ func (s *pluginHostServiceServer) ResolveOutboundIdentity(ctx context.Context, r
 	}
 	if req == nil || req.AccountId <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "account_id 无效")
+	}
+	if len(s.scope.entries) == 0 {
+		return &pluginv1.ResolveOutboundIdentityResponse{Found: false}, nil
 	}
 	var identity *PluginOutboundIdentity
 	var err error
