@@ -267,6 +267,28 @@ jobs:
           args=(publish --output "$RUNNER_TEMP/goreleaser.publisher.yaml")
           if [[ "$SIMPLE_RELEASE" == true ]]; then args+=(--simple); fi
           python "$RUNNER_TEMP/release-tools/release_matrix.py" config "${args[@]}"
+      - name: Remove stale generated release assets
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Re-running a tag release must replace artifacts produced by an
+          # earlier attempt. GoReleaser refuses duplicate asset names with a
+          # 422 response, so remove only the generated Sub2API archives and
+          # checksum file before publishing the current commit.
+          mapfile -t stale_assets < <(
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[].name | select(. == "checksums.txt" or startswith("sub2api_"))' \
+              2>/dev/null || true
+          )
+          for asset in "${stale_assets[@]}"; do
+            [[ -z "$asset" ]] && continue
+            gh release delete-asset "$RELEASE_TAG" "$asset" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes
+          done
       - name: Publish existing archives and release notes
         uses: goreleaser/goreleaser-action@v7
         with:
