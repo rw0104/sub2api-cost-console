@@ -97,7 +97,9 @@ func TestPluginReconcileFailsClosedWhenDesiredStateCannotBeRead(t *testing.T) {
 
 	err := manager.reconcileOnce(context.Background())
 	require.ErrorContains(t, err, "读取插件启用状态")
-	require.True(t, manager.ShouldRouteOpenAIOAuth(&Account{
+	// With no previously published route, an unreadable control plane remains
+	// fail-closed. A manager that already has a route keeps that last snapshot.
+	require.False(t, manager.ShouldRouteOpenAIOAuth(&Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 	}))
 
@@ -106,8 +108,8 @@ func TestPluginReconcileFailsClosedWhenDesiredStateCannotBeRead(t *testing.T) {
 	_, handled, routeErr := manager.RoundTripOpenAIOAuth(context.Background(), request, "", &Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 	})
-	require.True(t, handled)
-	require.ErrorContains(t, routeErr, "插件不可用")
+	require.False(t, handled)
+	require.NoError(t, routeErr)
 	_, preprocessErr := manager.PreprocessOpenAI(context.Background(), request, &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
 	require.Error(t, preprocessErr, "unknown binding state must not silently bypass API Key preprocessing")
 	repo, ok := manager.repo.(*pluginTokenRepository)

@@ -315,6 +315,7 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 		// Repository availability is a control-plane concern. Keep the last
 		// authoritative route and live runtimes serving while the next reconcile
 		// retries; a transient list failure must never drain every plugin.
+		m.markExtensionsStale("插件启用状态暂时无法读取")
 		return fmt.Errorf("读取插件启用状态: %w", err)
 	}
 	if err := m.prepareDesktopPlugins(ctx, installations); err != nil {

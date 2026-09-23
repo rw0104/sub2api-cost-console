@@ -58,7 +58,8 @@ type openAIQuotaResetResponse struct {
 // failed display-cache write must never discard a successful upstream read.
 type openAIQuotaRefreshResponse struct {
 	service.OpenAIQuotaUsage
-	CachePersisted bool `json:"cache_persisted"`
+	CachePersisted        bool `json:"cache_persisted"`
+	CreditsCachePersisted bool `json:"credits_cache_persisted"`
 }
 
 // openAIQuotaResetPostProcessContext detaches the post-reset bookkeeping from the

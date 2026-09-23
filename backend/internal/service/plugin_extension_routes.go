@@ -191,6 +191,26 @@ func (m *PluginManager) publishUnavailableExtensions(message string) {
 	}
 	m.extensions.Store(next)
 }
+
+// markExtensionsStale records a control-plane read failure while retaining the
+// last runtime and route snapshot. It is separate from publishUnavailableExtensions,
+// which is used by an authoritative desktop upgrade transition and may drain.
+func (m *PluginManager) markExtensionsStale(message string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.extensions.Load()
+	if old == nil {
+		m.extensions.Store(&extensionRouteTable{stateUnavailable: true})
+		return
+	}
+	next := &extensionRouteTable{stateUnavailable: true}
+	for _, existing := range old.routes {
+		route := *existing
+		route.unavailable = message
+		next.routes = append(next.routes, &route)
+	}
+	m.extensions.Store(next)
+}
 func (m *PluginManager) extensionStatus(id int64) []PluginCapabilityRuntime {
 	var out []PluginCapabilityRuntime
 	table := m.extensions.Load()

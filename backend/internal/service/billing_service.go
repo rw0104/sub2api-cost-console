@@ -254,6 +254,21 @@ func maxReasoningEffortBillingMultiplier(model, effort string, pricing *ModelPri
 	return 1
 }
 
+func reasoningEffortBillingMultiplier(effort string, multipliers map[string]float64) float64 {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort != "none" {
+		effort = NormalizeMaxReasoningEffort(effort)
+	}
+	if effort == "" {
+		return 1
+	}
+	multiplier := multipliers[effort]
+	if multiplier <= 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+		return 1
+	}
+	return multiplier
+}
+
 func resolvedChannelTimeMultiplier(resolved *ResolvedPricing, at time.Time) float64 {
 	if resolved == nil || resolved.Source != PricingSourceChannel || resolved.channelPricing == nil {
 		return 1
