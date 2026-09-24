@@ -99,6 +99,41 @@ func pluginEgressSocketName(pluginKey, instanceID string) string {
 	return hex.EncodeToString(digest[:])[:16]
 }
 
+func pluginEgressPolicyDigest(policy config.PluginSandboxEgressBrokerConfig) string {
+	hosts := append([]string(nil), policy.AllowedHosts...)
+	schemes := append([]string(nil), policy.AllowedSchemes...)
+	sort.Strings(hosts)
+	sort.Strings(schemes)
+	raw, _ := json.Marshal(struct {
+		Enabled bool `json:"enabled"`
+		Hosts []string `json:"hosts"`
+		Schemes []string `json:"schemes"`
+		RequireTLS bool `json:"require_tls"`
+	}{policy.Enabled, hosts, schemes, policy.RequireTLS})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])[:16]
+}
+
+func (m *PluginManager) egressRuntimeCompatible(runtime *pluginRuntime, installation *PluginInstallation) bool {
+	if runtime == nil || installation == nil || m == nil || m.cfg == nil {
+		return false
+	}
+	sandbox := m.cfg.Plugins.V2Sandbox.WithDefaults()
+	required := installation.Manifest.SchemaVersion == 2 && sandbox.Mode == "container" && sandbox.EgressBroker.Enabled && manifestHasProtectionTransport(installation.Manifest)
+	if !required {
+		return runtime.egressOwner == nil
+	}
+	if runtime.egressOwner == nil {
+		return false
+	}
+	expectedScope, err := pluginBindingScopeDigest(installation, pluginv2.CapabilityProtectionTransport)
+	if err != nil {
+		return false
+	}
+	identity := runtime.egressOwner.Identity()
+	return identity.BindingScopeDigest == expectedScope && runtime.egressPolicyDigest == pluginEgressPolicyDigest(sandbox.EgressBroker)
+}
+
 func manifestHasProtectionTransport(manifest PluginManifest) bool {
 	for _, capability := range manifest.Capabilities {
 		if capability.ID == pluginv2.CapabilityProtectionTransport {

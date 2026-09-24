@@ -56,6 +56,7 @@ type pluginRuntime struct {
 	stdoutLog         *pluginRuntimeLogSink
 	stderrLog         *pluginRuntimeLogSink
 	egressOwner       *pluginruntime.EgressBrokerOwner
+	egressPolicyDigest string
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -190,6 +191,9 @@ func startPluginRuntimeWithSandboxAndHostOptions(ctx context.Context, installati
 		stdoutLog:    stdoutLog,
 		stderrLog:    stderrLog,
 		egressOwner:  owner,
+	}
+	if owner != nil {
+		runtime.egressPolicyDigest = pluginEgressPolicyDigest(sandbox.EgressBroker)
 	}
 	if ownerSucceeded != nil {
 		*ownerSucceeded = true

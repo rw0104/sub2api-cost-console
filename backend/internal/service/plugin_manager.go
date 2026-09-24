@@ -367,7 +367,8 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 		}
 		if current != nil && current.client != nil && !current.client.Exited() &&
 			current.installation.BinarySHA256 == installation.BinarySHA256 &&
-			current.installation.ConfigEncrypted == installation.ConfigEncrypted {
+			current.installation.ConfigEncrypted == installation.ConfigEncrypted &&
+			m.egressRuntimeCompatible(current, installation) {
 			healthCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
 			healthErr := current.checkReadiness(healthCtx)
 			cancel()
