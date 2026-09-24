@@ -42,12 +42,20 @@ func TestCanonicalPluginPackageProvenanceBindsInspection(t *testing.T) {
 		}},
 		PublishedAt: time.Unix(1_700_000_000, 0).UTC(),
 	}
+	require.NoError(t, SignCanonicalPackageProvenance(&provenance, privateKey))
 
 	raw, err := json.Marshal(provenance)
 	require.NoError(t, err)
 	canonicalInspection, err := installer.InspectCanonical(context.Background(), bytes.NewReader(archive), bytes.NewReader(raw))
 	require.NoError(t, err)
 	require.Equal(t, provenance.PackageSHA256, canonicalInspection.CanonicalProvenance.PackageSHA256)
+
+	mutated := provenance
+	mutated.SourceCommit = "fedcba9876543210fedcba9876543210fedcba98"
+	mutatedRaw, err := json.Marshal(mutated)
+	require.NoError(t, err)
+	_, err = installer.InspectCanonical(context.Background(), bytes.NewReader(archive), bytes.NewReader(mutatedRaw))
+	require.ErrorContains(t, err, "attestation 签名")
 
 	provenance.PackageSHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 	raw, err = json.Marshal(provenance)
@@ -76,6 +84,7 @@ func TestCanonicalInstallerRejectsFailedEvidenceAndAcceptsVerifiedArtifact(t *te
 		TestEvidence: []PluginPackageTestEvidence{{Name: "required-smoke", Result: "passed"}},
 		PublishedAt:  time.Unix(1_700_000_000, 0).UTC(),
 	}
+	require.NoError(t, SignCanonicalPackageProvenance(&provenance, privateKey))
 
 	failed := provenance
 	failed.TestEvidence = []PluginPackageTestEvidence{{Name: "required-smoke", Result: "failed"}}
@@ -104,5 +113,7 @@ func TestCanonicalProvenanceRejectsUnknownFieldsAndInvalidEvidence(t *testing.T)
 		TestEvidence: []PluginPackageTestEvidence{{Name: "smoke", Result: "skipped"}},
 		PublishedAt:  time.Unix(1_700_000_000, 0).UTC(),
 	}
+	provenance.AttestationAlgorithm = "ed25519"
+	provenance.AttestationSignature = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
 	require.ErrorContains(t, provenance.Validate(), "小写 SHA-256")
 }

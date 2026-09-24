@@ -58,3 +58,9 @@ SHA-256、runtime binary SHA-256、签名 key/fingerprint、源提交、构建�
 `test_evidence[].result` 只能是 `passed` 或明确的 `skipped`；`failed`、未知字段、
 大于 1 MiB 的 sidecar、大小写不规范的摘要以及签名身份不一致都会被拒绝。旧的上传
 和安装入口保留兼容，但发布门禁应使用 canonical 入口，不能把未执行的测试伪装为通过。
+
+canonical sidecar 还必须包含 `attestation_algorithm: "ed25519"` 和
+`attestation_signature`。签名 payload 是将 `attestation_signature` 清空后的完整 JSON
+对象（字段顺序使用 Go JSON 编码顺序）；宿主使用 ZIP 内已验证的发布者公钥验证它，且
+`signature_key_id` 必须与发布者一致。这样 sidecar 的 SHA、源提交和测试证据不能被替换
+而仍复用原插件包签名。

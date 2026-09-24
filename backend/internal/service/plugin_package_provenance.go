@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +46,8 @@ type PluginPackageProvenance struct {
 	PackageSHA256        string                      `json:"package_sha256"`
 	BinarySHA256         string                      `json:"binary_sha256"`
 	SignatureKeyID       string                      `json:"signature_key_id"`
+	AttestationAlgorithm string                      `json:"attestation_algorithm"`
+	AttestationSignature string                      `json:"attestation_signature"`
 	PublisherFingerprint string                      `json:"publisher_fingerprint"`
 	SourceCommit         string                      `json:"source_commit"`
 	BuilderVersion       string                      `json:"builder_version"`
@@ -76,6 +80,13 @@ func (p PluginPackageProvenance) Validate() error {
 	}
 	if !strings.HasPrefix(p.PublisherFingerprint, "sha256:") {
 		return errors.New("插件 provenance publisher_fingerprint 必须使用 sha256: 前缀")
+	}
+	if p.AttestationAlgorithm != "ed25519" {
+		return errors.New("插件 provenance attestation_algorithm 必须是 ed25519")
+	}
+	attestation, err := base64.StdEncoding.DecodeString(p.AttestationSignature)
+	if err != nil || len(attestation) != ed25519.SignatureSize {
+		return errors.New("插件 provenance attestation_signature 无效")
 	}
 	if !canonicalCommitPattern.MatchString(p.SourceCommit) {
 		return errors.New("插件 provenance source_commit 必须是 40–64 位小写提交哈希")
@@ -143,6 +154,33 @@ func (p PluginPackageProvenance) ValidateAgainst(
 	if p.SignatureKeyID != publisher.KeyID || p.PublisherFingerprint != publisher.Fingerprint {
 		return errors.New("插件 provenance 发布者签名身份不一致")
 	}
+	publicKey, err := base64.StdEncoding.DecodeString(publisher.PublicKey)
+	attestation, attestationErr := base64.StdEncoding.DecodeString(p.AttestationSignature)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || attestationErr != nil || len(attestation) != ed25519.SignatureSize ||
+		!ed25519.Verify(ed25519.PublicKey(publicKey), canonicalProvenanceSigningBytes(p), attestation) {
+		return errors.New("插件 provenance attestation 签名校验失败")
+	}
+	return nil
+}
+
+// canonicalProvenanceSigningBytes returns the stable JSON payload signed by a
+// release attestation. The signature itself is cleared before encoding, so
+// the payload is deterministic and cannot be self-referential.
+func canonicalProvenanceSigningBytes(p PluginPackageProvenance) []byte {
+	p.AttestationSignature = ""
+	raw, _ := json.Marshal(p)
+	return raw
+}
+
+// SignCanonicalPackageProvenance signs a sidecar in release tooling. The
+// private key is never retained by the host; installation only verifies the
+// resulting signature with the package publisher's public key.
+func SignCanonicalPackageProvenance(p *PluginPackageProvenance, privateKey ed25519.PrivateKey) error {
+	if p == nil || len(privateKey) != ed25519.PrivateKeySize {
+		return errors.New("插件 provenance 签名密钥无效")
+	}
+	p.AttestationAlgorithm = "ed25519"
+	p.AttestationSignature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, canonicalProvenanceSigningBytes(*p)))
 	return nil
 }
 
