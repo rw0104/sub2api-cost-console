@@ -40,6 +40,9 @@ const (
 // contains an upstream URL, query, authorization header, or response body.
 type EgressAuditEvent struct {
 	Operation     string `json:"operation"`
+	PluginKey     string `json:"plugin_key,omitempty"`
+	RuntimeID     string `json:"runtime_instance_id,omitempty"`
+	ScopeDigest   string `json:"binding_scope_digest,omitempty"`
 	RequestID     string `json:"request_id,omitempty"`
 	CorrelationID string `json:"correlation_id,omitempty"`
 	AccountID     int64  `json:"account_id,omitempty"`
@@ -66,6 +69,7 @@ type EgressBrokerServer struct {
 	allowedSchemes map[string]struct{}
 	authorizer     EgressBroker
 	audit          EgressAuditSink
+	identity       *EgressBrokerIdentity
 	dialContext    func(context.Context, string, string) (net.Conn, error)
 	client         *http.Client
 	slots          chan struct{}
@@ -154,7 +158,7 @@ func (s *EgressBrokerServer) handleConnect(w http.ResponseWriter, r *http.Reques
 	started := time.Now()
 	req, err := s.parseMetadata(r)
 	if err != nil {
-		s.rejectWithStarted(w, r, "connect", req, started, http.StatusBadRequest, "INVALID_METADATA")
+		s.rejectWithStarted(w, r, "connect", req, started, http.StatusBadRequest, egressMetadataErrorCode(err))
 		return
 	}
 	req, err = s.validateConnectTarget(r, req)
@@ -239,7 +243,7 @@ func (s *EgressBrokerServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	req, err := s.parseMetadata(r)
 	if err != nil {
-		s.rejectWithStarted(w, r, "sse", req, started, http.StatusBadRequest, "INVALID_METADATA")
+		s.rejectWithStarted(w, r, "sse", req, started, http.StatusBadRequest, egressMetadataErrorCode(err))
 		return
 	}
 	target, req, err := s.validateSSETarget(r, req)
@@ -321,6 +325,9 @@ func (s *EgressBrokerServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *EgressBrokerServer) parseMetadata(r *http.Request) (EgressRequest, error) {
+	if err := s.validateOwnerHeaders(r); err != nil {
+		return EgressRequest{}, err
+	}
 	if r.Header.Get(EgressBrokerProtocolHeader) != EgressBrokerProtocol {
 		return EgressRequest{}, errors.New("protocol")
 	}
@@ -468,10 +475,16 @@ func (s *EgressBrokerServer) auditEvent(operation string, req EgressRequest, out
 	if s.audit == nil {
 		return
 	}
-	s.audit(EgressAuditEvent{Operation: operation, RequestID: req.RequestID, CorrelationID: req.CorrelationID,
+	event := EgressAuditEvent{Operation: operation, RequestID: req.RequestID, CorrelationID: req.CorrelationID,
 		AccountID: req.AccountID, Scheme: req.Scheme, Host: req.Host, Port: req.Port, Outcome: outcome,
 		Code: stableEgressCode(code, "EGRESS_ERROR"), StatusCode: status, Bytes: bytes,
-		DurationMS: time.Since(started).Milliseconds()})
+		DurationMS: time.Since(started).Milliseconds()}
+	if s.identity != nil {
+		event.PluginKey = s.identity.PluginKey
+		event.RuntimeID = s.identity.RuntimeInstanceID
+		event.ScopeDigest = s.identity.BindingScopeDigest
+	}
+	s.audit(event)
 }
 
 func writeEgressError(w http.ResponseWriter, status int, code string) {

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"path/filepath"
+
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -20,8 +22,9 @@ func TestPluginSandboxDefaultsAndValidation(t *testing.T) {
 }
 
 func TestPluginSandboxEgressBrokerRequiresExplicitPolicy(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "egress.sock")
 	valid := PluginSandboxConfig{Mode: "container", MemoryMB: 64, CPUMilli: 100, PidsLimit: 32,
-		EgressBroker: PluginSandboxEgressBrokerConfig{Enabled: true, SocketPath: "/run/sub2api/egress.sock",
+		EgressBroker: PluginSandboxEgressBrokerConfig{Enabled: true, SocketPath: socketPath,
 			AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}
 	require.NoError(t, valid.Validate())
 	require.True(t, valid.WithDefaults().EgressBroker.RequireTLS)

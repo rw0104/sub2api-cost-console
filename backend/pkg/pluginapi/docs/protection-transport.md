@@ -27,6 +27,8 @@
 
 `v2_sandbox.mode=container` 默认没有网络，启动会要求显式的 host-owned egress broker policy。宿主已有独立、可测试的 HTTP CONNECT/SSE Handler 边界：SSE 由宿主完成上游证书校验，CONNECT 只做 TLS record/443 隧道约束，端到端证书验证仍由插件 TLS 客户端负责；Handler 尚未接入 service 的 Unix listener 和容器生命周期。即使配置了 Unix socket、TLS 和 host allowlist，保护传输仍会明确 fail closed。process 模式仍拥有服务账号操作系统权限，安装者必须信任签名发布者。
 
+service 接入必须使用 per-runtime owner：listener 路径绑定 plugin key、runtime instance 和 binding scope digest，且由 owner token 与 account-bound authorizer 共同校验。没有这组身份协议时不得把 Handler 暴露给容器；停止、升级或异常退出必须先关闭对应 owner，再回收 runtime 和 socket。
+
 保护策略保存时宿主读取已持久化配置作为回滚依据，插件验证并归一化新配置后应用；数据库按安装 ID、二进制 SHA-256、原配置密文执行比较更新。竞争或写入失败恢复已持久化快照。持久化快照的重放调用 Apply，不重跑策略命令或递增修订号。
 
 开发者使用公开 `v2/transport.go` 的 `TransportHandler` 实现 `Forward`，并复用 `v1` 的请求/响应帧类型。宿主不分发私有保护策略实现；SDK 与签名打包步骤见[插件开发指南](../../../../docs/PLUGIN_DEVELOPMENT.md)。保护传输实现需要额外验证取消、SSE、凭据透传、证书校验及 `request_sent`，不能直接把预处理示例的业务函数改名为 `Forward`。

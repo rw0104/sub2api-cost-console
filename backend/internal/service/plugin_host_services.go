@@ -18,11 +18,15 @@ import (
 )
 
 type PluginHostEvent struct {
-	Sequence   uint64    `json:"sequence"`
-	Capability string    `json:"capability"`
-	Name       string    `json:"name"`
-	Value      int64     `json:"value"`
-	Time       time.Time `json:"time"`
+	Sequence      uint64    `json:"sequence"`
+	PluginID      int64     `json:"plugin_id"`
+	Capability    string    `json:"capability"`
+	Name          string    `json:"name"`
+	Value         int64     `json:"value"`
+	Time          time.Time `json:"time"`
+	BindingID     int64     `json:"binding_id,omitempty"`
+	InstanceID    string    `json:"instance_id,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
 }
 type PluginHostSnapshot struct {
 	Logs                   uint64                             `json:"logs"`
@@ -30,6 +34,10 @@ type PluginHostSnapshot struct {
 	EventsAccepted         uint64                             `json:"events_accepted"`
 	EventsDropped          uint64                             `json:"events_dropped"`
 	RecentEvents           []PluginHostEvent                  `json:"recent_events"`
+	EventSinkDropped       uint64                             `json:"event_sink_dropped,omitempty"`
+	EventSinkErrors        uint64                             `json:"event_sink_errors,omitempty"`
+	MetricSinkDropped      uint64                             `json:"metric_sink_dropped,omitempty"`
+	MetricSinkErrors       uint64                             `json:"metric_sink_errors,omitempty"`
 	SecretReads            map[PluginSecretAuditResult]uint64 `json:"secret_reads,omitempty"`
 	RecentSecretAudits     []PluginSecretAuditEvent           `json:"recent_secret_audits,omitempty"`
 	SecretAuditSuppressed  uint64                             `json:"secret_audit_suppressed,omitempty"`
@@ -56,6 +64,10 @@ type pluginHostServices struct {
 	bindingIDs          map[string]int64
 	instanceID          string
 	events              chan PluginHostEvent
+	observations        chan pluginHostObservation
+	observationsDone    chan struct{}
+	eventSink           PluginHostEventSink
+	metricSink          PluginHostMetricSink
 	stop                chan struct{}
 	done                chan struct{}
 	closed              atomic.Bool
@@ -65,7 +77,8 @@ func newPluginHostServices(i *PluginInstallation, readSecret func(context.Contex
 	h := &pluginHostServices{permissions: map[string]map[pluginv2.Permission]bool{}, readSecret: readSecret,
 		stats:           PluginHostSnapshot{Metrics: map[string]float64{}, SecretReads: map[PluginSecretAuditResult]uint64{}},
 		secretAuditLast: map[string]pluginSecretAuditBucket{}, bindingIDs: map[string]int64{},
-		events: make(chan PluginHostEvent, 64), stop: make(chan struct{}), done: make(chan struct{})}
+		events: make(chan PluginHostEvent, 64), observations: make(chan pluginHostObservation, pluginHostObservationQueueSize),
+		stop: make(chan struct{}), done: make(chan struct{}), observationsDone: make(chan struct{})}
 	if len(metadataReaders) > 0 {
 		h.readAccountMetadata = metadataReaders[0]
 	}
@@ -93,6 +106,7 @@ func newPluginHostServices(i *PluginInstallation, readSecret func(context.Contex
 		}
 	}
 	go h.consumeEvents()
+	go h.consumeObservations()
 	return h
 }
 func hasHostPermissions(manifest PluginManifest) bool {
@@ -111,6 +125,10 @@ func (h *pluginHostServices) Close() {
 		close(h.stop)
 		select {
 		case <-h.done:
+		case <-time.After(time.Second):
+		}
+		select {
+		case <-h.observationsDone:
 		case <-time.After(time.Second):
 		}
 	}
@@ -181,9 +199,18 @@ func (h *pluginHostServices) Metric(ctx context.Context, r *wire.HostMetricReque
 	if math.IsNaN(r.Value) || math.IsInf(r.Value, 0) || r.Value < 0 || r.Value > 1e6 || (r.Name != "latency_ms" && math.Trunc(r.Value) != r.Value) {
 		return nil, status.Error(codes.InvalidArgument, "metric value is invalid")
 	}
+	provenance := pluginRequestProvenanceFromContext(ctx)
+	now := time.Now().UTC()
 	h.mu.Lock()
 	h.stats.Metrics[r.Name] += r.Value
+	metric := PluginHostMetric{
+		Time: now, PluginID: h.pluginID, Capability: sanitizePluginHostObservationField(r.Capability),
+		Name: sanitizePluginHostObservationField(r.Name), Value: r.Value,
+		BindingID: h.bindingIDs[r.Capability], InstanceID: sanitizePluginHostObservationField(h.instanceID),
+		CorrelationID: sanitizePluginHostObservationField(provenance.CorrelationID),
+	}
 	h.mu.Unlock()
+	h.enqueueObservation(pluginHostObservation{kind: pluginHostObservationMetric, metric: metric})
 	return &wire.HostAck{Accepted: true}, nil
 }
 func (h *pluginHostServices) ReadConfig(ctx context.Context, r *wire.HostCapabilityRequest) (*wire.HostConfigResponse, error) {
@@ -225,6 +252,51 @@ func (h *pluginHostServices) setRuntimeMetadata(instanceID string) {
 	h.mu.Lock()
 	h.instanceID = sanitizePluginSecretAuditField(instanceID)
 	h.mu.Unlock()
+}
+
+// setEventSink and setMetricSink attach optional cross-instance observability
+// ports. Both are intentionally runtime-local injection points so old host
+// setup and test doubles remain source-compatible.
+func (h *pluginHostServices) setEventSink(sink PluginHostEventSink) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.eventSink = sink
+	h.mu.Unlock()
+}
+
+func (h *pluginHostServices) setMetricSink(sink PluginHostMetricSink) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.metricSink = sink
+	h.mu.Unlock()
+}
+
+func (h *pluginHostServices) enqueueObservation(observation pluginHostObservation) {
+	if h == nil || h.observations == nil {
+		return
+	}
+	h.mu.Lock()
+	configured := (observation.kind == pluginHostObservationEvent && h.eventSink != nil) ||
+		(observation.kind == pluginHostObservationMetric && h.metricSink != nil)
+	h.mu.Unlock()
+	if !configured {
+		return
+	}
+	select {
+	case h.observations <- observation:
+	default:
+		h.mu.Lock()
+		if observation.kind == pluginHostObservationEvent {
+			h.stats.EventSinkDropped++
+		} else {
+			h.stats.MetricSinkDropped++
+		}
+		h.mu.Unlock()
+	}
 }
 
 func (h *pluginHostServices) recordSecretAudit(ctx context.Context, capability, alias string, result PluginSecretAuditResult, errorCode string, expiresAt time.Time, startedAt time.Time) {
@@ -413,9 +485,15 @@ func (h *pluginHostServices) PublishEvent(ctx context.Context, r *wire.HostEvent
 	if !validHostEventCode(r.GetName()) || r.Value < 0 || r.Value > 1000000 {
 		return nil, status.Error(codes.InvalidArgument, "invalid event")
 	}
+	provenance := pluginRequestProvenanceFromContext(ctx)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	event := PluginHostEvent{Sequence: h.stats.EventsAccepted + 1, Capability: r.Capability, Name: r.Name, Value: r.Value, Time: time.Now()}
+	event := PluginHostEvent{
+		Sequence: h.stats.EventsAccepted + 1, PluginID: h.pluginID, Capability: sanitizePluginHostObservationField(r.Capability),
+		Name: sanitizePluginHostObservationField(r.Name), Value: r.Value, Time: time.Now().UTC(),
+		BindingID: h.bindingIDs[r.Capability], InstanceID: sanitizePluginHostObservationField(h.instanceID),
+		CorrelationID: sanitizePluginHostObservationField(provenance.CorrelationID),
+	}
 	select {
 	case h.events <- event:
 		h.stats.EventsAccepted++
@@ -439,10 +517,73 @@ func (h *pluginHostServices) consumeEvents() {
 			}
 			h.stats.RecentEvents = append(h.stats.RecentEvents, event)
 			h.mu.Unlock()
+			h.enqueueObservation(pluginHostObservation{kind: pluginHostObservationEvent, event: event})
 			slog.Info("plugin_host_event", "plugin_id", h.pluginID, "capability", event.Capability, "event", event.Name, "value", event.Value)
 		}
 	}
 }
+
+func (h *pluginHostServices) consumeObservations() {
+	if h == nil {
+		return
+	}
+	defer func() {
+		if h.observationsDone != nil {
+			close(h.observationsDone)
+		}
+	}()
+	for {
+		select {
+		case <-h.stop:
+			return
+		case observation := <-h.observations:
+			h.recordObservation(observation)
+		}
+	}
+}
+
+func (h *pluginHostServices) recordObservation(observation pluginHostObservation) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	eventSink, metricSink := h.eventSink, h.metricSink
+	h.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), pluginHostSinkTimeout)
+	defer cancel()
+	var err error
+	func() {
+		defer func() {
+			if recover() != nil {
+				err = errPluginHostSinkPanic
+			}
+		}()
+		switch observation.kind {
+		case pluginHostObservationEvent:
+			if eventSink != nil {
+				err = eventSink.RecordPluginHostEvent(ctx, observation.event)
+			}
+		case pluginHostObservationMetric:
+			if metricSink != nil {
+				err = metricSink.RecordPluginHostMetric(ctx, observation.metric)
+			}
+		}
+	}()
+	if err == nil {
+		return
+	}
+	h.mu.Lock()
+	if observation.kind == pluginHostObservationEvent {
+		h.stats.EventSinkErrors++
+	} else {
+		h.stats.MetricSinkErrors++
+	}
+	pluginID := h.pluginID
+	h.mu.Unlock()
+	slog.Warn("plugin_host_observation_sink_failed", "plugin_id", pluginID, "kind", observation.kind, "error_code", pluginHostSinkErrorCode(err))
+}
+
 func (h *pluginHostServices) Snapshot() PluginHostSnapshot {
 	h.mu.Lock()
 	defer h.mu.Unlock()

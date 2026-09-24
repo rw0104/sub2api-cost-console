@@ -3,7 +3,7 @@ package config
 import (
 	"errors"
 	"net"
-	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -40,10 +40,11 @@ func (c PluginSandboxEgressBrokerConfig) Validate() error {
 		}
 		return nil
 	}
-	if strings.TrimSpace(c.SocketPath) == "" || !path.IsAbs(c.SocketPath) {
+	socketPath := filepath.FromSlash(c.SocketPath)
+	if strings.TrimSpace(c.SocketPath) == "" || !filepath.IsAbs(socketPath) {
 		return errors.New("plugins.v2_sandbox.egress_broker.socket_path must be an absolute host path")
 	}
-	if path.Clean(c.SocketPath) != c.SocketPath || strings.ContainsAny(c.SocketPath, ",\r\n\x00") {
+	if filepath.Clean(socketPath) != socketPath || strings.ContainsAny(c.SocketPath, ",\r\n\x00") {
 		return errors.New("plugins.v2_sandbox.egress_broker.socket_path is invalid")
 	}
 	if len(c.AllowedHosts) == 0 || len(c.AllowedHosts) > 64 {
