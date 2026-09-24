@@ -46,3 +46,14 @@ func TestPluginRevisionOperationMigrationIsIdempotentAndScoped(t *testing.T) {
 	require.Contains(t, sql, "expected_revision BIGINT NOT NULL DEFAULT 0")
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_sub2api_plugin_operations_active")
 }
+
+func TestPluginRouteFallbackPolicyMigrationDefaultsClosed(t *testing.T) {
+	content, err := FS.ReadFile("245_plugin_route_fallback_policy.sql")
+	require.NoError(t, err)
+
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS fallback_policy VARCHAR(32) NOT NULL DEFAULT 'fail_closed'")
+	require.Contains(t, sql, "SET fallback_policy = 'fail_closed'")
+	require.Contains(t, sql, "DROP CONSTRAINT IF EXISTS sub2api_plugin_bindings_fallback_policy_check")
+	require.Contains(t, sql, "CHECK (fallback_policy IN ('fail_closed', 'next_plugin', 'builtin'))")
+}

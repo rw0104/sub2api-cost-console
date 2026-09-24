@@ -160,6 +160,42 @@ func (m *PluginManager) roundTripProtection(ctx context.Context, req *http.Reque
 	if route == nil {
 		return nil, false, nil
 	}
+	for {
+		response, handled, err := m.roundTripProtectionRoute(ctx, req, proxyURL, account, route)
+		if err == nil || !handled || ctx.Err() != nil {
+			return response, handled, err
+		}
+		var transportErr *PluginTransportError
+		requestSent := true
+		if errors.As(err, &transportErr) && transportErr != nil {
+			requestSent = transportErr.RequestSent
+		}
+		var policyErr *PluginPreprocessError
+		if errors.As(err, &policyErr) && policyErr != nil {
+			requestSent = false
+			if policyErr.Denied {
+				return response, handled, err
+			}
+		}
+		policy := route.binding.EffectiveFallbackPolicy()
+		if requestSent || policy == PluginFallbackPolicyFailClosed {
+			return response, handled, err
+		}
+		if policy == PluginFallbackPolicyBuiltin {
+			return nil, false, nil
+		}
+		if policy != PluginFallbackPolicyNextPlugin {
+			return response, handled, err
+		}
+		next := m.nextExtensionRoute(ctx, pluginv2.CapabilityProtectionTransport, account, true, route)
+		if next == nil {
+			return response, handled, err
+		}
+		route = next
+	}
+}
+
+func (m *PluginManager) roundTripProtectionRoute(ctx context.Context, req *http.Request, proxyURL string, account *Account, route *extensionRoute) (*http.Response, bool, error) {
 	fail := func() (*http.Response, bool, error) { return nil, true, &PluginPreprocessError{} }
 	rt := route.runtime
 	if rt == nil || rt.transport == nil || (rt.client != nil && rt.client.Exited()) {

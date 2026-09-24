@@ -26,6 +26,37 @@ const (
 	PluginSignatureUnsigned             = "unsigned"
 )
 
+// PluginFallbackPolicy controls what the host may do when a route fails
+// before it sends an upstream request. Empty values normalize to fail_closed
+// so old installations remain safe by default.
+type PluginFallbackPolicy string
+
+const (
+	PluginFallbackPolicyFailClosed PluginFallbackPolicy = "fail_closed"
+	PluginFallbackPolicyNextPlugin PluginFallbackPolicy = "next_plugin"
+	PluginFallbackPolicyBuiltin    PluginFallbackPolicy = "builtin"
+
+	FallbackPolicyFailClosed = PluginFallbackPolicyFailClosed
+	FallbackPolicyNextPlugin = PluginFallbackPolicyNextPlugin
+	FallbackPolicyBuiltin    = PluginFallbackPolicyBuiltin
+)
+
+func (p PluginFallbackPolicy) Normalize() PluginFallbackPolicy {
+	if p == "" {
+		return PluginFallbackPolicyFailClosed
+	}
+	return p
+}
+
+func (p PluginFallbackPolicy) Validate() error {
+	switch p.Normalize() {
+	case PluginFallbackPolicyFailClosed, PluginFallbackPolicyNextPlugin, PluginFallbackPolicyBuiltin:
+		return nil
+	default:
+		return fmt.Errorf("不支持的插件路由 fallback 策略: %q", p)
+	}
+}
+
 var pluginIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)+$`)
 
 var ErrPluginStateChanged = errors.New("插件状态已在其他实例中变化，请刷新后重试")
@@ -64,6 +95,9 @@ type PluginCapability struct {
 	TimeoutMS   int64                   `json:"timeout_ms,omitempty"`
 	FailureMode pluginv2.FailureMode    `json:"failure_mode,omitempty"`
 	Synchronous bool                    `json:"synchronous,omitempty"`
+	// FallbackPolicies is an explicit manifest allow-list. A binding may
+	// choose next_plugin or builtin only when the capability declares it.
+	FallbackPolicies []PluginFallbackPolicy `json:"fallback_policies,omitempty"`
 }
 
 type PluginRuntime struct {
@@ -137,21 +171,50 @@ type PluginInstallation struct {
 }
 
 type PluginBinding struct {
-	ID             int64     `json:"id"`
-	PluginID       int64     `json:"plugin_id"`
-	Capability     string    `json:"capability"`
-	Platform       string    `json:"platform"`
-	AccountType    string    `json:"account_type"`
-	Enabled        bool      `json:"enabled"`
-	RolloutPercent int       `json:"rollout_percent"`
-	Priority       int       `json:"priority"`
-	AccountIDs     []int64   `json:"account_ids"`
-	UserIDs        []int64   `json:"user_ids"`
-	GroupIDs       []int64   `json:"group_ids"`
-	MaxConcurrency int       `json:"max_concurrency"`
-	TimeoutMS      int64     `json:"timeout_ms"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64                `json:"id"`
+	PluginID       int64                `json:"plugin_id"`
+	Capability     string               `json:"capability"`
+	Platform       string               `json:"platform"`
+	AccountType    string               `json:"account_type"`
+	Enabled        bool                 `json:"enabled"`
+	RolloutPercent int                  `json:"rollout_percent"`
+	Priority       int                  `json:"priority"`
+	AccountIDs     []int64              `json:"account_ids"`
+	UserIDs        []int64              `json:"user_ids"`
+	GroupIDs       []int64              `json:"group_ids"`
+	MaxConcurrency int                  `json:"max_concurrency"`
+	TimeoutMS      int64                `json:"timeout_ms"`
+	FallbackPolicy PluginFallbackPolicy `json:"fallback_policy"`
+	CreatedAt      time.Time            `json:"created_at"`
+	UpdatedAt      time.Time            `json:"updated_at"`
+}
+
+func (b PluginBinding) EffectiveFallbackPolicy() PluginFallbackPolicy {
+	return b.FallbackPolicy.Normalize()
+}
+
+func (c PluginCapability) AllowsFallbackPolicy(policy PluginFallbackPolicy) bool {
+	policy = policy.Normalize()
+	if policy == PluginFallbackPolicyFailClosed {
+		return true
+	}
+	for _, allowed := range c.FallbackPolicies {
+		if allowed.Normalize() == policy {
+			return true
+		}
+	}
+	return false
+}
+
+func (c PluginCapability) ValidateFallbackPolicy(policy PluginFallbackPolicy) error {
+	policy = policy.Normalize()
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if !c.AllowsFallbackPolicy(policy) {
+		return fmt.Errorf("能力 %s 未声明 fallback 策略 %q", c.ID, policy)
+	}
+	return nil
 }
 
 type PluginRepository interface {
@@ -208,11 +271,27 @@ func (m PluginManifest) ValidateForRuntime(runtimeKey string) error {
 			if capability.ID != PluginCapabilityOpenAIOAuthOutbound || capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
 				return fmt.Errorf("v1 仅支持能力 %s", PluginCapabilityOpenAIOAuthOutbound)
 			}
-			if capability.Kind != "" || len(capability.Permissions) > 0 || capability.TimeoutMS != 0 || capability.FailureMode != "" || capability.Synchronous {
+			if capability.Kind != "" || len(capability.Permissions) > 0 || capability.TimeoutMS != 0 || capability.FailureMode != "" || capability.Synchronous || len(capability.FallbackPolicies) > 0 {
 				return errors.New("v1 清单不能声明 v2 能力属性")
 			}
-		} else if err := capability.ExtensionCapability().Validate(); err != nil {
-			return err
+		} else {
+			if err := capability.ExtensionCapability().Validate(); err != nil {
+				return err
+			}
+			seenFallback := map[PluginFallbackPolicy]struct{}{}
+			for _, policy := range capability.FallbackPolicies {
+				policy = policy.Normalize()
+				if err := policy.Validate(); err != nil {
+					return err
+				}
+				if policy == PluginFallbackPolicyFailClosed {
+					return errors.New("能力 fallback_policies 不需要重复声明 fail_closed")
+				}
+				if _, ok := seenFallback[policy]; ok {
+					return fmt.Errorf("能力 fallback 策略重复: %q", policy)
+				}
+				seenFallback[policy] = struct{}{}
+			}
 		}
 	}
 	runtimeEntry, ok := m.Runtimes[runtimeKey]

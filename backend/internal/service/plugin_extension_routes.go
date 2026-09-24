@@ -15,6 +15,55 @@ type extensionRouteTable struct {
 	routes           []*extensionRoute
 	stateUnavailable bool
 }
+
+// PluginRouteCandidate is the host-owned, safe projection of one route in the
+// unified v1/v2 table. It is suitable for status/diagnostic responses and does
+// not contain account credentials or request data.
+type PluginRouteCandidate struct {
+	PluginID          int64                `json:"plugin_id"`
+	Capability        string               `json:"capability"`
+	BindingID         int64                `json:"binding_id"`
+	Priority          int                  `json:"priority"`
+	FallbackPolicy    PluginFallbackPolicy `json:"fallback_policy"`
+	RuntimeAvailable  bool                 `json:"runtime_available"`
+	RuntimeInstanceID string               `json:"runtime_instance_id,omitempty"`
+}
+
+func (r *extensionRoute) Candidate() PluginRouteCandidate {
+	if r == nil {
+		return PluginRouteCandidate{}
+	}
+	candidate := PluginRouteCandidate{
+		PluginID:         r.pluginID,
+		Capability:       r.capability.ID,
+		BindingID:        r.binding.ID,
+		Priority:         r.binding.Priority,
+		FallbackPolicy:   r.binding.EffectiveFallbackPolicy(),
+		RuntimeAvailable: r.runtime != nil && !r.runtime.draining.Load(),
+	}
+	if r.runtime != nil {
+		candidate.RuntimeInstanceID = r.runtime.instanceID
+		if r.runtime.client != nil && r.runtime.client.Exited() {
+			candidate.RuntimeAvailable = false
+		}
+	}
+	return candidate
+}
+
+func pluginRouteCandidates(table *extensionRouteTable, capability string) []PluginRouteCandidate {
+	if table == nil {
+		return nil
+	}
+	out := make([]PluginRouteCandidate, 0)
+	for _, route := range table.routes {
+		if route == nil || route.capability.ID != capability || !route.binding.Enabled {
+			continue
+		}
+		out = append(out, route.Candidate())
+	}
+	return out
+}
+
 type extensionRoute struct {
 	pluginID    int64
 	capability  PluginCapability
@@ -90,6 +139,7 @@ func samePluginBindings(a, b []PluginBinding) bool {
 		if a[i].Capability != b[i].Capability || a[i].Platform != b[i].Platform || a[i].AccountType != b[i].AccountType ||
 			a[i].Enabled != b[i].Enabled || a[i].RolloutPercent != b[i].RolloutPercent ||
 			a[i].Priority != b[i].Priority || a[i].EffectiveConcurrency() != b[i].EffectiveConcurrency() || a[i].TimeoutMS != b[i].TimeoutMS ||
+			a[i].EffectiveFallbackPolicy() != b[i].EffectiveFallbackPolicy() ||
 			!pluginScopeEqual(a[i].AccountIDs, b[i].AccountIDs) || !pluginScopeEqual(a[i].UserIDs, b[i].UserIDs) || !pluginScopeEqual(a[i].GroupIDs, b[i].GroupIDs) {
 			return false
 		}

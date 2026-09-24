@@ -43,6 +43,15 @@ func (m *PluginManager) preprocessRoute(ctx context.Context, account *Account) *
 
 func (m *PluginManager) preprocessRouteEvaluation(ctx context.Context, account *Account) pluginRouteEvaluation {
 	evaluation := m.evaluateRoute(ctx, pluginv2.CapabilityRequestPreprocess, account, true)
+	if evaluation.route == nil && ctx != nil {
+		if _, excluded := ctx.Value(pluginRouteExclusionsKey{}).(map[*extensionRoute]bool); excluded {
+			evaluation.route = &extensionRoute{
+				capability: PluginCapability{ID: pluginv2.CapabilityRequestPreprocess, FailureMode: pluginv2.FailureModeClosed},
+				binding:    PluginBinding{FallbackPolicy: PluginFallbackPolicyFailClosed},
+				calls:      &extensionCallState{},
+			}
+		}
+	}
 	if evaluation.route == nil && evaluation.decision.Stale && account != nil && account.Platform == PlatformOpenAI &&
 		(account.Type == AccountTypeOAuth || account.Type == AccountTypeAPIKey) {
 		evaluation.route = &extensionRoute{
@@ -84,6 +93,12 @@ func (m *PluginManager) PreprocessOpenAI(ctx context.Context, request *http.Requ
 		}
 		if route.capability.FailureMode == pluginv2.FailureModeOpen {
 			return request, nil
+		}
+		if route.binding.EffectiveFallbackPolicy() == PluginFallbackPolicyBuiltin {
+			return request, nil
+		}
+		if route.binding.EffectiveFallbackPolicy() == PluginFallbackPolicyNextPlugin {
+			return m.PreprocessOpenAI(withPluginRouteExclusion(ctx, route), request, account)
 		}
 		return nil, &PluginPreprocessError{}
 	}

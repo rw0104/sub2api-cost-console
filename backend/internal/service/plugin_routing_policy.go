@@ -78,14 +78,15 @@ func (b PluginBinding) Timeout(capability PluginCapability) time.Duration {
 }
 
 type PluginRoutingPolicy struct {
-	Capability     string  `json:"capability"`
-	Priority       int     `json:"priority"`
-	AccountIDs     []int64 `json:"account_ids"`
-	UserIDs        []int64 `json:"user_ids"`
-	GroupIDs       []int64 `json:"group_ids"`
-	RolloutPercent int     `json:"rollout_percent"`
-	MaxConcurrency int     `json:"max_concurrency"`
-	TimeoutMS      int64   `json:"timeout_ms"`
+	Capability     string               `json:"capability"`
+	Priority       int                  `json:"priority"`
+	AccountIDs     []int64              `json:"account_ids"`
+	UserIDs        []int64              `json:"user_ids"`
+	GroupIDs       []int64              `json:"group_ids"`
+	RolloutPercent int                  `json:"rollout_percent"`
+	MaxConcurrency int                  `json:"max_concurrency"`
+	TimeoutMS      int64                `json:"timeout_ms"`
+	FallbackPolicy PluginFallbackPolicy `json:"fallback_policy"`
 }
 type PluginRoutingRepository interface {
 	UpdateRouting(context.Context, *PluginInstallation, []PluginBinding) (*PluginInstallation, error)
@@ -155,6 +156,10 @@ func (m *PluginManager) saveRouting(ctx context.Context, id int64, policies []Pl
 		if policy.TimeoutMS > cap.TimeoutMS {
 			return nil, errors.New("路由超时不能超过清单声明")
 		}
+		fallbackPolicy := policy.FallbackPolicy.Normalize()
+		if err := cap.ValidateFallbackPolicy(fallbackPolicy); err != nil {
+			return nil, err
+		}
 		accounts, err := normalizePluginScope(policy.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -177,6 +182,7 @@ func (m *PluginManager) saveRouting(ctx context.Context, id int64, policies []Pl
 				return nil, errors.New("插件绑定与清单作用域不一致")
 			}
 			b.Priority, b.RolloutPercent, b.MaxConcurrency, b.TimeoutMS = policy.Priority, policy.RolloutPercent, policy.MaxConcurrency, policy.TimeoutMS
+			b.FallbackPolicy = fallbackPolicy
 			b.AccountIDs, b.UserIDs, b.GroupIDs = accounts, users, groups
 			matched = true
 		}
