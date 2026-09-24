@@ -53,6 +53,8 @@ type pluginRuntime struct {
 	statusValue       *pluginv1.HealthResponse
 	statusInFlight    bool
 	statusStale       bool
+	stdoutLog         *pluginRuntimeLogSink
+	stderrLog         *pluginRuntimeLogSink
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -91,6 +93,9 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	if err != nil || len(checksum) != sha256.Size {
 		return nil, errors.New("插件二进制哈希无效")
 	}
+	instanceID := fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	stdoutLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStdout, defaultPluginRuntimeLogBytes)
+	stderrLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStderr, defaultPluginRuntimeLogBytes)
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), installation.BinaryPath)
 	handshake, plugins, name := pluginv1.HandshakeConfig, pluginv1.ClientPluginMap(), pluginv1.TransportPluginName
 	if installation.Manifest.SchemaVersion == 2 {
@@ -107,8 +112,8 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 			Hash:     sha256.New(),
 		},
 		Logger:           hclog.NewNullLogger(),
-		SyncStdout:       io.Discard,
-		SyncStderr:       io.Discard,
+		SyncStdout:       stdoutLog,
+		SyncStderr:       stderrLog,
 		UnixSocketConfig: &hcplugin.UnixSocketConfig{TempDir: socketDir},
 		SkipHostEnv:      true,
 	}
@@ -144,11 +149,13 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	}
 	runtime := &pluginRuntime{
 		installation: installation,
-		instanceID:   fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano()),
+		instanceID:   instanceID,
 		timeline:     newPluginRuntimeTimeline(time.Now()),
 		client:       client,
 		done:         make(chan struct{}),
 		isolation:    isolation,
+		stdoutLog:    stdoutLog,
+		stderrLog:    stderrLog,
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
