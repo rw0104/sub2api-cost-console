@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,6 +75,8 @@ type EgressBrokerServer struct {
 	client         *http.Client
 	slots          chan struct{}
 	maxSSEBytes    int64
+	serverMu       sync.Mutex
+	httpServer     *http.Server
 }
 
 // NewEgressBrokerServer validates the policy and creates a fail-closed broker
@@ -133,7 +136,36 @@ func (s *EgressBrokerServer) Serve(listener net.Listener) error {
 		return errors.New("egress broker listener is nil")
 	}
 	server := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	s.serverMu.Lock()
+	if s.httpServer != nil {
+		s.serverMu.Unlock()
+		return errors.New("egress broker is already serving")
+	}
+	s.httpServer = server
+	s.serverMu.Unlock()
+	defer func() {
+		s.serverMu.Lock()
+		if s.httpServer == server {
+			s.httpServer = nil
+		}
+		s.serverMu.Unlock()
+	}()
 	return server.Serve(listener)
+}
+
+// Close terminates active broker connections and is safe to call when Serve
+// has not started. The owner calls this during runtime drain/kill.
+func (s *EgressBrokerServer) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.serverMu.Lock()
+	server := s.httpServer
+	s.serverMu.Unlock()
+	if server == nil {
+		return nil
+	}
+	return server.Close()
 }
 
 // ServeHTTP accepts only the two explicitly defined data-plane operations.

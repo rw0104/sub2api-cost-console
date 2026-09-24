@@ -65,6 +65,8 @@ type EgressBrokerOwner struct {
 	server    *EgressBrokerServer
 	listener  net.Listener
 	identity  EgressBrokerIdentity
+	mu        sync.Mutex
+	closed    bool
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -108,10 +110,16 @@ func NewEgressBrokerOwner(options EgressBrokerOwnerOptions) (*EgressBrokerOwner,
 // Serve blocks until the injected listener is closed. Closing the owner is
 // idempotent and is the required drain/kill cleanup path.
 func (o *EgressBrokerOwner) Serve() error {
-	if o == nil || o.server == nil || o.listener == nil {
+	if o == nil {
 		return errors.New("egress broker owner is not initialized")
 	}
-	return o.server.Serve(o.listener)
+	o.mu.Lock()
+	server, listener, closed := o.server, o.listener, o.closed
+	o.mu.Unlock()
+	if server == nil || listener == nil || closed {
+		return errors.New("egress broker owner is not initialized")
+	}
+	return server.Serve(listener)
 }
 
 func (o *EgressBrokerOwner) Close() error {
@@ -119,8 +127,16 @@ func (o *EgressBrokerOwner) Close() error {
 		return nil
 	}
 	o.closeOnce.Do(func() {
-		if o.listener != nil {
-			o.closeErr = o.listener.Close()
+		o.mu.Lock()
+		o.closed = true
+		listener, server := o.listener, o.server
+		o.mu.Unlock()
+		if listener != nil {
+			listenerErr := listener.Close()
+			serverErr := server.Close()
+			o.closeErr = errors.Join(listenerErr, serverErr)
+		} else {
+			o.closeErr = server.Close()
 		}
 	})
 	return o.closeErr
