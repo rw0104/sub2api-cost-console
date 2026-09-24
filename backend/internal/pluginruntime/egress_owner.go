@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,12 +28,13 @@ var errEgressOwnerIdentity = errors.New("egress broker owner identity mismatch")
 type EgressBrokerIdentity struct {
 	PluginKey          string
 	RuntimeInstanceID  string
+	SocketName         string
 	BindingScopeDigest string
 	OwnerToken         string
 }
 
 func (i EgressBrokerIdentity) Validate() error {
-	if !validOwnerValue(i.PluginKey, 1, 128) || !validOwnerValue(i.RuntimeInstanceID, 1, 128) {
+	if !validOwnerValue(i.PluginKey, 1, 128) || !validOwnerValue(i.RuntimeInstanceID, 1, 128) || !validOwnerValue(i.SocketName, 8, 64) {
 		return errors.New("egress broker owner requires plugin key and runtime instance")
 	}
 	if len(i.BindingScopeDigest) != 16 {
@@ -65,6 +67,7 @@ type EgressBrokerOwner struct {
 	server    *EgressBrokerServer
 	listener  net.Listener
 	identity  EgressBrokerIdentity
+	socketPath string
 	mu        sync.Mutex
 	closed    bool
 	closeOnce sync.Once
@@ -92,8 +95,7 @@ func NewEgressBrokerOwner(options EgressBrokerOwnerOptions) (*EgressBrokerOwner,
 	}
 	base := filepath.Base(options.Broker.SocketPath)
 	if base == "." || base == string(filepath.Separator) ||
-		!strings.Contains(base, options.Identity.PluginKey) ||
-		!strings.Contains(base, options.Identity.RuntimeInstanceID) {
+		!strings.Contains(base, options.Identity.SocketName) {
 		return nil, errors.New("egress broker socket must be unique to plugin and runtime instance")
 	}
 	server, err := NewEgressBrokerServer(options.Broker, options.Authorizer, options.Audit)
@@ -104,7 +106,20 @@ func NewEgressBrokerOwner(options EgressBrokerOwnerOptions) (*EgressBrokerOwner,
 		PluginKey: options.Identity.PluginKey, RuntimeInstanceID: options.Identity.RuntimeInstanceID,
 		BindingScopeDigest: options.Identity.BindingScopeDigest, OwnerToken: options.Identity.OwnerToken,
 	}
-	return &EgressBrokerOwner{server: server, listener: options.Listener, identity: options.Identity}, nil
+	return &EgressBrokerOwner{server: server, listener: options.Listener, identity: options.Identity, socketPath: options.Broker.SocketPath}, nil
+}
+
+// Start launches Serve and returns a bounded-error channel. Listener creation
+// has already succeeded before this method is called; callers may perform a
+// non-blocking read to catch an immediate serve failure before starting the
+// container.
+func (o *EgressBrokerOwner) Start() <-chan error {
+	result := make(chan error, 1)
+	go func() {
+		result <- o.Serve()
+		close(result)
+	}()
+	return result
 }
 
 // Serve blocks until the injected listener is closed. Closing the owner is
@@ -138,6 +153,13 @@ func (o *EgressBrokerOwner) Close() error {
 		} else {
 			o.closeErr = server.Close()
 		}
+		if o.socketPath != "" {
+			if info, err := os.Lstat(o.socketPath); err == nil && info.Mode()&os.ModeSocket != 0 {
+				if removeErr := os.Remove(o.socketPath); o.closeErr == nil {
+					o.closeErr = removeErr
+				}
+			}
+		}
 	})
 	return o.closeErr
 }
@@ -147,6 +169,13 @@ func (o *EgressBrokerOwner) Identity() EgressBrokerIdentity {
 		return EgressBrokerIdentity{}
 	}
 	return o.identity
+}
+
+func (o *EgressBrokerOwner) SocketPath() string {
+	if o == nil {
+		return ""
+	}
+	return o.socketPath
 }
 
 func (s *EgressBrokerServer) validateOwnerHeaders(r *http.Request) error {

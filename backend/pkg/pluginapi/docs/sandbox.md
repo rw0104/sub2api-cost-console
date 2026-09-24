@@ -58,9 +58,9 @@ plugins:
 
 受控出站的协议边界名为 `sub2api.plugin.egress.v1`。配置中的 `egress_broker` 只允许宿主挂载一个明确的 Unix socket，并限制 TLS scheme 和完整域名 allowlist；它不会把 `HTTP_PROXY`、Docker socket、宿主网络或任意目标地址传入容器。容器启动前必须能看到该 socket，否则直接拒绝启动。
 
-`backend/internal/pluginruntime` 现提供经过单元测试的 broker Handler：仅接受带完整 account/request/correlation 元数据的 `CONNECT host:443` 或 `GET /sse`，SSE 使用宿主 TLS 校验、禁止重定向并限制 `text/event-stream` 大小；CONNECT 只允许 TLS record 透传到 allowlist 的 443 端口，证书验证仍由插件的 TLS 客户端完成并在后续接入时审计。Handler 仍未接入宿主 service 的 Unix listener 和容器启动流程，因此当前发布版本的保护传输继续 fail closed；不能通过打开配置绕过此限制。
+`backend/internal/pluginruntime` 现提供经过单元测试的 broker Handler：仅接受带完整 account/request/correlation 元数据的 `CONNECT host:443` 或 `GET /sse`，SSE 使用宿主 TLS 校验、禁止重定向并限制 `text/event-stream` 大小；CONNECT 只允许 TLS record 透传到 allowlist 的 443 端口，证书验证仍由插件的 TLS 客户端完成并在后续接入时审计。宿主 service 在容器 egress policy 开启且声明保护传输能力时，为每个 runtime 创建独立 owner/listener，并把 socket、scope digest、runtime identity 和 owner token 注入容器；缺少 owner 或身份校验时仍 fail closed。
 
-后续 service 接入必须通过 `EgressBrokerOwner`：宿主注入私有、不可替换的 listener，socket 文件名同时包含 plugin key 和 runtime instance ID，并为每个实例提供 binding scope digest、随机 owner token 和 account-bound authorizer。缺少任一身份、listener 或 authorizer 时 owner 拒绝创建；`Close` 必须与 runtime drain/kill 同步调用。共享全局 socket、仅凭可伪造的 account header，或没有 scope digest 的 listener 都不满足安全边界。
+service 接入通过 `EgressBrokerOwner`：宿主注入私有、不可替换的 Unix listener，socket 文件名由 plugin/runtime 唯一摘要生成，并为每个实例提供 binding scope digest、随机 owner token 和 account-bound authorizer。缺少任一身份、listener 或 authorizer 时 owner 拒绝创建；`Close` 与 runtime drain/kill 同步调用。共享全局 socket、仅凭可伪造的 account header，或没有 scope digest 的 listener 都不满足安全边界。
 
 资源和网络实现可对照 Docker 的 [资源约束](https://docs.docker.com/engine/containers/resource_constraints/) 与 [none 网络](https://docs.docker.com/engine/network/drivers/none/) 文档。实际限制以本项目下述运行测试为证据。
 

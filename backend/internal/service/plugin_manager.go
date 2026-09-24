@@ -1537,8 +1537,31 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 		return nil, err
 	}
 	timeout := time.Duration(m.cfg.Plugins.StartTimeoutSeconds) * time.Second
-	process, err := startPluginRuntimeWithSandboxAndHost(ctx, installation, timeout, socketDir, m.cfg.Plugins.V2Sandbox, m.buildHostServices(installation))
+	sandbox := m.cfg.Plugins.V2Sandbox.WithDefaults()
+	instanceID := fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	owner, err := m.createPluginEgressOwner(installation, sandbox, instanceID)
 	if err != nil {
+		return nil, err
+	}
+	if owner != nil {
+		serveResult := owner.Start()
+		select {
+		case serveErr := <-serveResult:
+			_ = owner.Close()
+			return nil, fmt.Errorf("启动 scoped egress broker: %w", serveErr)
+		default:
+		}
+	}
+	var process *pluginRuntime
+	if owner != nil {
+		process, err = startPluginRuntimeWithSandboxAndHostOwner(ctx, installation, timeout, socketDir, sandbox, m.buildHostServices(installation), owner, instanceID)
+	} else {
+		process, err = startPluginRuntimeWithSandboxAndHost(ctx, installation, timeout, socketDir, sandbox, m.buildHostServices(installation))
+	}
+	if err != nil {
+		if owner != nil {
+			_ = owner.Close()
+		}
 		return nil, err
 	}
 	if installation.Manifest.SchemaVersion == 2 && hasHostPermissions(installation.Manifest) {

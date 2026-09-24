@@ -55,6 +55,7 @@ type pluginRuntime struct {
 	statusStale       bool
 	stdoutLog         *pluginRuntimeLogSink
 	stderrLog         *pluginRuntimeLogSink
+	egressOwner       *pluginruntime.EgressBrokerOwner
 }
 
 func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
@@ -70,6 +71,20 @@ func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInst
 }
 
 func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer) (*pluginRuntime, error) {
+	return startPluginRuntimeWithSandboxAndHostOwner(ctx, installation, startTimeout, socketDir, sandbox, hostServices, nil, "")
+}
+
+func startPluginRuntimeWithSandboxAndHostOwner(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer, owner *pluginruntime.EgressBrokerOwner, instanceID string) (*pluginRuntime, error) {
+	ownerSucceeded := false
+	defer func() {
+		if !ownerSucceeded && owner != nil {
+			_ = owner.Close()
+		}
+	}()
+	return startPluginRuntimeWithSandboxAndHostOptions(ctx, installation, startTimeout, socketDir, sandbox, hostServices, owner, instanceID, &ownerSucceeded)
+}
+
+func startPluginRuntimeWithSandboxAndHostOptions(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer, owner *pluginruntime.EgressBrokerOwner, instanceID string, ownerSucceeded *bool) (*pluginRuntime, error) {
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
 	}
@@ -80,20 +95,37 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 		}
 	}
 	if installation.Manifest.SchemaVersion == 2 && sandbox.Mode == "container" {
+		if sandbox.EgressBroker.Enabled && owner == nil {
+			return nil, errors.New("sandbox egress broker requires a scoped runtime owner")
+		}
 		for _, capability := range installation.Manifest.Capabilities {
 			if capability.ID == pluginv2.CapabilityProtectionTransport {
 				if !sandbox.EgressBroker.Enabled {
 					return nil, errors.New("账号保护传输需要配置 egress broker；网络受限容器默认拒绝出站连接")
 				}
-				return nil, errors.New("sandbox egress broker data plane is not implemented; refusing to start network capability")
+				if owner == nil {
+					return nil, errors.New("账号保护传输需要 scoped egress broker owner")
+				}
 			}
 		}
+	}
+	if owner != nil {
+		if installation.Manifest.SchemaVersion != 2 || sandbox.Mode != "container" || !sandbox.EgressBroker.Enabled || owner.SocketPath() == "" {
+			return nil, errors.New("egress broker owner is only valid for a configured container sandbox")
+		}
+		sandbox.EgressBroker.SocketPath = owner.SocketPath()
 	}
 	checksum, err := hex.DecodeString(installation.BinarySHA256)
 	if err != nil || len(checksum) != sha256.Size {
 		return nil, errors.New("插件二进制哈希无效")
 	}
-	instanceID := fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	if strings.TrimSpace(instanceID) == "" {
+		instanceID = fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	}
+	var ownerIdentity pluginruntime.EgressBrokerIdentity
+	if owner != nil {
+		ownerIdentity = owner.Identity()
+	}
 	stdoutLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStdout, defaultPluginRuntimeLogBytes)
 	stderrLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStderr, defaultPluginRuntimeLogBytes)
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), installation.BinaryPath)
@@ -132,7 +164,8 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 					MemoryMB: sandbox.MemoryMB, CPUMilli: sandbox.CPUMilli, PidsLimit: sandbox.PidsLimit, Env: spec.Env,
 					EgressBroker: pluginruntime.EgressBrokerOptions{Enabled: sandbox.EgressBroker.Enabled,
 						SocketPath: sandbox.EgressBroker.SocketPath, AllowedHosts: append([]string(nil), sandbox.EgressBroker.AllowedHosts...),
-						AllowedSchemes: append([]string(nil), sandbox.EgressBroker.AllowedSchemes...), RequireTLS: sandbox.EgressBroker.RequireTLS}})
+						AllowedSchemes: append([]string(nil), sandbox.EgressBroker.AllowedSchemes...), RequireTLS: sandbox.EgressBroker.RequireTLS},
+					EgressBrokerIdentity: ownerIdentity})
 			}
 		}
 	}
@@ -156,6 +189,10 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 		isolation:    isolation,
 		stdoutLog:    stdoutLog,
 		stderrLog:    stderrLog,
+		egressOwner:  owner,
+	}
+	if ownerSucceeded != nil {
+		*ownerSucceeded = true
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
@@ -493,6 +530,9 @@ func (r *pluginRuntime) kill() {
 	}
 	if r.host != nil {
 		r.host.Close()
+	}
+	if r.egressOwner != nil {
+		_ = r.egressOwner.Close()
 	}
 	if r.client != nil {
 		r.client.Kill()

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,14 +16,14 @@ func TestContainerProtectionTransportRequiresEgressBroker(t *testing.T) {
 	require.ErrorContains(t, err, "egress broker")
 }
 
-func TestContainerProtectionTransportEgressBrokerRemainsFailClosedUntilDataPlaneExists(t *testing.T) {
+func TestContainerProtectionTransportRequiresScopedRuntimeOwner(t *testing.T) {
 	installation := &PluginInstallation{Manifest: PluginManifest{SchemaVersion: 2, Capabilities: []PluginCapability{protectionTestCapability()}}}
 	sandbox := config.PluginSandboxConfig{Mode: "container", EgressBroker: config.PluginSandboxEgressBrokerConfig{
-		Enabled: true, SocketPath: "/run/sub2api/egress.sock", AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}
+		Enabled: true, SocketPath: filepath.Join(t.TempDir(), "egress.sock"), AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}
 	_, err := startPluginRuntimeWithSandboxAndHost(context.Background(), installation, time.Second, t.TempDir(), sandbox, nil)
-	require.ErrorContains(t, err, "data plane is not implemented")
+	require.ErrorContains(t, err, "scoped runtime owner")
 	// The check happens before checksum validation or Docker startup, so a
-	// configured-but-unserved broker cannot accidentally open a network path.
+	// configured-but-unowned broker cannot accidentally open a network path.
 	require.NotContains(t, err.Error(), "Docker")
 }
 

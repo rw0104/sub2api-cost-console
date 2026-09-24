@@ -30,6 +30,7 @@ func scopedOwnerIdentity() EgressBrokerIdentity {
 	return EgressBrokerIdentity{
 		PluginKey:          "example.plugin",
 		RuntimeInstanceID:  "example.plugin-instance-1",
+		SocketName:         "owner-socket-1",
 		BindingScopeDigest: "0123456789abcdef",
 		OwnerToken:         strings.Repeat("a", 48),
 	}
@@ -38,7 +39,7 @@ func scopedOwnerIdentity() EgressBrokerIdentity {
 func scopedOwnerOptions(t *testing.T, identity EgressBrokerIdentity, listener net.Listener, authorizer EgressBroker) EgressBrokerOwnerOptions {
 	t.Helper()
 	return EgressBrokerOwnerOptions{
-		Broker: EgressBrokerOptions{Enabled: true, SocketPath: filepath.Join(t.TempDir(), identity.PluginKey+"-"+identity.RuntimeInstanceID+".sock"),
+		Broker: EgressBrokerOptions{Enabled: true, SocketPath: filepath.Join(t.TempDir(), "egress-"+identity.SocketName+".sock"),
 			AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true},
 		Identity: identity, Listener: listener, Authorizer: authorizer,
 	}
@@ -125,9 +126,9 @@ func TestEgressBrokerOwnerAcceptsBoundIdentityAndCloseIsIdempotent(t *testing.T)
 
 func TestEgressBrokerIdentityValidationDoesNotAcceptPathOrShortToken(t *testing.T) {
 	for _, identity := range []EgressBrokerIdentity{
-		{PluginKey: "../plugin", RuntimeInstanceID: "instance", BindingScopeDigest: "0123456789abcdef", OwnerToken: strings.Repeat("a", 48)},
-		{PluginKey: "plugin", RuntimeInstanceID: "instance", BindingScopeDigest: "not-a-digest!!!", OwnerToken: strings.Repeat("a", 48)},
-		{PluginKey: "plugin", RuntimeInstanceID: "instance", BindingScopeDigest: "0123456789abcdef", OwnerToken: "short"},
+		{PluginKey: "../plugin", RuntimeInstanceID: "instance", SocketName: "owner-socket-1", BindingScopeDigest: "0123456789abcdef", OwnerToken: strings.Repeat("a", 48)},
+		{PluginKey: "plugin", RuntimeInstanceID: "instance", SocketName: "owner-socket-1", BindingScopeDigest: "not-a-digest!!!", OwnerToken: strings.Repeat("a", 48)},
+		{PluginKey: "plugin", RuntimeInstanceID: "instance", SocketName: "owner-socket-1", BindingScopeDigest: "0123456789abcdef", OwnerToken: "short"},
 	} {
 		require.Error(t, identity.Validate())
 	}

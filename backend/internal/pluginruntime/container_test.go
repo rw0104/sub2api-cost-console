@@ -62,7 +62,9 @@ func TestContainerArgumentsExposeOnlyConfiguredEgressSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "egress.sock")
 	c := &Container{name: "test", options: ContainerOptions{WorkDir: t.TempDir(), MemoryMB: 256, CPUMilli: 1000, PidsLimit: 64,
 		EgressBroker: EgressBrokerOptions{Enabled: true, SocketPath: socketPath,
-			AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}}
+			AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true},
+		EgressBrokerIdentity: EgressBrokerIdentity{PluginKey: "example.plugin", RuntimeInstanceID: "example.plugin-instance-1", SocketName: "owner-socket-1",
+			BindingScopeDigest: "0123456789abcdef", OwnerToken: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	args, err := c.createArgs("sha256:test", filepath.Join(c.options.WorkDir, "lease"))
 	require.NoError(t, err)
 	command := strings.Join(args, " ")
@@ -70,6 +72,7 @@ func TestContainerArgumentsExposeOnlyConfiguredEgressSocket(t *testing.T) {
 	require.Contains(t, command, "--mount type=bind,src=")
 	require.Contains(t, command, EgressBrokerContainerSocket)
 	require.Contains(t, command, "SUB2API_PLUGIN_EGRESS_BROKER_SOCKET="+EgressBrokerContainerSocket)
+	require.Contains(t, command, "SUB2API_PLUGIN_EGRESS_RUNTIME_INSTANCE=example.plugin-instance-1")
 	require.NotContains(t, command, "--network host")
 	require.NotContains(t, command, "--env HTTP_PROXY=")
 	require.NotContains(t, command, "--env HTTPS_PROXY=")

@@ -35,6 +35,7 @@ type ContainerOptions struct {
 	PidsLimit    int
 	Env          []string
 	EgressBroker EgressBrokerOptions
+	EgressBrokerIdentity EgressBrokerIdentity
 }
 
 type Container struct {
@@ -64,6 +65,11 @@ func NewContainer(options ContainerOptions) (*Container, error) {
 	}
 	if err := options.EgressBroker.Validate(); err != nil {
 		return nil, err
+	}
+	if options.EgressBroker.Enabled {
+		if err := options.EgressBrokerIdentity.Validate(); err != nil {
+			return nil, err
+		}
 	}
 	docker, err := exec.LookPath("docker")
 	if err != nil {
@@ -213,6 +219,11 @@ func (c *Container) createArgs(imageID, leasePath string) ([]string, error) {
 	if err := c.options.EgressBroker.Validate(); err != nil {
 		return nil, err
 	}
+	if c.options.EgressBroker.Enabled {
+		if err := c.options.EgressBrokerIdentity.Validate(); err != nil {
+			return nil, err
+		}
+	}
 	binaryMount, err := mountArgument(filepath.Join(c.options.WorkDir, "runtime"), "/plugin/runtime")
 	if err != nil {
 		return nil, err
@@ -240,7 +251,13 @@ func (c *Container) createArgs(imageID, leasePath string) ([]string, error) {
 	if c.options.EgressBroker.Enabled {
 		// The socket is the only broker entry point. The container keeps
 		// --network none and receives no host credentials or arbitrary proxy URL.
-		args = append(args, "--mount", brokerMount, "--env", "SUB2API_PLUGIN_EGRESS_BROKER_SOCKET="+EgressBrokerContainerSocket)
+		identity := c.options.EgressBrokerIdentity
+		args = append(args, "--mount", brokerMount,
+			"--env", "SUB2API_PLUGIN_EGRESS_BROKER_SOCKET="+EgressBrokerContainerSocket,
+			"--env", "SUB2API_PLUGIN_EGRESS_PLUGIN_KEY="+identity.PluginKey,
+			"--env", "SUB2API_PLUGIN_EGRESS_RUNTIME_INSTANCE="+identity.RuntimeInstanceID,
+			"--env", "SUB2API_PLUGIN_EGRESS_SCOPE_DIGEST="+identity.BindingScopeDigest,
+			"--env", "SUB2API_PLUGIN_EGRESS_OWNER_TOKEN="+identity.OwnerToken)
 	}
 	allowed := map[string]bool{"SUB2API_PLUGIN_MAGIC_COOKIE": true, "PLUGIN_PROTOCOL_VERSIONS": true, "PLUGIN_CLIENT_CERT": true,
 		"PLUGIN_MULTIPLEX_GRPC": true, "PLUGIN_MIN_PORT": true, "PLUGIN_MAX_PORT": true}
