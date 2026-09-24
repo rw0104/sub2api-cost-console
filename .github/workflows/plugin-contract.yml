@@ -47,3 +47,24 @@ jobs:
           -count=1
       - name: Run sandbox command contract tests
         run: go test ./internal/pluginruntime -run 'TestContainer|Test.*Sandbox' -count=1
+
+  race:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Install CGO toolchain
+        run: sudo apt-get update && sudo apt-get install --yes gcc
+        working-directory: .
+      - name: Run plugin host race checks
+        env:
+          CGO_ENABLED: '1'
+        run: >-
+          go test -race ./internal/service ./internal/pluginruntime ./internal/repository
+          -run 'Test(Plugin|EgressBroker|DrainController)' -count=1
