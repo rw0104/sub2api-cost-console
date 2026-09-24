@@ -30,10 +30,10 @@ type EgressBrokerOptions struct {
 	RequireTLS     bool
 }
 
-// EgressBroker is the host-side authorization boundary for a future HTTP/SSE
-// broker. Implementations must validate the account and target before opening
-// a stream and must return a stable denial code. No implementation in this
-// release is installed by default.
+// EgressBroker is the host-side authorization boundary for the HTTP/SSE
+// broker handler. Implementations must validate the account and target before
+// opening a stream and must return a stable denial code. No service wiring is
+// installed by default, so an absent authorizer remains fail-closed.
 type EgressBroker interface {
 	Authorize(context.Context, EgressRequest) (EgressDecision, error)
 }

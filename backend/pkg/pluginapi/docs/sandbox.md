@@ -56,7 +56,9 @@ plugins:
 
 控制路径为：宿主本机受 TLS 保护的 gRPC 连接 → Docker exec 标准输入/输出桥接 → 容器 Unix socket → 插件。此路径使插件在没有网络接口的条件下保持 RPC 通信。
 
-受控出站的协议边界名为 `sub2api.plugin.egress.v1`。配置中的 `egress_broker` 只允许宿主挂载一个明确的 Unix socket，并限制 TLS scheme 和完整域名 allowlist；它不会把 `HTTP_PROXY`、Docker socket、宿主网络或任意目标地址传入容器。容器启动前必须能看到该 socket，否则直接拒绝启动。当前发布版本尚未提供 broker 服务端、HTTP CONNECT 或 SSE 数据面，因此带 `network.outbound` 的保护传输仍会明确失败关闭；不能通过打开该配置绕过此限制。
+受控出站的协议边界名为 `sub2api.plugin.egress.v1`。配置中的 `egress_broker` 只允许宿主挂载一个明确的 Unix socket，并限制 TLS scheme 和完整域名 allowlist；它不会把 `HTTP_PROXY`、Docker socket、宿主网络或任意目标地址传入容器。容器启动前必须能看到该 socket，否则直接拒绝启动。
+
+`backend/internal/pluginruntime` 现提供经过单元测试的 broker Handler：仅接受带完整 account/request/correlation 元数据的 `CONNECT host:443` 或 `GET /sse`，SSE 使用宿主 TLS 校验、禁止重定向并限制 `text/event-stream` 大小；CONNECT 只允许 TLS record 透传到 allowlist 的 443 端口，证书验证仍由插件的 TLS 客户端完成并在后续接入时审计。Handler 仍未接入宿主 service 的 Unix listener 和容器启动流程，因此当前发布版本的保护传输继续 fail closed；不能通过打开配置绕过此限制。
 
 资源和网络实现可对照 Docker 的 [资源约束](https://docs.docker.com/engine/containers/resource_constraints/) 与 [none 网络](https://docs.docker.com/engine/network/drivers/none/) 文档。实际限制以本项目下述运行测试为证据。
 
