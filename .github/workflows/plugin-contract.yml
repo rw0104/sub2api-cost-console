@@ -1,0 +1,49 @@
+name: Plugin host contract
+
+on:
+  pull_request:
+    paths:
+      - "backend/internal/service/plugin_*.go"
+      - "backend/internal/repository/plugin_*.go"
+      - "backend/internal/pluginruntime/**"
+      - "backend/pkg/pluginapi/**"
+      - "backend/migrations/24*.sql"
+      - "backend/migrations/*plugins*"
+      - "release/**"
+      - ".github/workflows/plugin-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/internal/service/plugin_*.go"
+      - "backend/internal/repository/plugin_*.go"
+      - "backend/internal/pluginruntime/**"
+      - "backend/pkg/pluginapi/**"
+      - "backend/migrations/24*.sql"
+      - "backend/migrations/*plugins*"
+      - "release/**"
+      - ".github/workflows/plugin-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Compile all host packages
+        run: go test ./... -run '^$'
+      - name: Run plugin contract and lifecycle tests
+        run: >-
+          go test ./internal/service ./internal/repository ./migrations
+          -run 'Test(Plugin|DrainController|Canonical|RequestLogger|Migration)'
+          -count=1
+      - name: Run sandbox command contract tests
+        run: go test ./internal/pluginruntime -run 'TestContainer|Test.*Sandbox' -count=1
