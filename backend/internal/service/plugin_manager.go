@@ -613,7 +613,7 @@ func verifyLocalPluginBinary(installation *PluginInstallation, root string, targ
 	return nil
 }
 
-func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested bool, rolloutPercent int) (*PluginInstallation, error) {
+func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested bool, rolloutPercent int) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	if rolloutPercent < 0 || rolloutPercent > 100 {
@@ -649,6 +649,16 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	if err != nil {
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.enable", installation.Revision)
+	if err != nil {
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
 	originalBindings := append([]PluginBinding(nil), installation.Bindings...)
 	for index := range installation.Bindings {
 		installation.Bindings[index].Enabled = true
@@ -657,6 +667,7 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	if err := m.repo.BeginEnable(ctx, id, installation.BinarySHA256, installation.State); err != nil {
 		return nil, err
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	runtime, err := m.prepareRuntime(ctx, installation, true)
 	if err != nil {
 		stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -679,13 +690,22 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 		cancel()
 		return nil, errors.Join(err, stateErr)
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	m.mu.Lock()
 	m.publishRuntimeLocked(installation, runtime)
 	m.mu.Unlock()
-	result, err := m.repo.GetByID(ctx, id)
+	op.TargetRevision = op.ExpectedRevision + 1
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "enabled", nil)
+	result, err = m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if result.Revision > op.ExpectedRevision {
+		op.TargetRevision = result.Revision
+		m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "enabled", nil)
+	}
+	result.OperationID = op.ID
 	result.Compatibility = compatibility
 	result.RuntimeHealthy = true
 	result.RuntimeIsolation = runtime.isolation
@@ -694,7 +714,7 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	return result, nil
 }
 
-func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallation, error) {
+func (m *PluginManager) Disable(ctx context.Context, id int64) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	m.mu.Lock()
@@ -703,6 +723,17 @@ func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallat
 		m.mu.Unlock()
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.disable", installation.Revision)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
 	for index := range installation.Bindings {
 		installation.Bindings[index].Enabled = false
 	}
@@ -712,13 +743,26 @@ func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallat
 	}
 	runtime := m.removeRuntimeLocked(id)
 	m.mu.Unlock()
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	if runtime != nil {
 		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
-	return m.Get(ctx, id)
+	op.TargetRevision = op.ExpectedRevision + 1
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "disabled", nil)
+	result, err = m.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if result.Revision > op.ExpectedRevision {
+		op.TargetRevision = result.Revision
+		m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "disabled", nil)
+	}
+	result.OperationID = op.ID
+	return result, nil
 }
 
-func (m *PluginManager) Delete(ctx context.Context, id int64) error {
+func (m *PluginManager) Delete(ctx context.Context, id int64) (err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	m.mu.Lock()
@@ -731,6 +775,18 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 		m.mu.Unlock()
 		return errors.New("请先停用插件，再执行卸载")
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.delete", installation.Revision)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	if err := m.repo.Delete(ctx, id, installation.BinarySHA256); err != nil {
 		m.mu.Unlock()
 		return err
@@ -739,6 +795,7 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 	local := m.localInstallations[id]
 	delete(m.localInstallations, id)
 	m.mu.Unlock()
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	if runtime != nil {
 		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
@@ -746,6 +803,11 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 	if local != nil && (local.InstallPath != installation.InstallPath || local.ArtifactPath != installation.ArtifactPath) {
 		cleanupErr = errors.Join(cleanupErr, m.cleanupInstallationFiles(local))
 	}
+	if cleanupErr != nil {
+		return cleanupErr
+	}
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "deleted", nil)
 	return cleanupErr
 }
 

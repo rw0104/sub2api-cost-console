@@ -84,13 +84,24 @@ func (m *PluginManager) Upgrade(ctx context.Context, id int64, reader io.Reader,
 	return m.UpgradeWithApproval(ctx, id, reader, installedBy, acceptUntested, nil)
 }
 
-func (m *PluginManager) UpgradeWithApproval(ctx context.Context, id int64, reader io.Reader, installedBy *int64, acceptUntested bool, approval *PluginPublisherApproval) (*PluginInstallation, error) {
+func (m *PluginManager) UpgradeWithApproval(ctx context.Context, id int64, reader io.Reader, installedBy *int64, acceptUntested bool, approval *PluginPublisherApproval) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	current, err := m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "version.upgrade", current.Revision)
+	if err != nil {
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	candidate, err := m.installer.InstallWithApproval(ctx, reader, installedBy, approval)
 	if err != nil {
 		return nil, err
@@ -102,15 +113,16 @@ func (m *PluginManager) UpgradeWithApproval(ctx context.Context, id int64, reade
 			_ = m.cleanupInstallationFiles(candidate)
 		}
 	}()
-	result, err := m.replaceVersion(ctx, current, candidate, acceptUntested)
+	result, err = m.replaceVersionWithOperation(ctx, current, candidate, acceptUntested, op)
 	if err != nil {
 		return nil, err
 	}
 	committed = true
+	operationCommitted = true
 	return result, nil
 }
 
-func (m *PluginManager) Rollback(ctx context.Context, id, versionID int64, acceptUntested bool) (*PluginInstallation, error) {
+func (m *PluginManager) Rollback(ctx context.Context, id, versionID int64, acceptUntested bool) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	repo, ok := m.repo.(PluginVersionRepository)
@@ -121,6 +133,17 @@ func (m *PluginManager) Rollback(ctx context.Context, id, versionID int64, accep
 	if err != nil {
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "version.rollback", current.Revision)
+	if err != nil {
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	snapshot, err := repo.GetVersion(ctx, id, versionID)
 	if err != nil {
 		return nil, fmt.Errorf("读取回滚版本: %w", err)
@@ -140,15 +163,34 @@ func (m *PluginManager) Rollback(ctx context.Context, id, versionID int64, accep
 	}
 	// Rollback restores the previous version's validated encrypted configuration.
 	candidate.ConfigEncrypted = snapshot.ConfigEncrypted
-	result, err := m.replaceVersion(ctx, current, candidate, acceptUntested)
+	result, err = m.replaceVersionWithOperation(ctx, current, candidate, acceptUntested, op)
 	if err != nil {
 		return nil, err
 	}
 	committed = true
+	operationCommitted = true
 	return result, nil
 }
 
-func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *PluginInstallation, acceptUntested bool) (*PluginInstallation, error) {
+func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *PluginInstallation, acceptUntested bool) (result *PluginInstallation, err error) {
+	op, err := m.beginPluginOperation(ctx, current.ID, "version.replace", current.Revision)
+	if err != nil {
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
+	result, err = m.replaceVersionWithOperation(ctx, current, candidate, acceptUntested, op)
+	if err == nil {
+		operationCommitted = true
+	}
+	return result, err
+}
+
+func (m *PluginManager) replaceVersionWithOperation(ctx context.Context, current, candidate *PluginInstallation, acceptUntested bool, op *PluginOperation) (result *PluginInstallation, err error) {
 	repo, ok := m.repo.(PluginVersionRepository)
 	if !ok {
 		return nil, errors.New("插件版本存储不可用")
@@ -176,6 +218,7 @@ func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *
 	if candidate.BinarySHA256 == current.BinarySHA256 && candidate.Version == current.Version {
 		return nil, errors.New("目标包已是当前运行版本")
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	candidate.ID = current.ID
 	candidate.State = PluginStateDisabled
 	candidate.Bindings = append([]PluginBinding(nil), current.Bindings...)
@@ -213,6 +256,7 @@ func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *
 	if err != nil {
 		return nil, err
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	local := mergeLocalInstallation(candidate, replaced)
 	m.mu.Lock()
 	m.localInstallations[current.ID] = local
@@ -231,5 +275,10 @@ func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *
 	if keep {
 		replaced.RuntimeMessage = "目标版本已通过健康检查并接管新请求"
 	}
+	replaced.OperationID = op.ID
+	if replaced.Revision > op.ExpectedRevision {
+		op.TargetRevision = replaced.Revision
+	}
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "replaced", nil)
 	return replaced, nil
 }
