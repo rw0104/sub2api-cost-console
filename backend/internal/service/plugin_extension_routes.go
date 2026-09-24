@@ -218,7 +218,7 @@ func (m *PluginManager) publishInstallationUnavailable(i *PluginInstallation, me
 	if i.Manifest.SchemaVersion == 2 {
 		m.publishExtensionRoutesLocked(i, nil, message)
 	} else {
-		m.route.Store(&pluginRoute{pluginID: i.ID, rolloutPercent: bindingRollout(i.Bindings), unavailable: message})
+		m.publishLegacyRouteLocked(i, nil, message)
 	}
 	m.mu.Unlock()
 	if runtime != nil {

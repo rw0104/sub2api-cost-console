@@ -130,11 +130,12 @@ type PluginConfig struct {
 // PluginSandboxConfig applies only to v2 hooks. Container mode fails closed if
 // its local Docker image/runtime is unavailable; it never falls back to process.
 type PluginSandboxConfig struct {
-	Mode      string `mapstructure:"mode"`
-	Image     string `mapstructure:"image"`
-	MemoryMB  int    `mapstructure:"memory_mb"`
-	CPUMilli  int    `mapstructure:"cpu_milli"`
-	PidsLimit int    `mapstructure:"pids_limit"`
+	Mode         string                          `mapstructure:"mode"`
+	Image        string                          `mapstructure:"image"`
+	MemoryMB     int                             `mapstructure:"memory_mb"`
+	CPUMilli     int                             `mapstructure:"cpu_milli"`
+	PidsLimit    int                             `mapstructure:"pids_limit"`
+	EgressBroker PluginSandboxEgressBrokerConfig `mapstructure:"egress_broker"`
 }
 
 type LogConfig struct {
@@ -2373,6 +2374,11 @@ func setDefaults() {
 	viper.SetDefault("plugins.v2_sandbox.memory_mb", 256)
 	viper.SetDefault("plugins.v2_sandbox.cpu_milli", 1000)
 	viper.SetDefault("plugins.v2_sandbox.pids_limit", 64)
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.enabled", false)
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.socket_path", "")
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.allowed_hosts", []string{})
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.allowed_schemes", []string{})
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.require_tls", true)
 
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")

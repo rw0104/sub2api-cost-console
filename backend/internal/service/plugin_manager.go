@@ -40,6 +40,11 @@ type pluginRoute struct {
 	runtime        *pluginRuntime
 	rolloutPercent int
 	unavailable    string
+	binding        PluginBinding
+}
+
+type legacyRouteTable struct {
+	routes []*pluginRoute
 }
 
 // PluginManager 管理插件安装、配置、进程生命周期和 OpenAI OAuth 能力绑定。
@@ -64,6 +69,7 @@ type PluginManager struct {
 	reconcileCancel    context.CancelFunc
 	reconcileDone      chan struct{}
 	route              atomic.Pointer[pluginRoute]
+	legacyRoutes       atomic.Pointer[legacyRouteTable]
 	extensions         atomic.Pointer[extensionRouteTable]
 	retiring           sync.WaitGroup
 	retired            map[*pluginRuntime]struct{}
@@ -148,6 +154,7 @@ func (m *PluginManager) Stop() {
 	}
 	m.runtimes = make(map[int64]*pluginRuntime)
 	m.route.Store(nil)
+	m.legacyRoutes.Store(nil)
 	m.extensions.Store(nil)
 	m.started = false
 	m.mu.Unlock()
@@ -434,10 +441,8 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 			}
 		}
 	}
-	// Remove unavailable routes too; these have no process in runtimes.
-	if route := m.route.Load(); route != nil && !desired[route.pluginID] {
-		m.route.Store(nil)
-	}
+	// Remove unavailable legacy routes too; these have no process in runtimes.
+	m.pruneLegacyRoutesLocked(desired)
 	m.pruneExtensionRoutesLocked(desired)
 	m.mu.Unlock()
 	drainPluginRuntimes(ctx, stale, pluginDrainTimeout)
@@ -467,7 +472,10 @@ func (m *PluginManager) publishUnavailableRoute(pluginID int64, rollout int, mes
 		stale = append(stale, runtime)
 		delete(m.runtimes, id)
 	}
-	m.route.Store(&pluginRoute{pluginID: pluginID, rolloutPercent: rollout, unavailable: message})
+	unavailable := &pluginRoute{pluginID: pluginID, rolloutPercent: rollout, unavailable: message,
+		binding: PluginBinding{Capability: PluginCapabilityOpenAIOAuthOutbound, Platform: PlatformOpenAI, AccountType: AccountTypeOAuth, Enabled: true, RolloutPercent: rollout}}
+	m.legacyRoutes.Store(&legacyRouteTable{routes: []*pluginRoute{unavailable}})
+	m.route.Store(unavailable)
 	m.mu.Unlock()
 	drainPluginRuntimes(context.Background(), stale, pluginDrainTimeout)
 }
@@ -614,9 +622,6 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	installation, err := m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
-	}
-	if active := m.route.Load(); installation.Manifest.SchemaVersion == 1 && active != nil && active.pluginID != id {
-		return nil, errors.New("OpenAI OAuth 出站能力已有启用插件，请先停用当前插件")
 	}
 	if installation.Manifest.SchemaVersion == 1 && rolloutPercent == 0 {
 		return nil, errors.New("v1 传输插件灰度比例必须在 1 到 100 之间")
@@ -1323,7 +1328,7 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 	if !m.ShouldRouteOpenAIOAuth(account) {
 		return nil, false, nil
 	}
-	route := m.route.Load()
+	route := m.selectLegacyRoute(ctx, account)
 	if route == nil {
 		return nil, false, nil
 	}
@@ -1362,12 +1367,24 @@ func (m *PluginManager) ShouldRouteOpenAIOAuth(account *Account) bool {
 	if m.hasProtectionTransport(account) {
 		return true
 	}
-	route := m.route.Load()
-	return route != nil && route.rolloutPercent > 0 && int(stablePluginBucket(account.ID)) < route.rolloutPercent
+	route := m.selectLegacyRoute(context.Background(), account)
+	return route != nil
 }
 
 func (m *PluginManager) markRuntimeUnavailable(failedRoute *pluginRoute, message string) error {
 	m.mu.Lock()
+	if failedRoute == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	if m.markLegacyRouteUnavailableLocked(failedRoute, message) {
+		if failedRoute.runtime != nil {
+			failedRoute.runtime.kill()
+		}
+		delete(m.runtimes, failedRoute.pluginID)
+		m.mu.Unlock()
+		return nil
+	}
 	current := m.route.Load()
 	if current != failedRoute {
 		m.mu.Unlock()
@@ -1377,11 +1394,10 @@ func (m *PluginManager) markRuntimeUnavailable(failedRoute *pluginRoute, message
 		failedRoute.runtime.kill()
 	}
 	delete(m.runtimes, failedRoute.pluginID)
-	m.route.Store(&pluginRoute{
-		pluginID:       failedRoute.pluginID,
-		rolloutPercent: failedRoute.rolloutPercent,
-		unavailable:    message,
-	})
+	unavailable := *failedRoute
+	unavailable.runtime = nil
+	unavailable.unavailable = message
+	m.route.Store(&unavailable)
 	m.mu.Unlock()
 	return nil
 }
@@ -1447,11 +1463,7 @@ func (m *PluginManager) publishRuntimeLocked(installation *PluginInstallation, r
 		m.publishExtensionRoutesLocked(installation, runtime, "")
 		return
 	}
-	m.route.Store(&pluginRoute{
-		pluginID:       installation.ID,
-		runtime:        runtime,
-		rolloutPercent: bindingRollout(installation.Bindings),
-	})
+	m.publishLegacyRouteLocked(installation, runtime, "")
 }
 
 func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInstallation) (*pluginRuntime, error) {
@@ -1579,9 +1591,7 @@ func pluginDeclaresOpenAIOAuthCapability(manifest PluginManifest) bool {
 func (m *PluginManager) removeRuntimeLocked(id int64) *pluginRuntime {
 	runtime := m.runtimes[id]
 	delete(m.runtimes, id)
-	if route := m.route.Load(); route != nil && route.pluginID == id {
-		m.route.Store(nil)
-	}
+	m.removeLegacyRouteLocked(id)
 	m.removeExtensionRoutesLocked(id)
 	return runtime
 }

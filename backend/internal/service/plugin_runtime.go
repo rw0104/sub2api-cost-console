@@ -71,10 +71,19 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
 	}
-	if installation.Manifest.SchemaVersion == 2 && sandbox.WithDefaults().Mode == "container" {
+	if installation.Manifest.SchemaVersion == 2 {
+		sandbox = sandbox.WithDefaults()
+		if err := sandbox.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	if installation.Manifest.SchemaVersion == 2 && sandbox.Mode == "container" {
 		for _, capability := range installation.Manifest.Capabilities {
 			if capability.ID == pluginv2.CapabilityProtectionTransport {
-				return nil, errors.New("账号保护传输需要 process 模式；无网络容器不支持出站连接")
+				if !sandbox.EgressBroker.Enabled {
+					return nil, errors.New("账号保护传输需要配置 egress broker；网络受限容器默认拒绝出站连接")
+				}
+				return nil, errors.New("sandbox egress broker data plane is not implemented; refusing to start network capability")
 			}
 		}
 	}
@@ -105,10 +114,6 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 	}
 	isolation := "process"
 	if installation.Manifest.SchemaVersion == 2 {
-		if err := sandbox.Validate(); err != nil {
-			return nil, err
-		}
-		sandbox = sandbox.WithDefaults()
 		clientConfig.AutoMTLS = true
 		clientConfig.GRPCBrokerMultiplex = hasHostPermissions(installation.Manifest)
 		if sandbox.Mode == "container" {
@@ -119,7 +124,10 @@ func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *Plu
 			clientConfig.RunnerFunc = func(_ hclog.Logger, spec *exec.Cmd, workDir string) (runner.Runner, error) {
 				return pluginruntime.NewContainer(pluginruntime.ContainerOptions{BinaryPath: installation.BinaryPath,
 					BinarySHA256: installation.BinarySHA256, WorkDir: workDir, Image: sandbox.Image,
-					MemoryMB: sandbox.MemoryMB, CPUMilli: sandbox.CPUMilli, PidsLimit: sandbox.PidsLimit, Env: spec.Env})
+					MemoryMB: sandbox.MemoryMB, CPUMilli: sandbox.CPUMilli, PidsLimit: sandbox.PidsLimit, Env: spec.Env,
+					EgressBroker: pluginruntime.EgressBrokerOptions{Enabled: sandbox.EgressBroker.Enabled,
+						SocketPath: sandbox.EgressBroker.SocketPath, AllowedHosts: append([]string(nil), sandbox.EgressBroker.AllowedHosts...),
+						AllowedSchemes: append([]string(nil), sandbox.EgressBroker.AllowedSchemes...), RequireTLS: sandbox.EgressBroker.RequireTLS}})
 			}
 		}
 	}

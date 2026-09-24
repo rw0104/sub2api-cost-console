@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -77,6 +78,50 @@ func TestPluginManagerRoutingSelectsOnlyEligibleOpenAIOAuthAccounts(t *testing.T
 	assert.False(t, manager.ShouldRouteOpenAIOAuth(&Account{ID: 10, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}))
 	assert.False(t, manager.ShouldRouteOpenAIOAuth(&Account{ID: 10, Platform: PlatformGrok, Type: AccountTypeOAuth}))
 	assert.False(t, manager.ShouldRouteOpenAIOAuth(nil))
+}
+
+func TestLegacyRouteTableSelectsByPriorityAndScope(t *testing.T) {
+	manager := &PluginManager{runtimes: map[int64]*pluginRuntime{}}
+	add := func(id int64, priority int, accountIDs, userIDs []int64) {
+		installation := &PluginInstallation{ID: id, Bindings: []PluginBinding{{Capability: PluginCapabilityOpenAIOAuthOutbound,
+			Platform: PlatformOpenAI, AccountType: AccountTypeOAuth, Enabled: true, RolloutPercent: 100,
+			Priority: priority, AccountIDs: accountIDs, UserIDs: userIDs}}}
+		runtime := &pluginRuntime{installation: installation, instanceID: fmt.Sprintf("legacy-%d", id), done: make(chan struct{})}
+		manager.publishRuntimeLocked(installation, runtime)
+	}
+	add(1, 10, []int64{7}, nil)
+	add(2, 20, nil, []int64{42})
+	account := &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	route := manager.selectLegacyRoute(WithPluginPrincipal(context.Background(), 42, 0), account)
+	require.NotNil(t, route)
+	require.EqualValues(t, 2, route.pluginID)
+	route = manager.selectLegacyRoute(context.Background(), account)
+	require.NotNil(t, route)
+	require.EqualValues(t, 1, route.pluginID)
+}
+
+func TestLegacyRouteFailurePreservesOtherCandidates(t *testing.T) {
+	manager := &PluginManager{runtimes: map[int64]*pluginRuntime{}}
+	add := func(id int64, priority int) {
+		installation := &PluginInstallation{ID: id, Bindings: []PluginBinding{{Capability: PluginCapabilityOpenAIOAuthOutbound,
+			Platform: PlatformOpenAI, AccountType: AccountTypeOAuth, Enabled: true, RolloutPercent: 100, Priority: priority}}}
+		runtime := &pluginRuntime{installation: installation, instanceID: fmt.Sprintf("legacy-%d", id), done: make(chan struct{})}
+		manager.publishRuntimeLocked(installation, runtime)
+	}
+	add(1, 20)
+	add(2, 10)
+	failed := manager.selectLegacyRoute(context.Background(), &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth})
+	require.NotNil(t, failed)
+	require.EqualValues(t, 1, failed.pluginID)
+	require.NoError(t, manager.markRuntimeUnavailable(failed, "runtime exited"))
+	table := manager.legacyRoutes.Load()
+	require.NotNil(t, table)
+	require.Len(t, table.routes, 2)
+	require.EqualValues(t, 1, table.routes[0].pluginID)
+	require.Nil(t, table.routes[0].runtime)
+	require.Equal(t, "runtime exited", table.routes[0].unavailable)
+	require.EqualValues(t, 2, table.routes[1].pluginID)
+	require.NotNil(t, table.routes[1].runtime)
 }
 
 func TestOpenAIGatewayPluginRoutingPreservesAPIKeyAndFailsClosedForOAuth(t *testing.T) {

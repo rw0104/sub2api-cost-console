@@ -34,6 +34,7 @@ type ContainerOptions struct {
 	CPUMilli     int
 	PidsLimit    int
 	Env          []string
+	EgressBroker EgressBrokerOptions
 }
 
 type Container struct {
@@ -61,6 +62,9 @@ func NewContainer(options ContainerOptions) (*Container, error) {
 	if options.MemoryMB < 64 || options.MemoryMB > 4096 || options.CPUMilli < 100 || options.CPUMilli > 4000 || options.PidsLimit < 32 || options.PidsLimit > 256 {
 		return nil, errors.New("invalid sandbox resource limits")
 	}
+	if err := options.EgressBroker.Validate(); err != nil {
+		return nil, err
+	}
 	docker, err := exec.LookPath("docker")
 	if err != nil {
 		return nil, errors.New("container isolation requires a local Docker Engine")
@@ -87,6 +91,12 @@ func (c *Container) Start(ctx context.Context) (err error) {
 	}()
 	if explicit := os.Getenv("DOCKER_HOST"); explicit != "" && !localDockerEndpoint(explicit) {
 		return errors.New("sandbox requires a local Docker endpoint")
+	}
+	if c.options.EgressBroker.Enabled {
+		info, statErr := os.Stat(c.options.EgressBroker.SocketPath)
+		if statErr != nil || info.Mode()&os.ModeSocket == 0 {
+			return errors.New("sandbox egress broker socket is unavailable; refusing to start")
+		}
 	}
 	endpoint, err := c.command(ctx, "context", "inspect", "--format", "{{json .Endpoints.docker.Host}}").Output()
 	if err != nil {
@@ -200,6 +210,9 @@ func mountArgument(source, target string) (string, error) {
 	return "type=bind,src=" + absolute + ",dst=" + target + ",readonly", nil
 }
 func (c *Container) createArgs(imageID, leasePath string) ([]string, error) {
+	if err := c.options.EgressBroker.Validate(); err != nil {
+		return nil, err
+	}
 	binaryMount, err := mountArgument(filepath.Join(c.options.WorkDir, "runtime"), "/plugin/runtime")
 	if err != nil {
 		return nil, err
@@ -207,6 +220,13 @@ func (c *Container) createArgs(imageID, leasePath string) ([]string, error) {
 	leaseMount, err := mountArgument(leasePath, "/lease")
 	if err != nil {
 		return nil, err
+	}
+	var brokerMount string
+	if c.options.EgressBroker.Enabled {
+		brokerMount, err = mountArgument(c.options.EgressBroker.SocketPath, EgressBrokerContainerSocket)
+		if err != nil {
+			return nil, err
+		}
 	}
 	memory := strconv.Itoa(c.options.MemoryMB) + "m"
 	args := []string{"create", "--pull=never", "--rm", "--name", c.name, "--label", "org.sub2api.plugin.owner=" + c.name,
@@ -217,6 +237,11 @@ func (c *Container) createArgs(imageID, leasePath string) ([]string, error) {
 		"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16777216,mode=1777",
 		"--tmpfs", "/rpc:rw,noexec,nosuid,nodev,size=1048576,mode=0700,uid=65532,gid=65532",
 		"--mount", binaryMount, "--mount", leaseMount}
+	if c.options.EgressBroker.Enabled {
+		// The socket is the only broker entry point. The container keeps
+		// --network none and receives no host credentials or arbitrary proxy URL.
+		args = append(args, "--mount", brokerMount, "--env", "SUB2API_PLUGIN_EGRESS_BROKER_SOCKET="+EgressBrokerContainerSocket)
+	}
 	allowed := map[string]bool{"SUB2API_PLUGIN_MAGIC_COOKIE": true, "PLUGIN_PROTOCOL_VERSIONS": true, "PLUGIN_CLIENT_CERT": true,
 		"PLUGIN_MULTIPLEX_GRPC": true, "PLUGIN_MIN_PORT": true, "PLUGIN_MAX_PORT": true}
 	for _, entry := range c.options.Env {

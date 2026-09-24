@@ -1,6 +1,6 @@
 # v2 容器隔离
 
-v2 请求预处理可选择 Linux 容器运行器，在 Linux/Docker 或 Windows/Docker Desktop 的 Linux 引擎上执行。普通进程模式仍是兼容默认值，**普通进程不是操作系统沙箱**。容器模式需要静态 Linux 运行时；当前不隔离 v1 出站传输插件，也不为插件开放网络。
+v2 请求预处理可选择 Linux 容器运行器，在 Linux/Docker 或 Windows/Docker Desktop 的 Linux 引擎上执行。普通进程模式仍是兼容默认值，**普通进程不是操作系统沙箱**。容器模式需要静态 Linux 运行时；当前不隔离 v1 出站传输插件，也不为插件开放任意网络。
 
 ## 准备隔离镜像
 
@@ -24,6 +24,14 @@ plugins:
     memory_mb: 256
     cpu_milli: 1000
     pids_limit: 64
+    # 受控出口的策略描述；当前版本只建立边界，不提供 HTTP/SSE broker 服务。
+    egress_broker:
+      enabled: false
+      socket_path: /run/sub2api/egress.sock
+      allowed_hosts:
+        - api.openai.com
+      allowed_schemes: [https]
+      require_tls: true
 ```
 
 重启宿主使部署配置生效，再安装包含 `linux-amd64` 或 `linux-arm64`（与宿主 Go 架构一致）运行时的 v2 包。从普通进程模式切换时，应先停用旧插件并重新安装对应运行平台的包；不能将 Windows PE 当作 Linux 运行时。
@@ -37,7 +45,7 @@ plugins:
 | 身份 | 容器内可信 PID 1 将插件降为 UID/GID 65532，清空补充组；插件有效 capabilities 为零 |
 | 文件 | 根文件系统和经过 SHA-256 复验的程序副本只读；仅挂载程序与只读租约文件，不暴露宿主目录 |
 | 临时数据 | `/tmp` 16 MiB、`/rpc` 1 MiB 的独立 tmpfs，noexec/nosuid/nodev；容器删除后丢弃 |
-| 网络 | `--network none`，只有容器回环接口；插件不能自行访问外部 Provider 或宿主服务 |
+| 网络 | 始终使用 `--network none`，只有容器回环接口；插件不能自行访问外部 Provider 或宿主服务 |
 | 环境 | 宿主和监督程序两层白名单，仅传握手、公钥证书及 HOME/TMPDIR/GOMAXPROCS |
 | 内存 | 64–4096 MiB，默认 256；swap 总额与内存相同，避免额外 swap |
 | CPU | 100–4000 milli-CPU，默认 1000（一个 CPU） |
@@ -47,6 +55,8 @@ plugins:
 只有监督程序保留切换 UID/GID 所需的两个 capabilities。插件启动前完成身份下降，不以容器 root 身份执行。宿主限制控制桥接的连接数和地址，只接受容器 `/rpc/` 下的 Unix socket。gRPC 使用自动双向 TLS；插件未获得宿主证书私钥。
 
 控制路径为：宿主本机受 TLS 保护的 gRPC 连接 → Docker exec 标准输入/输出桥接 → 容器 Unix socket → 插件。此路径使插件在没有网络接口的条件下保持 RPC 通信。
+
+受控出站的协议边界名为 `sub2api.plugin.egress.v1`。配置中的 `egress_broker` 只允许宿主挂载一个明确的 Unix socket，并限制 TLS scheme 和完整域名 allowlist；它不会把 `HTTP_PROXY`、Docker socket、宿主网络或任意目标地址传入容器。容器启动前必须能看到该 socket，否则直接拒绝启动。当前发布版本尚未提供 broker 服务端、HTTP CONNECT 或 SSE 数据面，因此带 `network.outbound` 的保护传输仍会明确失败关闭；不能通过打开该配置绕过此限制。
 
 资源和网络实现可对照 Docker 的 [资源约束](https://docs.docker.com/engine/containers/resource_constraints/) 与 [none 网络](https://docs.docker.com/engine/network/drivers/none/) 文档。实际限制以本项目下述运行测试为证据。
 
@@ -71,4 +81,4 @@ go test ./internal/pluginruntime ./internal/service -run 'TestContainerIsolation
 
 资源测试使用 64 MiB / 1000 milli-CPU / 64 pids；超额内存分配产生已核验的 Docker OOM 事件，仅终止插件，宿主测试进程继续运行。停止续租后监督进程也能自动终止插件。测试完成后没有遗留该运行器的容器或验证卷。独立 Linux 发行版、额外 LSM 策略和其他架构应在目标环境执行相同验收。
 
-容器隔离依赖宿主内核和 Docker 的安全边界，不代表插件业务逻辑可信。当前能力未授予网络或秘密代理权限；配置和请求体仍应遵守插件声明的最小授权范围。
+容器隔离依赖宿主内核和 Docker 的安全边界，不代表插件业务逻辑可信。当前能力未授予网络或秘密代理权限；配置和请求体仍应遵守插件声明的最小授权范围。完整 broker 还需要宿主按账号、目标域名、TLS 策略和 correlation ID 执行授权、审计和连接生命周期控制，完成前不扩大第三方插件发布范围。

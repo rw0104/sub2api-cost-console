@@ -25,7 +25,7 @@
 
 插件返回 `PROTECTION_DENIED` 或 `PROTECTION_BUSY` 时，宿主作为本地扩展策略错误处理，不标记为账号认证失败。插件发出真实 HTTP 请求后失败必须报告 `request_sent=true`，防止重复请求。插件不解析计费用量，宿主继续执行原有响应处理和计费。
 
-`v2_sandbox.mode=container` 的网络隔离与该能力不兼容，启动明确拒绝。process 模式仍拥有服务账号操作系统权限，安装者必须信任签名发布者。
+`v2_sandbox.mode=container` 默认没有网络，启动会要求显式的 host-owned egress broker policy；当前发布版本尚未实现 broker 的 HTTP/SSE data plane，即使配置了 Unix socket、TLS 和 host allowlist，保护传输仍会明确 fail closed。process 模式仍拥有服务账号操作系统权限，安装者必须信任签名发布者。
 
 保护策略保存时宿主读取已持久化配置作为回滚依据，插件验证并归一化新配置后应用；数据库按安装 ID、二进制 SHA-256、原配置密文执行比较更新。竞争或写入失败恢复已持久化快照。持久化快照的重放调用 Apply，不重跑策略命令或递增修订号。
 

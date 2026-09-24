@@ -57,3 +57,11 @@ func TestPluginRouteFallbackPolicyMigrationDefaultsClosed(t *testing.T) {
 	require.Contains(t, sql, "DROP CONSTRAINT IF EXISTS sub2api_plugin_bindings_fallback_policy_check")
 	require.Contains(t, sql, "CHECK (fallback_policy IN ('fail_closed', 'next_plugin', 'builtin'))")
 }
+
+func TestPluginV1RouteTableMigrationRemovesGlobalEnabledUniqueness(t *testing.T) {
+	content, err := FS.ReadFile("246_plugin_v1_route_table.sql")
+	require.NoError(t, err)
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "DROP INDEX IF EXISTS idx_sub2api_plugin_bindings_one_enabled_scope")
+	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_sub2api_plugin_bindings_enabled_scope_v2")
+}

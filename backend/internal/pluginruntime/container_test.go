@@ -58,6 +58,33 @@ func TestContainerArgumentsKeepIsolationAndFilterEnvironment(t *testing.T) {
 	require.NotContains(t, command, "--privileged")
 }
 
+func TestContainerArgumentsExposeOnlyConfiguredEgressSocket(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "egress.sock")
+	c := &Container{name: "test", options: ContainerOptions{WorkDir: t.TempDir(), MemoryMB: 256, CPUMilli: 1000, PidsLimit: 64,
+		EgressBroker: EgressBrokerOptions{Enabled: true, SocketPath: socketPath,
+			AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}}
+	args, err := c.createArgs("sha256:test", filepath.Join(c.options.WorkDir, "lease"))
+	require.NoError(t, err)
+	command := strings.Join(args, " ")
+	require.Contains(t, command, "--network none")
+	require.Contains(t, command, "--mount type=bind,src=")
+	require.Contains(t, command, EgressBrokerContainerSocket)
+	require.Contains(t, command, "SUB2API_PLUGIN_EGRESS_BROKER_SOCKET="+EgressBrokerContainerSocket)
+	require.NotContains(t, command, "--network host")
+	require.NotContains(t, command, "--env HTTP_PROXY=")
+	require.NotContains(t, command, "--env HTTPS_PROXY=")
+}
+
+func TestEgressBrokerOptionsFailClosed(t *testing.T) {
+	for _, options := range []EgressBrokerOptions{
+		{Enabled: true, SocketPath: "relative.sock", AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true},
+		{Enabled: true, SocketPath: "/run/egress.sock", AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"http"}, RequireTLS: false},
+		{Enabled: true, SocketPath: "/run/egress.sock", AllowedHosts: []string{"*"}, AllowedSchemes: []string{"https"}, RequireTLS: true},
+	} {
+		require.Error(t, options.Validate())
+	}
+}
+
 func TestContainerIsolationIntegration(t *testing.T) {
 	if os.Getenv("SUB2API_TEST_SANDBOX_CONTAINER") != "1" {
 		t.Skip("set SUB2API_TEST_SANDBOX_CONTAINER=1 after building the sandbox image")
