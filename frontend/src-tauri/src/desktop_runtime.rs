@@ -529,7 +529,17 @@ fn required_core_action(
                 (Err(_), Ok(_)) => true,
                 _ => false,
             };
-            if bundled_extension_is_newer || !integrity_valid || !capabilities_valid {
+            let same_extension = match (&current_extension, &bundled_extension) {
+                (Ok(current), Ok(bundled)) => current == bundled,
+                (Err(_), Err(_)) => true,
+                _ => false,
+            };
+            let bundled_payload_changed = same_extension && !same_core_identity(current, bundled);
+            if bundled_extension_is_newer
+                || !integrity_valid
+                || !capabilities_valid
+                || bundled_payload_changed
+            {
                 CoreCompatibilityAction::InstallBundled
             } else {
                 CoreCompatibilityAction::None
@@ -2227,7 +2237,7 @@ mod tests {
     }
 
     #[test]
-    fn compatible_active_core_does_not_prompt_for_a_different_bundled_payload() {
+    fn compatible_active_core_replaces_a_different_bundled_payload() {
         let current = CoreVersionRecord {
             extension_version: "1.0.0".into(),
             capabilities: vec!["account_cost_loss_ledger.v1".into()],
@@ -2246,6 +2256,25 @@ mod tests {
                 true,
                 &["account_cost_loss_ledger.v1".into()]
             ),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
+    fn newer_active_extension_is_not_downgraded_for_a_different_payload() {
+        let current = CoreVersionRecord {
+            extension_version: "1.1.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.8", "same-upstream", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.8", "same-upstream", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
             CoreCompatibilityAction::None
         );
     }
