@@ -366,6 +366,14 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/opencode-go-usage/settings", h.Admin.Account.GetOpenCodeGoUsageSettings)
 		accounts.PUT("/opencode-go-usage/settings", h.Admin.Account.UpdateOpenCodeGoUsageSettings)
+		// Account economics and cost-loss endpoints must be registered before
+		// the generic /:id routes below so their static segments are not treated
+		// as account IDs by the router.
+		accounts.GET("/economics/snapshot", h.Admin.Account.GetEconomicsSnapshot)
+		accounts.GET("/cost-loss-states", h.Admin.Account.ListCostLossStates)
+		accounts.POST("/:id/cost-loss/confirm", h.Admin.Account.ConfirmCostLoss)
+		accounts.POST("/cost-loss-events/:event_id/refund", h.Admin.Account.RecordCostLossRefund)
+		accounts.POST("/:id/cost-loss/reverse", h.Admin.Account.ReverseCostLoss)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)

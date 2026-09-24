@@ -47,3 +47,15 @@ func TestParseEconomicsAccountIDsRejectsInvalidValues(t *testing.T) {
 	_, err := parseEconomicsAccountIDs("42,not-an-id")
 	require.Error(t, err)
 }
+
+func TestProvideAccountHandlerInjectsEconomicsServices(t *testing.T) {
+	costLoss := service.NewAccountCostLossService(nil)
+	economics := service.NewAccountEconomicsService(nil, nil, costLoss)
+	h := ProvideAccountHandler(
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, costLoss, economics,
+	)
+
+	require.Same(t, costLoss, h.accountCostLoss)
+	require.Same(t, economics, h.accountEconomics)
+}

@@ -1,8 +1,8 @@
-# 插件开发指南 · 正式版 v0.3.8
+# 插件开发指南 · 正式版 v0.3.9
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应正式桌面 **0.3.8**、兼容内核 **0.2.8**、扩展 **1.3.3**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1` 及上游通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.8，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+> 本指南对应正式桌面 **0.3.9**、兼容内核 **0.2.8**、扩展 **1.3.3**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1` 及上游通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.8，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
 >
 > 普通进程不是 OS 沙箱；签名证明来源，不保证代码安全。process 模式只安装可信插件，需要文件、网络和资源限制时启用 v2 container 模式。不要在正式数据库上试验新插件。
 
@@ -10,10 +10,10 @@
 
 ## 0. 获取开发资料
 
-- 推荐下载 [v0.3.8 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.8/sub2api-plugin-devkit-v0.3.8.zip)，解压后先读根目录 `START_HERE.md`。
+- 推荐下载 [v0.3.9 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.9/sub2api-plugin-devkit-v0.3.9.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
-- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.8` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.9` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
 - 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
@@ -78,7 +78,7 @@ Write-Output "    publisher-demo: '$publicKey'"
 
 ### 开发环境验收
 
-1. 安装正式桌面 v0.3.8，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
+1. 安装正式桌面 v0.3.9，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
@@ -248,7 +248,7 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | 503 extension_error | fail_closed、超时、并发、熔断、进程或绑定状态不可用 |
 | 未修改请求 | 检查作用域交集、优先级、灰度、权限和白名单 |
 | 容器启动失败 | 本地镜像、Docker Linux Engine、Linux 静态二进制与架构 |
-| 找不到 Host API/能力 | 检查正式桌面 0.3.8、扩展 1.3.3，以及实际连接的宿主身份，不能只看内核 0.2.8 |
+| 找不到 Host API/能力 | 检查正式桌面 0.3.9、扩展 1.3.3，以及实际连接的宿主身份，不能只看内核 0.2.8 |
 
 ### 向别人分发自己的插件
 

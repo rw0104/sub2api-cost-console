@@ -252,6 +252,25 @@ func ProvideAccountUsageService(
 	return service
 }
 
+// ProvideAccountCostLossService constructs the account impairment ledger used
+// by both the admin API and the economics snapshot service.
+func ProvideAccountCostLossService(repo AccountCostLossRepository) *AccountCostLossService {
+	return NewAccountCostLossService(repo)
+}
+
+// ProvideAccountEconomicsService constructs and starts the factual account
+// economics sampler. AccountRepository is accepted here because it already
+// satisfies the narrower AccountEconomicsAccountReader contract.
+func ProvideAccountEconomicsService(
+	accountRepo AccountRepository,
+	repo AccountEconomicsRepository,
+	losses *AccountCostLossService,
+) *AccountEconomicsService {
+	svc := NewAccountEconomicsService(accountRepo, repo, losses)
+	svc.Start()
+	return svc
+}
+
 func ProvideAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
@@ -904,6 +923,8 @@ var ProviderSet = wire.NewSet(
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
 	ProvideAccountUsageService,
+	ProvideAccountCostLossService,
+	ProvideAccountEconomicsService,
 	ProvideAccountTestService,
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,

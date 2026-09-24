@@ -170,6 +170,41 @@ function emptyTodayStats(): WindowStats {
   return { requests: 0, tokens: 0, cost: 0, standard_cost: 0, user_cost: 0 }
 }
 
+export function rejectedReason(result: PromiseRejectedResult, fallback: string): string {
+  const reason = result.reason
+  if (reason instanceof Error && reason.message) return reason.message
+  if (!reason || typeof reason !== 'object') return fallback
+
+  const details = reason as {
+    status?: unknown
+    code?: unknown
+    message?: unknown
+    error?: unknown
+    reason?: unknown
+    response?: {
+      status?: unknown
+      data?: {
+        code?: unknown
+        message?: unknown
+        detail?: unknown
+        reason?: unknown
+      }
+    }
+  }
+  const responseData = details.response?.data
+  const message = [details.message, details.error, responseData?.message, responseData?.detail]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const status = details.status ?? details.response?.status
+  const code = details.reason ?? details.code ?? responseData?.reason ?? responseData?.code
+  const context = [
+    status != null && String(status).trim() ? `status=${String(status)}` : '',
+    code != null && String(code).trim() ? `code=${String(code)}` : '',
+  ].filter(Boolean)
+
+  if (message) return context.length ? `${message} (${context.join(', ')})` : message
+  return context.length ? `${fallback} (${context.join(', ')})` : fallback
+}
+
 export function useCostCenterData() {
   const accounts = ref<Account[]>([])
   const costLossStates = ref<AccountCostLossState[]>([])
@@ -233,11 +268,6 @@ export function useCostCenterData() {
         ? next.updatedAt
         : previous?.lastSuccessAt ?? null,
     }
-  }
-
-  function rejectedReason(result: PromiseRejectedResult, fallback: string): string {
-    const reason = result.reason
-    return reason instanceof Error && reason.message ? reason.message : fallback
   }
 
   async function loadUsageLogCompatibilityTrend(range: CostCenterRange, now = new Date()): Promise<CostTrendDataPoint[]> {

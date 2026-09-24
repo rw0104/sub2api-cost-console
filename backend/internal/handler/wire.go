@@ -94,6 +94,18 @@ func ProvideAdminHandlers(
 	}
 }
 
+// ProvideOpenAIOAuthHandler keeps the optional referral capability out of the
+// Wire graph. The handler constructor accepts it variadically for focused
+// tests, while production wiring currently has no referral handler dependency.
+func ProvideOpenAIOAuthHandler(
+	openaiOAuthService *service.OpenAIOAuthService,
+	adminService service.AdminService,
+	quotaService *service.OpenAIQuotaService,
+	rateLimitService *service.RateLimitService,
+) *admin.OpenAIOAuthHandler {
+	return admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
+}
+
 func ProvideGatewayHandler(
 	gatewayService *service.GatewayService,
 	openAIGatewayService *service.OpenAIGatewayService,
@@ -258,7 +270,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewDataManagementHandler,
 	admin.NewBackupHandler,
 	admin.NewOAuthHandler,
-	admin.NewOpenAIOAuthHandler,
+	ProvideOpenAIOAuthHandler,
 	admin.NewGeminiOAuthHandler,
 	admin.NewAntigravityOAuthHandler,
 	admin.NewGrokOAuthHandler,

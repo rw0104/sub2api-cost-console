@@ -19,6 +19,7 @@ import {
   accountUsageSource,
   filterModelAuditLogs,
   mergeRetainedAccountUsage,
+  rejectedReason,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
   trendHasAccountCost,
@@ -164,6 +165,18 @@ describe('cost center live ranges', () => {
       '7': refreshed['7'],
       '8': previous['8'],
     })
+  })
+
+  it('preserves structured API rejection context for source diagnostics', () => {
+    expect(rejectedReason({
+      status: 'rejected',
+      reason: { status: 503, code: 1001, reason: 'PRICING_CATALOG_UNAVAILABLE', message: '价格目录暂时不可用' },
+    }, '价格目录状态读取失败')).toBe('价格目录暂时不可用 (status=503, code=PRICING_CATALOG_UNAVAILABLE)')
+
+    expect(rejectedReason({
+      status: 'rejected',
+      reason: { response: { status: 429, data: { code: 'RATE_LIMITED', detail: '请求过于频繁' } } },
+    }, '请求失败')).toBe('请求过于频繁 (status=429, code=RATE_LIMITED)')
   })
 })
 
