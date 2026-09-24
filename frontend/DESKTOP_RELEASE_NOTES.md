@@ -1,4 +1,10 @@
-# Sub2API Cost Console v0.3.7
+# Sub2API Cost Console v0.3.8
+
+## v0.3.8
+
+- 修复成本控制面板价格目录 status/refresh 接口契约，保留缓存并返回稳定错误原因。
+- 宿主插件路由增加持久化 route snapshot 双写/回填，加入跨实例观测 sink、sandbox owner 边界和 Linux CGO race 门禁。
+- 插件协议 v2 默认继续使用 process 模式；容器保护传输在 Unix listener/runtime 接入完成前保持 fail-closed。
 
 ## v0.3.7 补充
 
