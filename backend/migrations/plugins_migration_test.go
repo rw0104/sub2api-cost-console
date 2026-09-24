@@ -65,3 +65,14 @@ func TestPluginV1RouteTableMigrationRemovesGlobalEnabledUniqueness(t *testing.T)
 	require.Contains(t, sql, "DROP INDEX IF EXISTS idx_sub2api_plugin_bindings_one_enabled_scope")
 	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_sub2api_plugin_bindings_enabled_scope_v2")
 }
+
+func TestPluginUnifiedRouteTableMigrationBackfillsBindings(t *testing.T) {
+	content, err := FS.ReadFile("247_plugin_route_table.sql")
+	require.NoError(t, err)
+	sql := strings.Join(strings.Fields(string(content)), " ")
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS sub2api_plugin_routes")
+	require.Contains(t, sql, "id BIGINT PRIMARY KEY REFERENCES sub2api_plugin_bindings(id) ON DELETE CASCADE")
+	require.Contains(t, sql, "INSERT INTO sub2api_plugin_routes")
+	require.Contains(t, sql, "FROM sub2api_plugin_bindings")
+	require.Contains(t, sql, "ON CONFLICT (id) DO NOTHING")
+}

@@ -279,6 +279,9 @@ type pluginBindingExecutor interface {
 }
 
 func replacePluginBindings(ctx context.Context, executor pluginBindingExecutor, pluginID int64, bindings []service.PluginBinding) error {
+	if _, err := executor.ExecContext(ctx, `DELETE FROM sub2api_plugin_routes WHERE plugin_id = $1`, pluginID); err != nil {
+		return err
+	}
 	if _, err := executor.ExecContext(ctx, `DELETE FROM sub2api_plugin_bindings WHERE plugin_id = $1`, pluginID); err != nil {
 		return err
 	}
@@ -294,7 +297,18 @@ func replacePluginBindings(ctx context.Context, executor pluginBindingExecutor, 
 			return err
 		}
 	}
-	return nil
+	_, err := executor.ExecContext(ctx, `
+		INSERT INTO sub2api_plugin_routes (
+			id, plugin_id, capability, platform, account_type, enabled, rollout_percent, priority,
+			account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy,
+			created_at, updated_at
+		)
+		SELECT id, plugin_id, capability, platform, account_type, enabled, rollout_percent, priority,
+			account_ids, user_ids, group_ids, max_concurrency, timeout_ms,
+			COALESCE(NULLIF(fallback_policy, ''), 'fail_closed'), created_at, updated_at
+		FROM sub2api_plugin_bindings WHERE plugin_id = $1
+	`, pluginID)
+	return err
 }
 
 const pluginSelectSQL = `
@@ -345,6 +359,30 @@ func pluginBindingIDsJSON(ids []int64) []byte {
 }
 
 func listPluginBindings(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
+	bindings, err := listPluginRoutes(ctx, q, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) > 0 {
+		return bindings, nil
+	}
+	return listLegacyPluginBindings(ctx, q, pluginID)
+}
+
+func listPluginRoutes(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT id, plugin_id, capability, platform, account_type, enabled,
+		       rollout_percent, created_at, updated_at, priority, account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy
+		FROM sub2api_plugin_routes WHERE plugin_id = $1 ORDER BY id
+	`, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanPluginBindingRows(rows)
+}
+
+func listLegacyPluginBindings(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT id, plugin_id, capability, platform, account_type, enabled,
 		       rollout_percent, created_at, updated_at, priority, account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy
@@ -354,6 +392,16 @@ func listPluginBindings(ctx context.Context, q pluginBindingQuerier, pluginID in
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	return scanPluginBindingRows(rows)
+}
+
+type pluginBindingRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}
+
+func scanPluginBindingRows(rows pluginBindingRows) ([]service.PluginBinding, error) {
 	bindings := make([]service.PluginBinding, 0)
 	for rows.Next() {
 		var binding service.PluginBinding
