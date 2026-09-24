@@ -46,3 +46,15 @@ ui/assets/...
 正式桌面 0.3.0 / 扩展 1.3.0 支持首次导入确认：先验证签名与所有文件哈希，再展示发布者、权限和指纹；管理员明确确认后，将发布者公钥与安装结果原子保存。后续同一发布者无需重复确认。同名公钥冲突会被拒绝，包内公钥不能覆盖已有信任。
 
 默认生产配置仍拒绝未签名包。官方 OpenAI Transport 使用固定内置公钥；`trusted_publishers` 预配置保持兼容并优先。旧包缺少 `public_key` 时，只有宿主已信任该发布者才能安装，作者应重新打包后分享给新用户。`allow_unsigned` 仅供独立开发环境调试，不能作为普通用户安装方案。
+
+## Canonical provenance sidecar
+
+正式交付还应随 `.s2plugin` 提供一个外置 `provenance.json`。它使用
+`sub2api.plugin.provenance/v1` schema，绑定插件 ID、版本、目标 runtime、完整包
+SHA-256、runtime binary SHA-256、签名 key/fingerprint、源提交、构建器版本、测试证据
+和发布时间。provenance 不放入 ZIP 内，因为包自身的 SHA-256 会形成自引用；宿主的严格
+`InspectCanonical` / `InstallCanonicalWithApproval` 入口会在解包或持久化前校验两者一致。
+
+`test_evidence[].result` 只能是 `passed` 或明确的 `skipped`；`failed`、未知字段、
+大于 1 MiB 的 sidecar、大小写不规范的摘要以及签名身份不一致都会被拒绝。旧的上传
+和安装入口保留兼容，但发布门禁应使用 canonical 入口，不能把未执行的测试伪装为通过。

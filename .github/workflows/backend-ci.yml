@@ -43,6 +43,24 @@ jobs:
         working-directory: backend
         run: make test-integration
 
+  canonical-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Check canonical package verifier formatting
+        working-directory: backend
+        shell: bash
+        run: test -z "$(gofmt -d internal/service/plugin_package_provenance.go internal/service/plugin_package_provenance_test.go)"
+      - name: Verify canonical package provenance without release secrets
+        working-directory: backend
+        run: go test ./internal/service -run '^TestCanonical' -count=1
+
   frontend:
     runs-on: ubuntu-latest
     steps:
