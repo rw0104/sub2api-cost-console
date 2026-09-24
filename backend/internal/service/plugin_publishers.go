@@ -50,6 +50,10 @@ type PluginPackageInspection struct {
 	SignatureStatus  string              `json:"signature_status"`
 	Publisher        *PluginPublisher    `json:"publisher,omitempty"`
 	RuntimeIsolation string              `json:"runtime_isolation"`
+	// CanonicalProvenance is populated only by InspectCanonical. The legacy
+	// inspection endpoint remains unchanged and accepts packages without the
+	// external provenance sidecar.
+	CanonicalProvenance *PluginPackageProvenance `json:"canonical_provenance,omitempty"`
 }
 
 func publisherFingerprint(key []byte) string {
