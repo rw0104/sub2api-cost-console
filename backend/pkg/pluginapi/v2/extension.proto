@@ -84,6 +84,8 @@ message Capability {
   int64 timeout_ms = 6;
   string failure_mode = 7;
   bool synchronous = 8;
+  uint32 major = 9;
+  uint32 minor = 10;
 }
 
 message HealthRequest {}

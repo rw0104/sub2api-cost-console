@@ -152,9 +152,7 @@ func (m *PluginManager) Stop() {
 	m.started = false
 	m.mu.Unlock()
 	m.operationMu.Unlock()
-	for _, runtime := range runtimes {
-		runtime.drain(10 * time.Second)
-	}
+	drainPluginRuntimes(context.Background(), runtimes, pluginDrainTimeout)
 	m.retiring.Wait()
 }
 
@@ -442,9 +440,7 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 	}
 	m.pruneExtensionRoutesLocked(desired)
 	m.mu.Unlock()
-	for _, runtime := range stale {
-		runtime.drain(10 * time.Second)
-	}
+	drainPluginRuntimes(ctx, stale, pluginDrainTimeout)
 	return reconcileErr
 }
 
@@ -473,9 +469,7 @@ func (m *PluginManager) publishUnavailableRoute(pluginID int64, rollout int, mes
 	}
 	m.route.Store(&pluginRoute{pluginID: pluginID, rolloutPercent: rollout, unavailable: message})
 	m.mu.Unlock()
-	for _, runtime := range stale {
-		runtime.drain(10 * time.Second)
-	}
+	drainPluginRuntimes(context.Background(), stale, pluginDrainTimeout)
 }
 
 func (m *PluginManager) ensureLocalInstallation(ctx context.Context, installation *PluginInstallation) (*PluginInstallation, error) {
@@ -714,7 +708,7 @@ func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallat
 	runtime := m.removeRuntimeLocked(id)
 	m.mu.Unlock()
 	if runtime != nil {
-		runtime.drain(10 * time.Second)
+		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
 	return m.Get(ctx, id)
 }
@@ -741,7 +735,7 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 	delete(m.localInstallations, id)
 	m.mu.Unlock()
 	if runtime != nil {
-		runtime.drain(10 * time.Second)
+		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
 	cleanupErr := m.cleanupInstallationFiles(installation)
 	if local != nil && (local.InstallPath != installation.InstallPath || local.ArtifactPath != installation.ArtifactPath) {
@@ -1424,7 +1418,7 @@ func (m *PluginManager) publishRuntimeLocked(installation *PluginInstallation, r
 		m.retiring.Add(1)
 		go func() {
 			defer m.retiring.Done()
-			old.drain(10 * time.Second)
+			drainPluginRuntimes(context.Background(), []*pluginRuntime{old}, pluginDrainTimeout)
 			m.mu.Lock()
 			delete(m.retired, old)
 			inUse := false

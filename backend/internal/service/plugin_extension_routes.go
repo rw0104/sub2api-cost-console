@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"sort"
@@ -221,7 +222,7 @@ func (m *PluginManager) publishInstallationUnavailable(i *PluginInstallation, me
 	}
 	m.mu.Unlock()
 	if runtime != nil {
-		runtime.drain(10 * time.Second)
+		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
 }
 func (m *PluginManager) publishUnavailableExtensions(message string) {

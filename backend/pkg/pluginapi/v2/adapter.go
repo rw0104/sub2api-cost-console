@@ -23,7 +23,8 @@ func capabilityToWire(c Capability) *wire.Capability {
 		permissions[i] = string(permission)
 	}
 	return &wire.Capability{Id: c.ID, Kind: string(c.Kind), Platform: c.Platform, AccountType: c.AccountType,
-		Permissions: permissions, TimeoutMs: c.TimeoutMS, FailureMode: string(c.FailureMode), Synchronous: c.Synchronous}
+		Permissions: permissions, TimeoutMs: c.TimeoutMS, FailureMode: string(c.FailureMode), Synchronous: c.Synchronous,
+		Major: c.Major, Minor: c.Minor}
 }
 
 func capabilityFromWire(c *wire.Capability) Capability {
@@ -32,7 +33,8 @@ func capabilityFromWire(c *wire.Capability) Capability {
 		permissions[i] = Permission(permission)
 	}
 	return Capability{ID: c.GetId(), Kind: CapabilityKind(c.GetKind()), Platform: c.GetPlatform(), AccountType: c.GetAccountType(),
-		Permissions: permissions, TimeoutMS: c.GetTimeoutMs(), FailureMode: FailureMode(c.GetFailureMode()), Synchronous: c.GetSynchronous()}
+		Permissions: permissions, TimeoutMS: c.GetTimeoutMs(), FailureMode: FailureMode(c.GetFailureMode()), Synchronous: c.GetSynchronous(),
+		Major: c.GetMajor(), Minor: c.GetMinor()}
 }
 
 func headersToWire(h map[string][]string) map[string]*wire.HeaderValues {

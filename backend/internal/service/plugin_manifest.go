@@ -95,6 +95,8 @@ type PluginCapability struct {
 	TimeoutMS   int64                   `json:"timeout_ms,omitempty"`
 	FailureMode pluginv2.FailureMode    `json:"failure_mode,omitempty"`
 	Synchronous bool                    `json:"synchronous,omitempty"`
+	Major       uint32                  `json:"major,omitempty"`
+	Minor       uint32                  `json:"minor,omitempty"`
 	// FallbackPolicies is an explicit manifest allow-list. A binding may
 	// choose next_plugin or builtin only when the capability declares it.
 	FallbackPolicies []PluginFallbackPolicy `json:"fallback_policies,omitempty"`
@@ -336,7 +338,7 @@ func (m PluginManifest) validateProtocol() error {
 func (c PluginCapability) ExtensionCapability() pluginv2.Capability {
 	return pluginv2.Capability{ID: c.ID, Kind: c.Kind, Platform: c.Platform, AccountType: c.AccountType,
 		Permissions: append([]pluginv2.Permission(nil), c.Permissions...), TimeoutMS: c.TimeoutMS,
-		FailureMode: c.FailureMode, Synchronous: c.Synchronous}
+		FailureMode: c.FailureMode, Synchronous: c.Synchronous, Major: c.Major, Minor: c.Minor}
 }
 
 // supportedExtensionCapability is the host registry for executable v2 hooks.
@@ -397,4 +399,19 @@ func (m PluginManifest) SortedCapabilities() []PluginCapability {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func pluginCapabilitiesCompatible(left, right []PluginCapability) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == len(right)
+	}
+	expected := make([]pluginv2.Capability, 0, len(left))
+	actual := make([]pluginv2.Capability, 0, len(right))
+	for _, capability := range left {
+		expected = append(expected, capability.ExtensionCapability())
+	}
+	for _, capability := range right {
+		actual = append(actual, capability.ExtensionCapability())
+	}
+	return pluginv2.NegotiateCapabilities(expected, actual) == nil
 }

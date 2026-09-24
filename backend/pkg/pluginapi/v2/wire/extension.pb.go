@@ -707,6 +707,8 @@ type Capability struct {
 	TimeoutMs     int64                  `protobuf:"varint,6,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	FailureMode   string                 `protobuf:"bytes,7,opt,name=failure_mode,json=failureMode,proto3" json:"failure_mode,omitempty"`
 	Synchronous   bool                   `protobuf:"varint,8,opt,name=synchronous,proto3" json:"synchronous,omitempty"`
+	Major         uint32                 `protobuf:"varint,9,opt,name=major,proto3" json:"major,omitempty"`
+	Minor         uint32                 `protobuf:"varint,10,opt,name=minor,proto3" json:"minor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -795,6 +797,20 @@ func (x *Capability) GetSynchronous() bool {
 		return x.Synchronous
 	}
 	return false
+}
+
+func (x *Capability) GetMajor() uint32 {
+	if x != nil {
+		return x.Major
+	}
+	return 0
+}
+
+func (x *Capability) GetMinor() uint32 {
+	if x != nil {
+		return x.Minor
+	}
+	return 0
 }
 
 type HealthRequest struct {
@@ -1546,7 +1562,7 @@ const file_extension_proto_rawDesc = "" +
 	"\tplugin_id\x18\x01 \x01(\tR\bpluginId\x12%\n" +
 	"\x0eplugin_version\x18\x02 \x01(\tR\rpluginVersion\x12)\n" +
 	"\x10protocol_version\x18\x03 \x01(\rR\x0fprotocolVersion\x12A\n" +
-	"\fcapabilities\x18\x04 \x03(\v2\x1d.sub2api.plugin.v2.CapabilityR\fcapabilities\"\xf5\x01\n" +
+	"\fcapabilities\x18\x04 \x03(\v2\x1d.sub2api.plugin.v2.CapabilityR\fcapabilities\"\xa1\x02\n" +
 	"\n" +
 	"Capability\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -1557,7 +1573,10 @@ const file_extension_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x06 \x01(\x03R\ttimeoutMs\x12!\n" +
 	"\ffailure_mode\x18\a \x01(\tR\vfailureMode\x12 \n" +
-	"\vsynchronous\x18\b \x01(\bR\vsynchronous\"\x0f\n" +
+	"\vsynchronous\x18\b \x01(\bR\vsynchronous\x12\x14\n" +
+	"\x05major\x18\t \x01(\rR\x05major\x12\x14\n" +
+	"\x05minor\x18\n" +
+	" \x01(\rR\x05minor\"\x0f\n" +
 	"\rHealthRequest\"D\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12\x18\n" +

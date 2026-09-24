@@ -50,7 +50,8 @@ func (m *PluginManager) canKeepRuntimeDuringReplacement(ctx context.Context, cur
 		return false
 	}
 	if current.installation.Manifest.SchemaVersion != target.Manifest.SchemaVersion ||
-		!reflect.DeepEqual(current.installation.Manifest.SortedCapabilities(), target.Manifest.SortedCapabilities()) ||
+		(current.installation.Manifest.SchemaVersion == 2 && !pluginCapabilitiesCompatible(current.installation.Manifest.Capabilities, target.Manifest.Capabilities)) ||
+		(current.installation.Manifest.SchemaVersion == 1 && !reflect.DeepEqual(current.installation.Manifest.SortedCapabilities(), target.Manifest.SortedCapabilities())) ||
 		!samePluginBindings(current.installation.Bindings, target.Bindings) {
 		return false
 	}
@@ -161,7 +162,8 @@ func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *
 	// Existing grants and binding scopes remain valid throughout a hot switch.
 	// Contract/permission changes use the disabled installation workflow.
 	if current.Manifest.SchemaVersion != candidate.Manifest.SchemaVersion ||
-		!reflect.DeepEqual(current.Manifest.SortedCapabilities(), candidate.Manifest.SortedCapabilities()) {
+		(current.Manifest.SchemaVersion == 2 && !pluginCapabilitiesCompatible(current.Manifest.Capabilities, candidate.Manifest.Capabilities)) ||
+		(current.Manifest.SchemaVersion == 1 && !reflect.DeepEqual(current.Manifest.SortedCapabilities(), candidate.Manifest.SortedCapabilities())) {
 		return nil, errors.New("热切换要求能力、权限和作用域契约保持一致；请停用后安装契约变更包")
 	}
 	compatibility := EvaluatePluginCompatibility(candidate.Manifest, m.hostInfo)

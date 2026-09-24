@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
@@ -52,8 +51,8 @@ func (r *pluginRuntime) initializeAPI(ctx context.Context, dispensed any) error 
 		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(expected, actual) {
-			return errors.New("插件能力或权限与已校验清单不一致")
+		if err := pluginv2.NegotiateCapabilities(expected, actual); err != nil {
+			return fmt.Errorf("插件能力或权限与已校验清单不一致: %w", err)
 		}
 		r.extension = api
 		for _, capability := range actual {

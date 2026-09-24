@@ -122,6 +122,24 @@ func TestNormalizeCapabilitiesDoesNotMutateCallerPermissions(t *testing.T) {
 	}
 }
 
+func TestNegotiateCapabilitiesAllowsMinorSkewButRejectsMajorAndPermissionChanges(t *testing.T) {
+	expected := []Capability{{ID: CapabilityRequestPreprocess, Kind: CapabilityKindHook, TimeoutMS: 1000, FailureMode: FailureModeClosed, Synchronous: true, Major: 1, Minor: 2, Permissions: []Permission{PermissionRequestMetadata}}}
+	minor := []Capability{{ID: CapabilityRequestPreprocess, Kind: CapabilityKindHook, TimeoutMS: 900, FailureMode: FailureModeClosed, Synchronous: true, Major: 1, Minor: 7, Permissions: []Permission{PermissionRequestMetadata}}}
+	if err := NegotiateCapabilities(expected, minor); err != nil {
+		t.Fatalf("minor capability skew should be negotiable: %v", err)
+	}
+	major := append([]Capability(nil), minor...)
+	major[0].Major = 2
+	if err := NegotiateCapabilities(expected, major); err == nil {
+		t.Fatal("major capability changes must be rejected")
+	}
+	permission := append([]Capability(nil), minor...)
+	permission[0].Permissions = []Permission{PermissionRequestMetadata, PermissionRequestBody}
+	if err := NegotiateCapabilities(expected, permission); err == nil {
+		t.Fatal("permission changes must be rejected")
+	}
+}
+
 func TestPatchRejectsHeaderInjectionAndUnmarkedBody(t *testing.T) {
 	for _, patch := range []RequestPatch{
 		{Headers: map[string][]string{"x-test": {"ok\r\nAuthorization: injected"}}},

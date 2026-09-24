@@ -73,6 +73,8 @@ type Capability struct {
 	TimeoutMS   int64          `json:"timeout_ms"`
 	FailureMode FailureMode    `json:"failure_mode"`
 	Synchronous bool           `json:"synchronous"`
+	Major       uint32         `json:"major,omitempty"`
+	Minor       uint32         `json:"minor,omitempty"`
 }
 
 func (c Capability) Validate() error {
@@ -86,6 +88,9 @@ func (c Capability) Validate() error {
 	}
 	if c.TimeoutMS < 1 || c.TimeoutMS > 120000 {
 		return fmt.Errorf("能力超时必须在 1ms 到 2m 之间: %dms", c.TimeoutMS)
+	}
+	if c.Major > 1000 || c.Minor > 1000000 {
+		return errors.New("能力版本号超出范围")
 	}
 	switch c.FailureMode {
 	case FailureModeClosed, FailureModeOpen, FailureModeAsync:
@@ -389,6 +394,59 @@ func NormalizeCapabilities(capabilities []Capability) ([]Capability, error) {
 		}
 	}
 	return cloned, nil
+}
+
+// NegotiateCapabilities compares the semantic contract while allowing minor
+// version skew for optional fields. Permissions and execution semantics remain
+// security boundaries and must match exactly; major versions must match after
+// legacy IDs are normalized.
+func NegotiateCapabilities(expected, actual []Capability) error {
+	want, err := NormalizeCapabilities(expected)
+	if err != nil {
+		return err
+	}
+	got, err := NormalizeCapabilities(actual)
+	if err != nil {
+		return err
+	}
+	if len(want) != len(got) {
+		return fmt.Errorf("能力数量不一致")
+	}
+	for i := range want {
+		left, right := want[i], got[i]
+		if left.ID != right.ID || capabilityMajor(left) != capabilityMajor(right) || left.Kind != right.Kind ||
+			left.Platform != right.Platform || left.AccountType != right.AccountType ||
+			!slicesEqual(left.Permissions, right.Permissions) || left.FailureMode != right.FailureMode ||
+			left.Synchronous != right.Synchronous || right.TimeoutMS > left.TimeoutMS {
+			return fmt.Errorf("能力契约不兼容: %s", left.ID)
+		}
+	}
+	return nil
+}
+
+func capabilityMajor(capability Capability) uint32 {
+	if capability.Major != 0 {
+		return capability.Major
+	}
+	if index := strings.LastIndex(capability.ID, ".v"); index >= 0 {
+		var major uint32
+		if _, err := fmt.Sscanf(capability.ID[index+2:], "%d", &major); err == nil && major > 0 {
+			return major
+		}
+	}
+	return 1
+}
+
+func slicesEqual[T comparable](left, right []T) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func validHeaderName(name string) bool {
