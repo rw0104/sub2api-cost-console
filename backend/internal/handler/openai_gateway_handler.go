@@ -2466,6 +2466,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
 	wsForwardModel := openAIChannelForwardModel(channelMappingWS, reqModel)
+	ctx = service.WithOpenAIForwardModel(ctx, wsForwardModel, false)
 
 	var currentUserRelease func()
 	var currentAccountRelease func()
