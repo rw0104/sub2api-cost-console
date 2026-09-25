@@ -769,6 +769,8 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 	{
 		plugins.GET("", h.Admin.Plugin.List)
 		plugins.GET("/:id", h.Admin.Plugin.Get)
+		plugins.POST("/authorize-upload", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.AuthorizeUpload)
+		plugins.POST("/inspect", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Inspect)
 		plugins.POST("/upload", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Upload)
 		plugins.POST("/:id/enable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Enable)
 		plugins.POST("/:id/disable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Disable)

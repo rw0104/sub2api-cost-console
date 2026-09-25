@@ -20,6 +20,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			return nil, err
 		}
 		request = prepared
+		// Header observation is an independent, fail-open capability. It receives
+		// only derived signals and cannot modify or deny this request.
+		s.pluginManager.ObserveOpenAIHeaderProbe(request.Context(), request, account)
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
 			return response, err
@@ -50,6 +53,7 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 			}
 			request = request.WithContext(withPluginProtectionOriginal(request.Context(), account, raw))
 		}
+		s.pluginManager.ObserveOpenAIHeaderProbe(request.Context(), request, account)
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
 			return response, err

@@ -300,6 +300,15 @@
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
               <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
+              <span
+                v-if="isOpenAIOAuthAccount(row)"
+                class="inline-flex max-w-[180px] items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-4"
+                :class="getProtectionTransportBadgeClass(row)"
+                :title="getProtectionTransportTitle(row)"
+                data-testid="account-protection-transport"
+              >
+                {{ getProtectionTransportLabel(row) }}
+              </span>
             </div>
           </template>
           <template #cell-schedulable="{ row }">
@@ -634,6 +643,135 @@ const upstreamBillingRateETag = ref<string | null>(null)
 const upstreamBillingRateRefreshing = ref(false)
 let upstreamBillingRateAbortController: AbortController | null = null
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
+
+const PROTECTION_TRANSPORT_CAPABILITY = 'openai.oauth.protection_transport.v1'
+const HEADER_PROBE_CAPABILITY = 'openai.oauth.request_header_probe.v1'
+const REQUEST_HEADER_OBSERVER_CAPABILITIES = new Set([PROTECTION_TRANSPORT_CAPABILITY, HEADER_PROBE_CAPABILITY])
+type ProtectionTransportSummary = {
+  observedLength: number | null
+  expectedLength: number | null
+  observedBlocks: number | null
+  expectedBlocks: number | null
+  phase: string
+  diagnostic: string
+  lastProbe: string
+}
+const protectionTransportByAccountId = ref<Record<string, ProtectionTransportSummary>>({})
+let protectionTransportTimer: ReturnType<typeof setInterval> | null = null
+let protectionTransportRequestSeq = 0
+let protectionTransportMounted = false
+
+const emptyProtectionTransportSummary = (): ProtectionTransportSummary => ({
+  observedLength: null,
+  expectedLength: null,
+  observedBlocks: null,
+  expectedBlocks: null,
+  phase: '',
+  diagnostic: '',
+  lastProbe: ''
+})
+
+const toSafeNumber = (value: unknown): number | null => {
+  const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN
+  return Number.isFinite(number) ? number : null
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const parseProtectionTransportStatus = (statusJson: unknown): Record<string, ProtectionTransportSummary> => {
+  if (typeof statusJson !== 'string' || !statusJson.trim()) return {}
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(statusJson)
+  } catch {
+    return {}
+  }
+  if (!isRecord(envelope)) return {}
+  const payload = isRecord(envelope.payload) ? envelope.payload : envelope
+  const coreReport = isRecord(payload.core_report)
+    ? payload.core_report
+    : isRecord(envelope.core_report)
+      ? envelope.core_report
+      : payload
+  const sessions = Array.isArray(coreReport.sessions) ? coreReport.sessions : []
+  const summaries: Record<string, ProtectionTransportSummary> = {}
+  for (const item of sessions) {
+    if (!isRecord(item)) continue
+    const accountID = item.account_id
+    if (typeof accountID !== 'number' && typeof accountID !== 'string') continue
+    const key = String(accountID).trim()
+    if (!key) continue
+    summaries[key] = {
+      observedLength: toSafeNumber(item.observed_length),
+      expectedLength: toSafeNumber(item.expected_length),
+      observedBlocks: toSafeNumber(item.observed_blocks),
+      expectedBlocks: toSafeNumber(item.expected_blocks),
+      phase: typeof item.phase === 'string' ? item.phase : '',
+      diagnostic: typeof item.diagnostic_message === 'string' && item.diagnostic_message.trim()
+        ? item.diagnostic_message
+        : typeof item.diagnostic === 'string' ? item.diagnostic : '',
+      lastProbe: typeof item.last_probe === 'string' ? item.last_probe : ''
+    }
+  }
+  return summaries
+}
+
+const isOpenAIOAuthAccount = (row: Pick<AccountListItem, 'platform' | 'type'>) => row.platform === 'openai' && row.type === 'oauth'
+const getProtectionTransportSummary = (row: Pick<AccountListItem, 'id'>): ProtectionTransportSummary => (
+  protectionTransportByAccountId.value[String(row.id)] ?? emptyProtectionTransportSummary()
+)
+const getProtectionTransportLabel = (row: Pick<AccountListItem, 'id'>): string => {
+  const summary = getProtectionTransportSummary(row)
+  if (summary.observedLength == null && !summary.phase && !summary.diagnostic) {
+    return t('admin.accounts.protectionTransport.unobserved')
+  }
+  const observed = summary.observedLength == null ? '—' : String(summary.observedLength)
+  const expected = summary.expectedLength == null ? '—' : String(summary.expectedLength)
+  const observedBlocks = summary.observedBlocks == null ? '—' : String(summary.observedBlocks)
+  const expectedBlocks = summary.expectedBlocks == null ? '—' : String(summary.expectedBlocks)
+  return t('admin.accounts.protectionTransport.format', { observed, expected, observedBlocks, expectedBlocks })
+}
+const getProtectionTransportBadgeClass = (row: Pick<AccountListItem, 'id'>): string => {
+  const summary = getProtectionTransportSummary(row)
+  if (summary.phase === 'auth_blocked' || summary.phase === 'access_paused' || summary.phase === 'rate_limited') {
+    return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-200'
+  }
+  if (summary.observedLength == null) {
+    return 'border-gray-200 bg-gray-50 text-gray-500 dark:border-dark-600 dark:bg-dark-700/60 dark:text-gray-300'
+  }
+  if (summary.phase === 'ready' || (summary.expectedBlocks != null && summary.observedBlocks === summary.expectedBlocks)) {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-200'
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-700/60 dark:bg-amber-900/30 dark:text-amber-200'
+}
+const getProtectionTransportTitle = (row: Pick<AccountListItem, 'id'>): string => {
+  const summary = getProtectionTransportSummary(row)
+  const details = [
+    summary.phase ? t('admin.accounts.protectionTransport.phase', { value: summary.phase }) : '',
+    summary.diagnostic ? t('admin.accounts.protectionTransport.diagnostic', { value: summary.diagnostic }) : '',
+    summary.lastProbe ? t('admin.accounts.protectionTransport.lastProbe', { value: formatDateTime(new Date(summary.lastProbe)) }) : t('admin.accounts.protectionTransport.unobserved')
+  ].filter(Boolean)
+  return `${t('admin.accounts.protectionTransport.title')} · ${getProtectionTransportLabel(row)}${details.length ? ` · ${details.join(' · ')}` : ''}`
+}
+
+const refreshProtectionTransportStatus = async () => {
+  const requestSeq = ++protectionTransportRequestSeq
+  try {
+    const installations = await adminAPI.plugins.list()
+    const enabled = installations.filter((installation) => installation.state === 'enabled')
+    const plugin = enabled.find((installation) => installation.manifest?.capabilities?.some(capability => capability.id === HEADER_PROBE_CAPABILITY))
+      ?? enabled.find((installation) => installation.manifest?.capabilities?.some(capability => REQUEST_HEADER_OBSERVER_CAPABILITIES.has(capability.id)))
+    if (!plugin) {
+      if (requestSeq === protectionTransportRequestSeq) protectionTransportByAccountId.value = {}
+      return
+    }
+    const status = await adminAPI.plugins.status(plugin.id)
+    const summaries = parseProtectionTransportStatus(status.status_json)
+    if (requestSeq === protectionTransportRequestSeq) protectionTransportByAccountId.value = summaries
+  } catch {
+    if (requestSeq === protectionTransportRequestSeq) protectionTransportByAccountId.value = {}
+  }
+}
 
 // Account tools dropdown
 const showAccountToolsDropdown = ref(false)
@@ -2568,6 +2706,7 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
+  protectionTransportMounted = true
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches
@@ -2607,9 +2746,23 @@ onMounted(async () => {
   } else {
     pauseAutoRefresh()
   }
+
+  await refreshProtectionTransportStatus()
+  if (!protectionTransportMounted) return
+  protectionTransportTimer = setInterval(() => {
+    refreshProtectionTransportStatus().catch(() => {
+      // The status badge intentionally stays quiet when the optional plugin is unavailable.
+    })
+  }, 15_000)
 })
 
 onUnmounted(() => {
+  protectionTransportMounted = false
+  protectionTransportRequestSeq++
+  if (protectionTransportTimer !== null) {
+    clearInterval(protectionTransportTimer)
+    protectionTransportTimer = null
+  }
   upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)

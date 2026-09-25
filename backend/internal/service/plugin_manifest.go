@@ -347,6 +347,9 @@ func supportedExtensionCapability(c PluginCapability) error {
 	if c.ID == pluginv2.CapabilityProtectionTransport {
 		return validateProtectionTransportCapability(c)
 	}
+	if c.ID == pluginv2.CapabilityRequestHeaderProbe {
+		return validateHeaderProbeCapability(c)
+	}
 	if c.ID != pluginv2.CapabilityRequestPreprocess {
 		return fmt.Errorf("宿主尚未实现能力 %s", c.ID)
 	}
@@ -377,6 +380,36 @@ func supportedExtensionCapability(c PluginCapability) error {
 	}
 	if c.TimeoutMS > 5000 {
 		return errors.New("同步请求预处理超时不能超过 5000ms")
+	}
+	return nil
+}
+
+// validateHeaderProbeCapability keeps the observer separate from both the
+// protection transport and the mutating preprocess hook. It is fail-open and
+// receives only host-derived header signals, so a detector cannot block or
+// rewrite a request even if its process is unavailable.
+func validateHeaderProbeCapability(c PluginCapability) error {
+	if err := c.ExtensionCapability().Validate(); err != nil {
+		return err
+	}
+	if c.Kind != pluginv2.CapabilityKindHook || !c.Synchronous || c.FailureMode != pluginv2.FailureModeOpen ||
+		c.Platform != PlatformOpenAI || c.AccountType != AccountTypeOAuth || c.TimeoutMS > 1000 {
+		return errors.New("请求头探测必须是 openai/oauth 同步 fail_open hook，超时不超过 1 秒")
+	}
+	metadata, observation := false, false
+	for _, permission := range c.Permissions {
+		switch permission {
+		case pluginv2.PermissionRequestMetadata:
+			metadata = true
+		case pluginv2.PermissionHeaderObservation:
+			observation = true
+		case pluginv2.PermissionHostLog, pluginv2.PermissionHostMetric, pluginv2.PermissionHostConfig:
+		default:
+			return fmt.Errorf("请求头探测不支持权限 %s", permission)
+		}
+	}
+	if !metadata || !observation {
+		return errors.New("请求头探测必须声明 request.metadata.read 和 request.header.observation.read")
 	}
 	return nil
 }

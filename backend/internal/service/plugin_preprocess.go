@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,6 +211,104 @@ func (m *PluginManager) PreprocessOpenAI(ctx context.Context, request *http.Requ
 	default:
 		return failed()
 	}
+}
+
+// ObserveOpenAIHeaderProbe sends only derived request-header signals to the
+// independent detection capability. It never gives the plugin raw header
+// values, credentials, request bodies, or a request mutation surface. Any
+// detector failure is deliberately ignored so observation cannot affect the
+// real upstream request.
+func (m *PluginManager) ObserveOpenAIHeaderProbe(ctx context.Context, request *http.Request, account *Account) {
+	if m == nil || request == nil || request.URL == nil || account == nil || request.Method != http.MethodPost {
+		return
+	}
+	path := strings.TrimSuffix(request.URL.Path, "/")
+	if !strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/chat/completions") && !strings.HasSuffix(path, "/responses/compact") {
+		return
+	}
+	evaluation := m.evaluateRoute(ctx, pluginv2.CapabilityRequestHeaderProbe, account, true)
+	route := evaluation.route
+	if route == nil || route.runtime == nil || route.runtime.extension == nil ||
+		(route.runtime.client != nil && route.runtime.client.Exited()) {
+		return
+	}
+	if err := route.calls.acquire(route.binding.EffectiveConcurrency()); err != nil {
+		return
+	}
+	callFailed := true
+	defer func() {
+		if ctx.Err() != nil {
+			route.calls.inFlight.Add(-1)
+			return
+		}
+		route.calls.finish(callFailed)
+	}()
+	if !route.runtime.beginRequest() {
+		return
+	}
+	defer route.runtime.finishRequest()
+	callCtx, cancel := context.WithTimeout(ctx, route.binding.Timeout(route.capability))
+	defer cancel()
+	requestID := make([]byte, 16)
+	if _, err := rand.Read(requestID); err != nil {
+		return
+	}
+	deadline, _ := callCtx.Deadline()
+	requestContext := buildPluginRequestContext(ctx, request, account, deadline, "SELECTED")
+	requestContext.RequestID = hex.EncodeToString(requestID)
+	requestContext.TraceID = requestContext.RequestID
+	requestContext.Headers = headerProbeSignals(request.Header)
+	input := pluginv2.PreprocessRequest{Capability: pluginv2.CapabilityRequestHeaderProbe, Context: requestContext}
+	if err := input.Validate(); err != nil {
+		return
+	}
+	started := time.Now()
+	decision, err := route.runtime.extension.Preprocess(callCtx, input)
+	if err == nil {
+		err = callCtx.Err()
+	}
+	if err == nil {
+		err = decision.Validate()
+	}
+	// The observer is never allowed to deny or modify. A plugin returning any
+	// other decision is recorded as an observation failure and ignored.
+	if err != nil || decision.Decision != pluginv2.DecisionPass {
+		slog.Debug("header_probe_ignored", "plugin_id", route.pluginID, "error", err, "decision", decision.Decision, "duration_ms", time.Since(started).Milliseconds())
+		return
+	}
+	callFailed = false
+}
+
+func headerProbeSignals(headers http.Header) map[string][]string {
+	value := headers.Get("X-Codex-Turn-State")
+	present := len(headers.Values("X-Codex-Turn-State")) > 0
+	parsed, blocks := parseHeaderProbeState(value)
+	return map[string][]string{
+		"x-sub2api-probe-state-present": {strconv.FormatBool(present)},
+		"x-sub2api-probe-state-length":  {strconv.Itoa(len(value))},
+		"x-sub2api-probe-state-parsed":  {strconv.FormatBool(parsed)},
+		"x-sub2api-probe-state-blocks":  {strconv.Itoa(blocks)},
+	}
+}
+
+func parseHeaderProbeState(value string) (bool, int) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 2048 || strings.ContainsAny(value, "\r\n\t ") {
+		return false, 0
+	}
+	core := strings.TrimRight(value, "=")
+	if len(value)-len(core) > 2 {
+		return false, 0
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(core)
+	if err != nil || len(raw) < 73 || raw[0] != 0x80 || (len(raw)-57)%16 != 0 {
+		return false, 0
+	}
+	issued := binary.BigEndian.Uint64(raw[1:9])
+	if issued < 1577836800 || issued >= 4102444800 {
+		return false, 0
+	}
+	return true, (len(raw) - 57) / 16
 }
 
 func validPluginTraceID(id string) bool {

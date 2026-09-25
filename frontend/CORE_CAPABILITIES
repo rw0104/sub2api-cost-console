@@ -2,4 +2,5 @@ account_cost_loss_ledger.v1
 account_economics_sampling.v1
 plugin_extensions.v2
 openai.oauth.protection_transport.v1
+openai.oauth.request_header_probe.v1
 plugin_publisher_trust.v1

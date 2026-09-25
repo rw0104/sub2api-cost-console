@@ -20,9 +20,13 @@ const (
 	ProtocolVersion uint32 = 2
 
 	CapabilityRequestPreprocess = "request.preprocess.v1"
-	CapabilityProviderAdapter   = "provider.adapter.v1"
-	CapabilityEventSink         = "event.sink.v1"
-	CapabilityBackgroundWorker  = "background.worker.v1"
+	// CapabilityRequestHeaderProbe is a read-only observer hook. The host sends
+	// derived header signals only; raw credentials and header values never cross
+	// the process boundary.
+	CapabilityRequestHeaderProbe = "openai.oauth.request_header_probe.v1"
+	CapabilityProviderAdapter    = "provider.adapter.v1"
+	CapabilityEventSink          = "event.sink.v1"
+	CapabilityBackgroundWorker   = "background.worker.v1"
 
 	CapabilityKindHook      CapabilityKind = "hook"
 	CapabilityKindProvider  CapabilityKind = "provider"
@@ -33,16 +37,17 @@ const (
 	FailureModeOpen   FailureMode = "fail_open"
 	FailureModeAsync  FailureMode = "async"
 
-	PermissionRequestMetadata Permission = "request.metadata.read"
-	PermissionRequestBody     Permission = "request.body.read"
-	PermissionRequestMutate   Permission = "request.mutate"
-	PermissionNetworkOutbound Permission = "network.outbound"
-	PermissionSecretBroker    Permission = "secrets.broker"
-	PermissionAccountMetadata Permission = "account.metadata.read"
-	PermissionEventPublish    Permission = "events.publish"
-	PermissionHostLog         Permission = "host.log"
-	PermissionHostMetric      Permission = "host.metric"
-	PermissionHostConfig      Permission = "host.config.read"
+	PermissionRequestMetadata   Permission = "request.metadata.read"
+	PermissionHeaderObservation Permission = "request.header.observation.read"
+	PermissionRequestBody       Permission = "request.body.read"
+	PermissionRequestMutate     Permission = "request.mutate"
+	PermissionNetworkOutbound   Permission = "network.outbound"
+	PermissionSecretBroker      Permission = "secrets.broker"
+	PermissionAccountMetadata   Permission = "account.metadata.read"
+	PermissionEventPublish      Permission = "events.publish"
+	PermissionHostLog           Permission = "host.log"
+	PermissionHostMetric        Permission = "host.metric"
+	PermissionHostConfig        Permission = "host.config.read"
 
 	DecisionPass   Decision = "pass"
 	DecisionModify Decision = "modify"
@@ -258,7 +263,7 @@ type PreprocessRequest struct {
 }
 
 func (r PreprocessRequest) Validate() error {
-	if r.Capability != CapabilityRequestPreprocess {
+	if r.Capability != CapabilityRequestPreprocess && r.Capability != CapabilityRequestHeaderProbe {
 		return fmt.Errorf("不支持的预处理能力: %q", r.Capability)
 	}
 	if err := r.Context.Validate(); err != nil {

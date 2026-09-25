@@ -119,6 +119,14 @@ export default {
         expiresAt: '过期时间',
         actions: '操作'
       },
+      protectionTransport: {
+        title: '请求头探测',
+        unobserved: '尚未观测到请求头',
+        format: '{observed}/{expected} B · {observedBlocks}/{expectedBlocks} 块',
+        phase: '阶段：{value}',
+        diagnostic: '诊断：{value}',
+        lastProbe: '最近探测：{value}'
+      },
       schedulerScore: {
         baseShort: '普通',
         stickyShort: '粘性',
