@@ -15,13 +15,18 @@ import (
 func TestHeaderProbeRequestContextIncludesTransportFields(t *testing.T) {
 	request, err := http.NewRequest(http.MethodPost, "https://api.openai.com/backend-api/codex/responses", nil)
 	require.NoError(t, err)
-	requestContext := buildPluginRequestContext(context.Background(), request, &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, time.Now().Add(time.Second), "SELECTED")
+	ctx := WithOpenAIForwardModel(context.Background(), "gpt-6-sol", false)
+	requestContext := buildPluginRequestContext(ctx, request, &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, time.Now().Add(time.Second), "SELECTED")
 	requestContext.Method = request.Method
 	requestContext.Path = request.URL.Path
 	requestContext.Host = request.URL.Hostname()
+	forwardModel, ok := openAIForwardModelFromContext(ctx)
+	require.True(t, ok)
+	requestContext.Model = forwardModel.model
 	requestContext.RequestID = "header-probe-test"
 	requestContext.TraceID = requestContext.RequestID
 	require.NoError(t, (pluginv2.PreprocessRequest{Capability: pluginv2.CapabilityRequestHeaderProbe, Context: requestContext}).Validate())
+	require.Equal(t, "gpt-6-sol", requestContext.Model)
 }
 
 func TestParseHeaderProbeStateReportsSafeShapeOnly(t *testing.T) {

@@ -260,6 +260,9 @@ func (m *PluginManager) ObserveOpenAIHeaderProbe(ctx context.Context, request *h
 	requestContext.Method = request.Method
 	requestContext.Path = request.URL.Path
 	requestContext.Host = request.URL.Hostname()
+	if forwardModel, ok := openAIForwardModelFromContext(ctx); ok {
+		requestContext.Model = strings.TrimSpace(forwardModel.model)
+	}
 	requestContext.RequestID = hex.EncodeToString(requestID)
 	requestContext.TraceID = requestContext.RequestID
 	requestContext.Headers = headerProbeSignals(request.Header)
