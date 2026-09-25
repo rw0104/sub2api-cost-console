@@ -130,6 +130,7 @@ func startPluginRuntimeWithSandboxAndHostOptions(ctx context.Context, installati
 	stdoutLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStdout, defaultPluginRuntimeLogBytes)
 	stderrLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStderr, defaultPluginRuntimeLogBytes)
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), installation.BinaryPath)
+	pluginruntime.HideCommandWindow(cmd)
 	handshake, plugins, name := pluginv1.HandshakeConfig, pluginv1.ClientPluginMap(), pluginv1.TransportPluginName
 	if installation.Manifest.SchemaVersion == 2 {
 		handshake, plugins, name = pluginv2.HandshakeConfig, pluginv2.ClientPluginMap(), pluginv2.ExtensionPluginName
