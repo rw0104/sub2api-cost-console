@@ -63,20 +63,13 @@
         </nav>
 
         <div class="cost-toolbar__actions">
-          <label class="cost-select-label">
-            <span>观察窗口</span>
-            <select v-model="range" aria-label="观察窗口">
-              <option value="today">当天</option>
-              <option value="1m">最近 1 分钟</option>
-              <option value="5m">最近 5 分钟</option>
-              <option value="30m">最近 30 分钟</option>
-              <option value="1h">最近 1 小时</option>
-              <option value="6h">最近 6 小时</option>
-              <option value="24h">最近 24 小时</option>
-              <option value="7d">最近 7 天</option>
-              <option value="30d">最近 1 个月</option>
-            </select>
-          </label>
+          <TimeRangeSelect
+            v-model="range"
+            label="观察窗口"
+            aria-label="观察窗口"
+            :options="COST_CENTER_RANGE_OPTIONS"
+            label-class="cost-select-label"
+          />
           <label class="cost-select-label cost-refresh-interval-label">
             <span>刷新周期</span>
             <select v-model.number="refreshIntervalSeconds" aria-label="自动刷新周期">
@@ -219,20 +212,13 @@
                 <p>{{ modelCostRangeLabel }} · 按真实 usage token、实际模型、渠道价格与账号费率分别核算</p>
               </div>
               <div class="cost-model-controls">
-                <label>
-                  <span>统计窗口</span>
-                  <select v-model="modelCostRange" aria-label="模型成本统计窗口">
-                    <option value="today">当天</option>
-                    <option value="1m">最近 1 分钟</option>
-                    <option value="5m">最近 5 分钟</option>
-                    <option value="30m">最近 30 分钟</option>
-                    <option value="1h">最近 1 小时</option>
-                    <option value="6h">最近 6 小时</option>
-                    <option value="24h">最近 24 小时</option>
-                    <option value="7d">最近 7 天</option>
-                    <option value="30d">最近 1 个月</option>
-                  </select>
-                </label>
+                <TimeRangeSelect
+                  v-model="modelCostRange"
+                  label="统计窗口"
+                  aria-label="模型成本统计窗口"
+                  :options="COST_CENTER_RANGE_OPTIONS"
+                  label-class="cost-model-controls__range"
+                />
                 <label>
                   <span>模型口径</span>
                   <select v-model="modelCostSource" aria-label="模型统计口径">
@@ -650,6 +636,7 @@ import {
   Trophy,
 } from '@lucide/vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import { useAppStore } from '@/stores'
 import type { Account, AccountUsageInfo, WindowStats } from '@/types'
 import type { ChannelModelPricing, ModelDefaultPricing } from '@/api/admin/channels'
@@ -682,7 +669,7 @@ import {
   useCostCenterData,
   type CostCenterRange,
 } from '@/features/cost-center/useCostCenterData'
-import { accruedWindowBounds, costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
+import { accruedWindowBounds, COST_CENTER_RANGE_OPTIONS, costTrendBucketHours as resolveCostTrendBucketHours, usageWindowBounds } from '@/features/cost-center/usageWindow'
 import { selectFinancialTrend } from '@/features/cost-center/financialTrend'
 import { hasMeasuredData, unavailableValueLabel, type DataAvailability, type DataSourceState } from '@/features/cost-center/dataState'
 import type { ModelRouteRow } from '@/features/cost-center/modelRouteAnalysis'
@@ -776,7 +763,7 @@ function openAccountPurchase() {
 }
 const panelTitle = computed(() => activePanel.value === 'overview' ? '上游资产与实时成本' : activePanel.value === 'upstreams' ? '上游运行矩阵' : activePanel.value === 'oauth' ? 'OAuth 实时成本' : activePanel.value === 'governance' ? '数据来源与历史控制' : 'API 接入中心')
 const panelDescription = computed(() => activePanel.value === 'overview' ? '评分、调度、采购与 API 产出统一视图' : activePanel.value === 'upstreams' ? '桌面级密集账号巡检与成本操作台' : activePanel.value === 'oauth' ? '号码加入即起算的号池经济模型' : activePanel.value === 'governance' ? '来源健康、时间口径、保留周期与安全维护入口' : '本地网关、Agent 配置与延迟诊断')
-const rangeLabels: Record<CostCenterRange, string> = { today: '当天', '1m': '最近 1 分钟', '5m': '最近 5 分钟', '30m': '最近 30 分钟', '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 1 个月' }
+const rangeLabels: Record<CostCenterRange, string> = Object.fromEntries(COST_CENTER_RANGE_OPTIONS.map((option) => [option.value, option.label])) as Record<CostCenterRange, string>
 const rangeLabel = computed(() => rangeLabels[range.value])
 const modelCostRangeLabel = computed(() => rangeLabels[modelCostRange.value])
 const modelCostSourceLabel = computed(() => ({
@@ -961,11 +948,11 @@ const dayElapsedHours = computed(() => {
   const elapsed = (now.value.getTime() - dayStart) / 3_600_000
   return Math.max(1 / 60, Number.isFinite(elapsed) ? elapsed : 1 / 60)
 })
-const selectedRangeHours = computed(() => ({ today: dayElapsedHours.value, '1m': 1 / 60, '5m': 5 / 60, '30m': .5, '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 })[range.value])
+const selectedRangeHours = computed(() => ({ today: dayElapsedHours.value, '1m': 1 / 60, '5m': 5 / 60, '15m': .25, '30m': .5, '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 })[range.value])
 const trendBucketHours = computed(() => resolveCostTrendBucketHours(range.value))
-const trendSmoothingPoints = computed(() => ({ today: 4, '1m': 2, '5m': 3, '30m': 5, '1h': 10, '6h': 3, '24h': 4, '7d': 3, '30d': 7 })[range.value])
-const rollingTrendLabel = computed(() => ({ today: '4 小时移动平均', '1m': '2 点移动平均', '5m': '3 分钟移动平均', '30m': '5 分钟移动平均', '1h': '10 分钟移动平均', '6h': '3 小时移动平均', '24h': '4 小时移动平均', '7d': '3 天移动平均', '30d': '7 天移动平均' })[range.value])
-const requestSmoothingPoints = computed(() => ({ today: 12, '1m': 2, '5m': 3, '30m': 5, '1h': 10, '6h': 6, '24h': 12, '7d': 6, '30d': 6 })[range.value])
+const trendSmoothingPoints = computed(() => ({ today: 4, '1m': 2, '5m': 3, '15m': 4, '30m': 5, '1h': 10, '6h': 3, '24h': 4, '7d': 3, '30d': 7 })[range.value])
+const rollingTrendLabel = computed(() => ({ today: '4 小时移动平均', '1m': '2 点移动平均', '5m': '3 分钟移动平均', '15m': '4 分钟移动平均', '30m': '5 分钟移动平均', '1h': '10 分钟移动平均', '6h': '3 小时移动平均', '24h': '4 小时移动平均', '7d': '3 天移动平均', '30d': '7 天移动平均' })[range.value])
+const requestSmoothingPoints = computed(() => ({ today: 12, '1m': 2, '5m': 3, '15m': 4, '30m': 5, '1h': 10, '6h': 6, '24h': 12, '7d': 6, '30d': 6 })[range.value])
 const windowActualOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.actual_cost)) : null)
 const windowAccountCostUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.dashboard) ? sumFiniteTrendValues(trend.value.map((point) => point.account_cost ?? point.cost)) : null)
 const windowContributionUsd = computed<number | null>(() => windowActualOutputUsd.value == null || windowAccountCostUsd.value == null ? null : windowActualOutputUsd.value - windowAccountCostUsd.value)
@@ -1282,7 +1269,13 @@ function formatUsageReset(value: string | null): string {
   if (hours < 24) return `${hours}h ${restMinutes}m 后`
   return `${Math.floor(hours / 24)}d ${hours % 24}h 后`
 }
-function formatTrendLabel(value: string): string { const date = new Date(value.includes(' ') ? value.replace(' ', 'T') : value); return Number.isFinite(date.getTime()) ? date.toLocaleString([], range.value === '7d' || range.value === '30d' ? { month: '2-digit', day: '2-digit' } : { hour: '2-digit', minute: '2-digit' }) : value }
+function formatTrendLabel(value: string): string {
+  const date = new Date(value.includes(' ') ? value.replace(' ', 'T') : value)
+  if (!Number.isFinite(date.getTime())) return value
+  if (range.value === '7d' || range.value === '30d') return date.toLocaleString([], { month: '2-digit', day: '2-digit' })
+  if (range.value === '1m' || range.value === '5m') return date.toLocaleString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return date.toLocaleString([], { hour: '2-digit', minute: '2-digit' })
+}
 function donutGradient(items: Array<{ value: number; color: string }>): string { const total = items.reduce((sum, item) => sum + Math.max(0, item.value), 0); if (!total) return 'conic-gradient(#303830 0 100%)'; let cursor = 0; const stops = items.map((item) => { const start = cursor; cursor += Math.max(0, item.value) / total * 100; return `${item.color} ${start}% ${cursor}%` }); return `conic-gradient(${stops.join(', ')})` }
 function statusRingGradient(normal: number, limited: number, errors: number): string { const total = Math.max(1, normal + limited + errors); const normalEnd = normal / total * 100; const limitedEnd = normalEnd + limited / total * 100; return `conic-gradient(#b9e55a 0 ${normalEnd}%, #9c8a54 ${normalEnd}% ${limitedEnd}%, #995c50 ${limitedEnd}% 100%)` }
 let reloadQueued = false
@@ -1489,6 +1482,7 @@ button:active { transform: translateY(1px); }
 .cost-toolbar__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; }
 .cost-select-label { display: flex; align-items: center; gap: 8px; color: var(--cost-muted); font-size: 11px; }
 .cost-select-label select { height: 36px; padding: 0 30px 0 10px; color: var(--cost-text); background: #151a15; border: 1px solid var(--cost-line-strong); }
+.cost-select-label :deep(.time-range-select .select-trigger) { height: 36px; padding: 0 30px 0 10px; color: var(--cost-text); background: #151a15; border: 1px solid var(--cost-line-strong); }
 .cost-tool-button, .cost-icon-button, .cost-primary-button { display: inline-flex; height: 36px; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; color: #a8b2aa; background: #151a15; border: 1px solid var(--cost-line-strong); font-size: 11px; }
 .cost-icon-button { width: 36px; padding: 0; }
 .cost-tool-button.active { color: var(--cost-lime); border-color: #6e8c37; }
@@ -2246,6 +2240,16 @@ button:active { transform: translateY(1px); }
 .cost-model-controls label { display: grid; min-width: 150px; gap: 5px; }
 .cost-model-controls .cost-model-controls__account { flex: 1; min-width: 250px; }
 .cost-model-controls select {
+  width: 100%;
+  height: 34px;
+  padding: 0 28px 0 9px;
+  color: #dce7dc;
+  background: #161d17;
+  border: 1px solid #3b463c;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.cost-model-controls :deep(.time-range-select .select-trigger) {
   width: 100%;
   height: 34px;
   padding: 0 28px 0 9px;

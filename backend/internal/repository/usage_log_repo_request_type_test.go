@@ -476,7 +476,7 @@ func TestUsageLogRepositoryGetUsageTrendWithFiltersRequestTypePriority(t *testin
 
 	mock.ExpectQuery("AND \\(request_type = \\$3 OR \\(request_type = 0 AND stream = TRUE AND openai_ws_mode = FALSE\\)\\)").
 		WithArgs(start, end, requestType).
-		WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost"}))
+		WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost", "account_cost"}))
 
 	trend, err := repo.GetUsageTrendWithFilters(context.Background(), start, end, "day", 0, 0, 0, 0, "", &requestType, &stream, nil)
 	require.NoError(t, err)
@@ -497,7 +497,7 @@ func TestUsageLogRepositoryGetUsageTrendWithUsageFiltersRequestedModelSource(t *
 
 	mock.ExpectQuery("AND COALESCE\\(NULLIF\\(TRIM\\(requested_model\\), ''\\), model\\) = \\$3").
 		WithArgs(start, end, "gpt-5").
-		WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost"}))
+		WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost", "account_cost"}))
 
 	trend, err := repo.GetUsageTrendWithUsageFilters(context.Background(), start, end, "day", filters)
 	require.NoError(t, err)
@@ -532,7 +532,7 @@ func TestUsageLogRepositoryUsageAggregatesFilterNativeCompactionV2(t *testing.T)
 		repo := &usageLogRepository{sql: db}
 		mock.ExpectQuery("(?s)FROM usage_logs.*AND native_compaction_v2 = \\$3").
 			WithArgs(start, end, true).
-			WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost"}))
+			WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost", "account_cost"}))
 
 		_, err := repo.GetUsageTrendWithUsageFilters(context.Background(), start, end, "day", filters)
 		require.NoError(t, err)
@@ -571,6 +571,17 @@ func TestShouldUsePreaggregatedTrendRejectsNativeCompactionV2Filter(t *testing.T
 	nativeCompactionV2 := true
 	require.True(t, shouldUsePreaggregatedTrend("day", 0, 0, 0, 0, "", nil, nil, nil, "", nil, nil))
 	require.False(t, shouldUsePreaggregatedTrend("day", 0, 0, 0, 0, "", nil, nil, nil, "", nil, &nativeCompactionV2))
+}
+
+func TestPreaggregatedWindowRequiresExactBucketBoundaries(t *testing.T) {
+	day := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	require.True(t, preaggregatedWindowAligned(day, day.Add(24*time.Hour), "day"))
+	require.False(t, preaggregatedWindowAligned(day.Add(15*time.Minute), day.Add(24*time.Hour), "day"))
+	hour := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	require.True(t, preaggregatedWindowAligned(hour, hour.Add(6*time.Hour), "hour"))
+	require.False(t, preaggregatedWindowAligned(hour.Add(1*time.Minute), hour.Add(6*time.Hour), "hour"))
+	localHour := time.Date(2026, 9, 25, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+	require.False(t, preaggregatedWindowAligned(localHour, localHour.Add(6*time.Hour), "hour"))
 }
 
 func TestUsageLogRepositoryGetModelStatsWithFiltersRequestTypePriority(t *testing.T) {

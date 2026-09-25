@@ -1984,6 +1984,7 @@ export interface TrendDataPoint {
   total_tokens: number
   cost: number // 标准计费
   actual_cost: number // 实际扣除
+  account_cost?: number // 管理端账号成本
 }
 
 export interface ModelStat {

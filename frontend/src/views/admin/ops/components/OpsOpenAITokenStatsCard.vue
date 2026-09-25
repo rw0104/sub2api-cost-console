@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { opsAPI, type OpsOpenAITokenStatsResponse, type OpsOpenAITokenStatsTimeRange } from '@/api/admin/ops'
 import { formatNumber } from '@/utils/format'
@@ -165,7 +166,7 @@ function onNextPage() {
       </h3>
       <div class="flex flex-wrap items-center gap-2">
         <div class="w-36">
-          <Select v-model="timeRange" :options="timeRangeOptions" />
+          <TimeRangeSelect v-model="timeRange" :options="timeRangeOptions" aria-label="OpenAI Token 统计时间窗口" />
         </div>
         <div class="w-36">
           <Select v-model="viewMode" :options="viewModeOptions" />

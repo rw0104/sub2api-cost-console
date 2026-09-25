@@ -256,7 +256,7 @@ func (r *usageLogRepository) GetUserUsageTrendByUserID(ctx context.Context, user
 		}
 	}()
 
-	results, err = scanTrendRows(rows)
+	results, err = scanTrendRowsWithoutAccountCost(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, 
 }
 
 func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) (results []TrendDataPoint, err error) {
-	if shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
+	if preaggregatedWindowAligned(startTime, endTime, granularity) && shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
 		aggregated, aggregatedErr := r.getUsageTrendFromAggregates(ctx, startTime, endTime, granularity)
 		if aggregatedErr == nil && len(aggregated) > 0 {
 			return aggregated, nil
@@ -297,7 +297,8 @@ func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, start
 			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
-			COALESCE(SUM(actual_cost), 0) as actual_cost
+			COALESCE(SUM(actual_cost), 0) as actual_cost,
+			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as account_cost
 		FROM usage_logs
 		WHERE created_at >= $1 AND created_at < $2
 	`, dateFormat)
@@ -352,6 +353,27 @@ func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, start
 	return results, nil
 }
 
+func preaggregatedWindowAligned(startTime, endTime time.Time, granularity string) bool {
+	if startTime.IsZero() || endTime.IsZero() || startTime.After(endTime) {
+		return false
+	}
+	// Rollups are stored in the database timezone. Explicitly use UTC-aligned
+	// bounds here; a local-offset request must use raw usage_logs so its date
+	// boundary is not silently shifted by PostgreSQL's cast to date.
+	if startTime.Format("-07:00") != "+00:00" || endTime.Format("-07:00") != "+00:00" {
+		return false
+	}
+	switch granularity {
+	case "hour":
+		return startTime.Truncate(time.Hour).Equal(startTime) && endTime.Truncate(time.Hour).Equal(endTime)
+	case "day":
+		return startTime.Hour() == 0 && startTime.Minute() == 0 && startTime.Second() == 0 && startTime.Nanosecond() == 0 &&
+			endTime.Hour() == 0 && endTime.Minute() == 0 && endTime.Second() == 0 && endTime.Nanosecond() == 0
+	default:
+		return false
+	}
+}
+
 func shouldUsePreaggregatedTrend(granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) bool {
 	if granularity != "day" && granularity != "hour" {
 		return false
@@ -386,7 +408,8 @@ func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, st
 				cache_read_tokens,
 				(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 				total_cost as cost,
-				actual_cost
+				actual_cost,
+				account_cost
 			FROM usage_dashboard_hourly
 			WHERE bucket_start >= $1 AND bucket_start < $2
 			ORDER BY bucket_start ASC
@@ -402,7 +425,8 @@ func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, st
 				cache_read_tokens,
 				(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 				total_cost as cost,
-				actual_cost
+				actual_cost,
+				account_cost
 			FROM usage_dashboard_daily
 			WHERE bucket_date >= $1::date AND bucket_date < $2::date
 			ORDER BY bucket_date ASC
@@ -755,6 +779,34 @@ func resolveModelDimensionExpressionWithAlias(modelType, alias string) string {
 }
 
 func scanTrendRows(rows *sql.Rows) ([]TrendDataPoint, error) {
+	results := make([]TrendDataPoint, 0)
+	for rows.Next() {
+		var row TrendDataPoint
+		var accountCost float64
+		if err := rows.Scan(
+			&row.Date,
+			&row.Requests,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.CacheCreationTokens,
+			&row.CacheReadTokens,
+			&row.TotalTokens,
+			&row.Cost,
+			&row.ActualCost,
+			&accountCost,
+		); err != nil {
+			return nil, err
+		}
+		row.AccountCost = &accountCost
+		results = append(results, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func scanTrendRowsWithoutAccountCost(rows *sql.Rows) ([]TrendDataPoint, error) {
 	results := make([]TrendDataPoint, 0)
 	for rows.Next() {
 		var row TrendDataPoint

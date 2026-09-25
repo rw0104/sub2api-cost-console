@@ -7,10 +7,24 @@ export interface CostTrendDataPoint extends TrendDataPoint {
   observed?: boolean
 }
 
+export const COST_CENTER_RANGE_OPTIONS = [
+  { value: 'today', label: '当天' },
+  { value: '1m', label: '最近 1 分钟' },
+  { value: '5m', label: '最近 5 分钟' },
+  { value: '15m', label: '最近 15 分钟' },
+  { value: '30m', label: '最近 30 分钟' },
+  { value: '1h', label: '最近 1 小时' },
+  { value: '6h', label: '最近 6 小时' },
+  { value: '24h', label: '最近 24 小时' },
+  { value: '7d', label: '最近 7 天' },
+  { value: '30d', label: '最近 1 个月' },
+] as const
+
 const RANGE_MILLISECONDS: Record<CostCenterRange, number> = {
   today: 24 * 60 * 60 * 1000,
   '1m': 60 * 1000,
   '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
   '30m': 30 * 60 * 1000,
   '1h': 60 * 60 * 1000,
   '6h': 6 * 60 * 60 * 1000,
@@ -23,6 +37,7 @@ const TREND_BUCKET_MILLISECONDS: Record<CostCenterRange, number> = {
   today: 15 * 60 * 1000,
   '1m': 5 * 1000,
   '5m': 15 * 1000,
+  '15m': 60 * 1000,
   '30m': 60 * 1000,
   '1h': 60 * 1000,
   '6h': 5 * 60 * 1000,

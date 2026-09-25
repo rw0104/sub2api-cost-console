@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -495,6 +496,22 @@ func TestOpenAIRefreshQuota_QueryFailureIsReported(t *testing.T) {
 	status, _ := performOpenAIQuotaRefreshRequest(t, handler)
 
 	require.Equal(t, http.StatusInternalServerError, status)
+	require.Equal(t, 1, quota.queryCalls)
+	require.Zero(t, quota.cacheCalls)
+}
+
+func TestOpenAIRefreshQuota_UpstreamAuthFailureKeeps502Boundary(t *testing.T) {
+	quota := &openAIQuotaWorkflowStub{
+		queryErr: infraerrors.New(http.StatusBadGateway, "OPENAI_QUOTA_UPSTREAM_ERROR", "upstream returned 401"),
+	}
+	handler := &OpenAIOAuthHandler{
+		adminService: &openAIResetAdminServiceStub{},
+		quotaService: quota,
+	}
+
+	status, _ := performOpenAIQuotaRefreshRequest(t, handler)
+
+	require.Equal(t, http.StatusBadGateway, status)
 	require.Equal(t, 1, quota.queryCalls)
 	require.Zero(t, quota.cacheCalls)
 }

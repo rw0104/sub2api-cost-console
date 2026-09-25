@@ -22,6 +22,7 @@ import {
   rejectedReason,
   selectExactWindowModelStats,
   snapshotMatchesRequestedWindow,
+  shouldUseUsageLogCompatibilityTrend,
   trendHasAccountCost,
   useCostCenterData,
 } from '../useCostCenterData'
@@ -81,6 +82,15 @@ describe('cost center live ranges', () => {
     })
   })
 
+  it('requests an explicit exact 15 minute window with minute buckets', () => {
+    const now = new Date('2026-08-07T08:00:00.000Z')
+    expect(buildCostCenterSnapshotQuery('15m', now)).toEqual({
+      start_time: '2026-08-07T07:45:00.000Z',
+      end_time: '2026-08-07T08:00:00.000Z',
+      granularity: 'minute',
+    })
+  })
+
   it('uses day buckets for the seven day window', () => {
     expect(buildCostCenterSnapshotQuery('7d')).toEqual({
       time_range: '7d',
@@ -123,6 +133,13 @@ describe('cost center live ranges', () => {
     expect(trendHasAccountCost([])).toBe(true)
     expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2 }] as any)).toBe(false)
     expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2, account_cost: 0.75 }] as any)).toBe(true)
+  })
+
+  it('keeps short windows on usage logs so second-level buckets are real', () => {
+    expect(shouldUseUsageLogCompatibilityTrend('1m', true, true)).toBe(true)
+    expect(shouldUseUsageLogCompatibilityTrend('5m', true, true)).toBe(true)
+    expect(shouldUseUsageLogCompatibilityTrend('1h', true, true)).toBe(false)
+    expect(shouldUseUsageLogCompatibilityTrend('1h', false, true)).toBe(true)
   })
 
   it('does not present a truncated compatibility sample as complete model cost', () => {

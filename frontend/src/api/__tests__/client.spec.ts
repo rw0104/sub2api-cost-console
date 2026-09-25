@@ -306,6 +306,35 @@ describe('API Client', () => {
 
       window.removeEventListener('admin-compliance-required', listener)
     })
+
+    it('账号配额上游认证失败使用 502 时保留管理员登录态', async () => {
+      localStorage.setItem('auth_token', 'admin-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+
+      const adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 502,
+          data: {
+            code: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+            message: 'upstream returned 401',
+          },
+        },
+        config: {
+          url: '/admin/openai/accounts/42/quota/refresh',
+          headers: { Authorization: 'Bearer admin-token' },
+        },
+        code: 'ERR_BAD_RESPONSE',
+      })
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.post('/admin/openai/accounts/42/quota/refresh')).rejects.toMatchObject({
+        status: 502,
+        code: 'OPENAI_QUOTA_UPSTREAM_ERROR',
+      })
+      expect(localStorage.getItem('auth_token')).toBe('admin-token')
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 7 }))
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+    })
   })
 
   // --- 401 Token 刷新 ---

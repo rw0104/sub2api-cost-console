@@ -4,6 +4,7 @@ import { useMediaQuery } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import Select from '@/components/common/Select.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { opsAPI, type AlertEventsQuery } from '@/api/admin/ops'
@@ -367,7 +368,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <Select :model-value="timeRange" :options="timeRangeOptions" class="w-[120px]" @change="timeRange = String($event || '24h')" />
+        <TimeRangeSelect v-model="timeRange" :options="timeRangeOptions" select-class="w-[120px]" aria-label="告警时间窗口" />
         <Select :model-value="severity" :options="severityOptions" class="w-[88px]" @change="severity = String($event || '')" />
         <Select :model-value="status" :options="statusOptions" class="w-[110px]" @change="status = String($event || '')" />
         <Select :model-value="emailSent" :options="emailSentOptions" class="w-[110px]" @change="emailSent = String($event || '')" />
@@ -651,7 +652,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
               <div class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.alertEvents.detail.historyTitle') }}</div>
               <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertEvents.detail.historyHint') }}</div>
             </div>
-            <Select :model-value="historyRange" :options="historyRangeOptions" class="w-[140px]" @change="historyRange = String($event || '7d')" />
+            <TimeRangeSelect v-model="historyRange" :options="historyRangeOptions" select-class="w-[140px]" aria-label="告警历史时间窗口" />
           </div>
 
           <div v-if="historyLoading" class="py-6 text-center text-xs text-gray-500 dark:text-gray-400">
@@ -692,4 +693,3 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
     </BaseDialog>
   </div>
 </template>
-

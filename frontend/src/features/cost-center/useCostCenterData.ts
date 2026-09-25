@@ -39,7 +39,7 @@ import {
   type CostTrendDataPoint,
 } from './usageWindow'
 
-export type CostCenterRange = 'today' | '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
+export type CostCenterRange = 'today' | '1m' | '5m' | '15m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
 
 export const DEFAULT_COST_CENTER_RANGE: CostCenterRange = '1h'
 export const DEFAULT_MODEL_COST_RANGE: CostCenterRange = '1h'
@@ -75,14 +75,14 @@ export function filterModelAuditLogs(logs: AdminUsageLog[], mismatchOnly: boolea
 }
 
 export function buildCostCenterSnapshotQuery(range: CostCenterRange, now = new Date()): {
-  time_range?: Exclude<CostCenterRange, 'today'>
+  time_range?: Exclude<CostCenterRange, 'today' | '15m'>
   start_time?: string
   end_time?: string
   granularity: 'day' | 'hour' | 'minute'
 } {
-  if (range === 'today') {
-    const { start, end } = accruedWindowBounds('today', now)
-    return { start_time: start.toISOString(), end_time: end.toISOString(), granularity: 'hour' }
+  if (range === 'today' || range === '15m') {
+    const { start, end } = accruedWindowBounds(range, now)
+    return { start_time: start.toISOString(), end_time: end.toISOString(), granularity: range === '15m' ? 'minute' : 'hour' }
   }
   return {
     time_range: range,
@@ -112,6 +112,16 @@ export function snapshotMatchesRequestedWindow(
 
 export function trendHasAccountCost(points: CostTrendDataPoint[]): boolean {
   return points.length === 0 || points.every((point) => point.account_cost != null)
+}
+
+export function shouldUseUsageLogCompatibilityTrend(
+  range: CostCenterRange,
+  dashboardWindowIsExact: boolean,
+  dashboardHasAccountCost: boolean,
+): boolean {
+  // The dashboard endpoint only emits minute buckets. Keep the 1m/5m views on
+  // usage_logs so their declared 5s/15s buckets represent real observations.
+  return range === '1m' || range === '5m' || !dashboardWindowIsExact || !dashboardHasAccountCost
 }
 
 /** Keep successful per-account facts when a later refresh only returns a subset. */
@@ -160,10 +170,12 @@ export function selectExactWindowModelStats(
   }
 }
 
-function buildOpsSnapshotRange(range: CostCenterRange): Exclude<CostCenterRange, 'today'> {
+function buildOpsSnapshotRange(range: CostCenterRange): '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d' {
   // Rolling ranges map directly. The natural-day range is sent with explicit
   // local-day boundaries at the call site instead of being mislabeled as 24h.
-  return range === 'today' ? '24h' : range
+  if (range === 'today') return '24h'
+  if (range === '15m') return '30m'
+  return range
 }
 
 function emptyTodayStats(): WindowStats {
@@ -390,7 +402,7 @@ export function useCostCenterData() {
       loadModelRouteLogs(modelCostRange.value, modelCostAccountId.value, observedAt),
       adminAPI.channels.list(1, 1000, { sort_by: 'created_at', sort_order: 'asc' }),
       adminAPI.channels.getPricingStatus(),
-      adminAPI.ops.getDashboardSnapshotV2(range === 'today'
+      adminAPI.ops.getDashboardSnapshotV2(range === 'today' || range === '15m'
         ? { start_time: observationStart.toISOString(), end_time: observationEnd.toISOString(), mode: 'auto' }
         : { time_range: buildOpsSnapshotRange(range), mode: 'auto' }),
       adminAPI.settings.getSettings(),
@@ -436,9 +448,13 @@ export function useCostCenterData() {
     // center promises upstream account call cost, so non-empty trends without
     // account_cost must be rebuilt from the request pricing snapshots.
     const dashboardHasAccountCost = trendHasAccountCost(dashboardTrend)
-    const compatibilityTrend = dashboardWindowIsExact && dashboardHasAccountCost
-      ? null
-      : loadUsageLogCompatibilityTrend(range, observedAt)
+    const compatibilityTrend = shouldUseUsageLogCompatibilityTrend(
+      range,
+      dashboardWindowIsExact,
+      dashboardHasAccountCost,
+    )
+      ? loadUsageLogCompatibilityTrend(range, observedAt)
+      : null
 
     if (accountResult.status === 'fulfilled') {
       accounts.value = accountResult.value.items ?? []
@@ -510,7 +526,7 @@ export function useCostCenterData() {
         trend.value = fillCostTrendBuckets(await compatibilityTrend, range, observationStart, observationEnd)
         if (sequence !== requestSequence) return
         trendUsesAccountCost.value = true
-        setSourceState('dashboard', trend.value.some((point) => Number(point.requests || 0) > 0) ? 'partial' : 'empty', '仪表盘窗口不精确，已按 usage_logs 重新聚合', { requestedWindow: range })
+        setSourceState('dashboard', trend.value.some((point) => Number(point.requests || 0) > 0) ? 'measured' : 'empty', '已按完整 usage_logs 窗口重建账号成本', { requestedWindow: range })
       } catch (compatibilityError) {
         console.warn('[cost-center] exact usage log aggregation unavailable', compatibilityError)
         trendUsesAccountCost.value = false
