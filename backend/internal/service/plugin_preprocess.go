@@ -255,6 +255,11 @@ func (m *PluginManager) ObserveOpenAIHeaderProbe(ctx context.Context, request *h
 	}
 	deadline, _ := callCtx.Deadline()
 	requestContext := buildPluginRequestContext(ctx, request, account, deadline, "SELECTED")
+	// Header observation uses the same validated Preprocess contract as the
+	// mutating hook. Populate transport fields explicitly before validation.
+	requestContext.Method = request.Method
+	requestContext.Path = request.URL.Path
+	requestContext.Host = request.URL.Hostname()
 	requestContext.RequestID = hex.EncodeToString(requestID)
 	requestContext.TraceID = requestContext.RequestID
 	requestContext.Headers = headerProbeSignals(request.Header)
