@@ -46,6 +46,10 @@ const date = capture('git', ['show', '-s', '--format=%cI', commit], 'unknown')
 const ldflags = [
   '-s',
   '-w',
+  // Build the Windows sidecar as a GUI subsystem executable. Tauri owns the
+  // process and captures its pipes; a console subsystem binary flashes a
+  // command window every time the desktop starts or restarts the core.
+  ...(process.platform === 'win32' ? ['-H=windowsgui'] : []),
   `-X main.Version=${version}`,
   `-X main.Commit=${commit}`,
   `-X main.Date=${date}`,

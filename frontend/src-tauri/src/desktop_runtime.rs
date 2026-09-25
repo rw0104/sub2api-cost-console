@@ -17,6 +17,8 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 use tokio::{
@@ -1610,6 +1612,8 @@ async fn verify_compatible_core_build(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.as_std_mut().creation_flags(0x0800_0000);
     let output = timeout(Duration::from_secs(15), command.output())
         .await
         .map_err(|_| "验证兼容内核版本超时".to_string())?
