@@ -369,9 +369,10 @@ func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 			current.installation.BinarySHA256 == installation.BinarySHA256 &&
 			current.installation.ConfigEncrypted == installation.ConfigEncrypted &&
 			m.egressRuntimeCompatible(current, installation) {
-			healthCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
-			healthErr := current.checkReadiness(healthCtx)
-			cancel()
+			// checkReadiness schedules an asynchronous probe and owns its timeout.
+			// Keep it tied to the manager lifetime: a per-call cancel here would
+			// abort the RPC as soon as the cached readiness result is returned.
+			healthErr := current.checkReadiness(ctx)
 			if healthErr != nil {
 				m.publishInstallationUnavailable(installation, healthErr.Error())
 				reconcileErr = errors.Join(reconcileErr, healthErr)
