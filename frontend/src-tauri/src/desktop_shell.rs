@@ -9,6 +9,18 @@ const TRAY_ICON_ID: &str = "sub2api-cost-console-tray";
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 
+// Keep native tests in the binary target so they inherit Tauri's Windows
+// Common Controls v6 manifest, which WebView2 window creation requires.
+#[cfg(all(test, windows))]
+#[path = "desktop_shell/native_tests.rs"]
+mod native_tests;
+
+// Exercise the patched dependency's real Windows predicate in the normal host
+// test suite, without enabling the dependency's unrelated example/dev stack.
+#[cfg(all(test, windows))]
+#[path = "../vendor/tray-icon/src/platform_impl/windows/rect_result.rs"]
+mod tray_rect_contract;
+
 #[derive(Debug, PartialEq, Eq)]
 enum TrayMenuAction {
     ShowMainWindow,
@@ -30,6 +42,20 @@ pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<
         window.set_focus()?;
     }
     Ok(())
+}
+
+fn is_tray_window_activation(event: &TrayIconEvent) -> bool {
+    matches!(
+        event,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } | TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        }
+    )
 }
 
 pub fn setup_desktop_shell<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
@@ -55,14 +81,7 @@ pub fn setup_desktop_shell<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
             None => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            ) {
+            if is_tray_window_activation(&event) {
                 if let Err(error) = show_main_window(tray.app_handle()) {
                     eprintln!("failed to show main window from tray click: {error}");
                 }
@@ -112,5 +131,31 @@ mod tests {
             Some(TrayMenuAction::QuitApplication)
         );
         assert_eq!(tray_menu_action("unknown"), None);
+    }
+
+    #[test]
+    fn tray_activation_includes_windows_double_click() {
+        // Keep the event policy explicit: both the normal left-button release
+        // and Windows' dedicated double-click event restore the main window.
+        assert!(is_tray_window_activation(&TrayIconEvent::Click {
+            id: TRAY_ICON_ID.into(),
+            position: (0.0, 0.0).into(),
+            rect: Default::default(),
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+        }));
+        assert!(is_tray_window_activation(&TrayIconEvent::DoubleClick {
+            id: TRAY_ICON_ID.into(),
+            position: (0.0, 0.0).into(),
+            rect: Default::default(),
+            button: MouseButton::Left,
+        }));
+        assert!(!is_tray_window_activation(&TrayIconEvent::Click {
+            id: TRAY_ICON_ID.into(),
+            position: (0.0, 0.0).into(),
+            rect: Default::default(),
+            button: MouseButton::Right,
+            button_state: MouseButtonState::Up,
+        }));
     }
 }

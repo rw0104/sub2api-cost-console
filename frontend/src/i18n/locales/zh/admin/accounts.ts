@@ -122,6 +122,8 @@ export default {
       protectionTransport: {
         title: '请求头探测',
         unobserved: '尚未观测到请求头',
+        observedBytes: '{value} B',
+        observedBlocks: '{value} 块',
         format: '{observed}/{expected} B · {observedBlocks}/{expectedBlocks} 块',
         phase: '阶段：{value}',
         diagnostic: '诊断：{value}',

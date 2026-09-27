@@ -647,7 +647,10 @@ useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 const PROTECTION_TRANSPORT_CAPABILITY = 'openai.oauth.protection_transport.v1'
 const HEADER_PROBE_CAPABILITY = 'openai.oauth.request_header_probe.v1'
 const REQUEST_HEADER_OBSERVER_CAPABILITIES = new Set([PROTECTION_TRANSPORT_CAPABILITY, HEADER_PROBE_CAPABILITY])
+const PROTECTION_TRANSPORT_FAILURE_PHASES = new Set(['auth_blocked', 'access_paused', 'rate_limited', 'error', 'failed'])
 type ProtectionTransportSummary = {
+  headerProbe: boolean
+  headerPresent: boolean | null
   observedLength: number | null
   expectedLength: number | null
   observedBlocks: number | null
@@ -662,6 +665,8 @@ let protectionTransportRequestSeq = 0
 let protectionTransportMounted = false
 
 const emptyProtectionTransportSummary = (): ProtectionTransportSummary => ({
+  headerProbe: false,
+  headerPresent: null,
   observedLength: null,
   expectedLength: null,
   observedBlocks: null,
@@ -678,7 +683,7 @@ const toSafeNumber = (value: unknown): number | null => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
-const parseProtectionTransportStatus = (statusJson: unknown): Record<string, ProtectionTransportSummary> => {
+const parseProtectionTransportStatus = (statusJson: unknown, headerProbe: boolean): Record<string, ProtectionTransportSummary> => {
   if (typeof statusJson !== 'string' || !statusJson.trim()) return {}
   let envelope: unknown
   try {
@@ -702,6 +707,8 @@ const parseProtectionTransportStatus = (statusJson: unknown): Record<string, Pro
     const key = String(accountID).trim()
     if (!key) continue
     summaries[key] = {
+      headerProbe,
+      headerPresent: typeof item.header_present === 'boolean' ? item.header_present : null,
       observedLength: toSafeNumber(item.observed_length),
       expectedLength: toSafeNumber(item.expected_length),
       observedBlocks: toSafeNumber(item.observed_blocks),
@@ -720,11 +727,42 @@ const isOpenAIOAuthAccount = (row: Pick<AccountListItem, 'platform' | 'type'>) =
 const getProtectionTransportSummary = (row: Pick<AccountListItem, 'id'>): ProtectionTransportSummary => (
   protectionTransportByAccountId.value[String(row.id)] ?? emptyProtectionTransportSummary()
 )
+const isHeaderProbeObservation = (summary: ProtectionTransportSummary): boolean => (
+  summary.headerProbe && summary.expectedLength == null && summary.expectedBlocks == null
+)
+const isUnobservedHeaderProbe = (summary: ProtectionTransportSummary): boolean => (
+  isHeaderProbeObservation(summary)
+    && !PROTECTION_TRANSPORT_FAILURE_PHASES.has(summary.phase)
+    && summary.phase !== 'invalid'
+    && !summary.diagnostic
+    && (summary.headerPresent === false || summary.phase === 'unobserved')
+)
 const getProtectionTransportLabel = (row: Pick<AccountListItem, 'id'>): string => {
   const summary = getProtectionTransportSummary(row)
-  if (summary.observedLength == null && !summary.phase && !summary.diagnostic) {
+  const unobserved = (
+    summary.observedLength == null && summary.observedBlocks == null && !summary.phase && !summary.diagnostic
+  ) || isUnobservedHeaderProbe(summary)
+  if (unobserved) {
     return t('admin.accounts.protectionTransport.unobserved')
   }
+
+  // Header Probe reports observations only. It has no configured target to
+  // compare against, so do not render empty target placeholders such as
+  // `780/— B · 33/— 块`.
+  if (isHeaderProbeObservation(summary)) {
+    const values = [
+      summary.observedLength != null
+        ? t('admin.accounts.protectionTransport.observedBytes', { value: summary.observedLength })
+        : '',
+      summary.observedBlocks != null
+        ? t('admin.accounts.protectionTransport.observedBlocks', { value: summary.observedBlocks })
+        : ''
+    ].filter(Boolean)
+    return values.length
+      ? values.join(' · ')
+      : t('admin.accounts.protectionTransport.unobserved')
+  }
+
   const observed = summary.observedLength == null ? '—' : String(summary.observedLength)
   const expected = summary.expectedLength == null ? '—' : String(summary.expectedLength)
   const observedBlocks = summary.observedBlocks == null ? '—' : String(summary.observedBlocks)
@@ -733,11 +771,14 @@ const getProtectionTransportLabel = (row: Pick<AccountListItem, 'id'>): string =
 }
 const getProtectionTransportBadgeClass = (row: Pick<AccountListItem, 'id'>): string => {
   const summary = getProtectionTransportSummary(row)
-  if (summary.phase === 'auth_blocked' || summary.phase === 'access_paused' || summary.phase === 'rate_limited') {
+  if (PROTECTION_TRANSPORT_FAILURE_PHASES.has(summary.phase)) {
     return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-700/60 dark:bg-rose-900/30 dark:text-rose-200'
   }
-  if (summary.observedLength == null) {
+  if (isUnobservedHeaderProbe(summary) || (summary.observedLength == null && summary.observedBlocks == null)) {
     return 'border-gray-200 bg-gray-50 text-gray-500 dark:border-dark-600 dark:bg-dark-700/60 dark:text-gray-300'
+  }
+  if (summary.phase === 'observed' && summary.headerPresent !== false && !summary.diagnostic && isHeaderProbeObservation(summary)) {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-200'
   }
   if (summary.phase === 'ready' || (summary.expectedBlocks != null && summary.observedBlocks === summary.expectedBlocks)) {
     return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-900/30 dark:text-emerald-200'
@@ -766,7 +807,8 @@ const refreshProtectionTransportStatus = async () => {
       return
     }
     const status = await adminAPI.plugins.status(plugin.id)
-    const summaries = parseProtectionTransportStatus(status.status_json)
+    const headerProbe = plugin.manifest?.capabilities?.some(capability => capability.id === HEADER_PROBE_CAPABILITY) === true
+    const summaries = parseProtectionTransportStatus(status.status_json, headerProbe)
     if (requestSeq === protectionTransportRequestSeq) protectionTransportByAccountId.value = summaries
   } catch {
     if (requestSeq === protectionTransportRequestSeq) protectionTransportByAccountId.value = {}

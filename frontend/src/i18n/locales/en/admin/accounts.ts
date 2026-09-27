@@ -271,6 +271,8 @@ export default {
       protectionTransport: {
         title: 'Request header probe',
         unobserved: 'No request header observed yet',
+        observedBytes: '{value} B',
+        observedBlocks: '{value} blocks',
         format: '{observed}/{expected} B · {observedBlocks}/{expectedBlocks} blocks',
         phase: 'Phase: {value}',
         diagnostic: 'Diagnostic: {value}',
