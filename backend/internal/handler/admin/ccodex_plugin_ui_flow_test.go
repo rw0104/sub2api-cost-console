@@ -366,9 +366,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		scriptPath := os.Getenv("SUB2API_CCODEX_UI_SCRIPT")
-		if scriptPath == "" {
-			scriptPath = filepath.Join("..", "..", "..", "..", "plugins", "ccodex-sleep-state", "scripts", "test-host-ui.py")
-		}
+		require.NotEmpty(t, scriptPath, "SUB2API_CCODEX_UI_SCRIPT must explicitly point to the fixture in the separate plugin workspace")
 		script, err := filepath.Abs(scriptPath)
 		require.NoError(t, err)
 		// #nosec G702 -- Explicit test-runner environment selects the local Python fixture; argv is passed directly without a shell or remote input.

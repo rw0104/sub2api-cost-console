@@ -1,6 +1,6 @@
 # 桌面 v0.2.39 插件宿主正式发布记录
 
-日期：2026-09-18。承接 [插件扩展阶段开发日志](2026-09-18_plugin-development-phase-report.md)。本次将插件宿主能力合并至主分支并发布正式 Windows x64 桌面安装器。
+日期：2026-09-18。承接 [插件扩展阶段开发日志（迁移前历史版本）](https://github.com/rw0104/sub2api-cost-console/blob/5d513ea09eadd65092c8a24c8f22d6263547f1e3/docs/2026-09-18_plugin-development-phase-report.md)。本次将插件宿主能力合并至主分支并发布正式 Windows x64 桌面安装器。
 
 **已合并并正式发布，公开下载核验通过。** 最新正式版为 [v0.2.39](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.39)，稳定内核通道为 0.2.5 / 扩展 1.2.0 / 算法 1.6.1。最终核验时间：2026-09-18 09:11:45 UTC（02:11:45 PDT）。
 

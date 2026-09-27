@@ -112,6 +112,7 @@ jobs:
         with:
           node-version: 24
       - run: node --test frontend/scripts/core-release-contract.test.mjs
+      - run: node frontend/scripts/check-plugin-isolation.mjs
       - run: python -m pip install -r .github/release-tools/requirements-release.txt
       - run: python -m unittest discover -s .github/release-tools -p 'test_release_matrix.py'
       - run: bash -n .github/release-tools/release-images.sh

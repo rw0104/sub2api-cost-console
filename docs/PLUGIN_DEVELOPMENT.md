@@ -14,6 +14,14 @@ v0.3.13 修复 Windows 托盘点击被丢弃导致主窗口无法恢复的问题
 
 ## 0. 获取开发资料
 
+### 与宿主源码隔离
+
+插件必须在宿主仓库之外的独立 Git 仓库开发。本机维护入口为 `D:\Demo\s2plugin`，宿主源码为 `D:\Demo\subtool`；其他开发者可使用自己的同级目录布局。每个插件的源码、UI、构建脚本和交付物放在独立仓库的 `plugins/<plugin-id>/` 中，禁止在宿主根目录重新创建插件开发目录。
+
+插件只依赖公开 SDK 的固定版本快照，禁止通过 `go.mod replace`、链接或测试脚本回指工作中的宿主 `backend`。需要完整宿主实现的集成测试，应在独立插件工作区导出的固定提交快照中执行，使用单独的测试配置和临时数据。插件任务发现宿主缺陷时，先记录必要接口及复现，只有单独授权的宿主任务才修改宿主源码。
+
+宿主保留插件协议、SDK、通用运行时、管理界面和契约测试，这些是宿主支持插件所需的代码；具体第三方插件实现和历史开发产物不属于宿主。仓库 CI 会拒绝重新纳入根目录 `plugins/` 或旧插件产物目录。
+
 - 推荐下载 [v0.3.13 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.13/sub2api-plugin-devkit-v0.3.13.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
@@ -233,7 +241,7 @@ go run ./pkg/pluginapi/examples/preprocess/pack -binary dist/plugin-demo/preproc
 go test ./pkg/pluginapi/... -count=1
 ```
 
-以下集成检查需要检出完整宿主仓库，不能直接在精简开发包执行。最后一项需要 Docker，会自动创建并清理独立测试数据库：
+以下集成检查需要插件工作区内的独立宿主源码快照，不能直接在精简开发包或日常使用的宿主 checkout 中执行。最后一项需要 Docker，会自动创建并清理独立测试数据库：
 
 ```powershell
 go test ./internal/service -run '^TestPluginExtensionProcessIntegration$' -count=1
@@ -242,6 +250,8 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 ```
 
 真实浏览器流程、Host API 和容器验证见 [完整测试指南](../backend/pkg/pluginapi/docs/testing.md)。发布前覆盖配置边界、身份、签名/哈希、超时/取消/退出、非法补丁、计费、无插件路径、升级失败和回滚；检查包内无私钥、日志、真实测试数据或宿主凭据，再做单账号灰度。
+
+如启用特定插件的浏览器验收，`SUB2API_CCODEX_UI_PYTHON` 与 `SUB2API_CCODEX_UI_SCRIPT` 必须同时显式指定；脚本应位于独立插件仓库，宿主不再猜测根目录的插件源码路径。
 
 | 问题 | 排查 |
 | --- | --- |
