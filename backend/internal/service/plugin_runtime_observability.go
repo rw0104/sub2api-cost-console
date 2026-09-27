@@ -189,7 +189,7 @@ func sanitizePluginRuntimeErrorCode(raw string) string {
 	var b strings.Builder
 	for _, r := range strings.ToUpper(strings.TrimSpace(raw)) {
 		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 		if b.Len() >= 64 {
 			break

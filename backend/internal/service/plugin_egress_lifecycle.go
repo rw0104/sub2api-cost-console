@@ -59,6 +59,7 @@ func (m *PluginManager) createPluginEgressOwner(installation *PluginInstallation
 	if len(socketPath) > 100 {
 		return nil, errors.New("container egress broker socket path is too long")
 	}
+	// #nosec G703 -- Host-configured root plus a SHA-256 hex basename; plugin identity cannot introduce path separators.
 	if info, statErr := os.Lstat(socketPath); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New("container egress broker socket path is a symlink")
@@ -73,8 +74,10 @@ func (m *PluginManager) createPluginEgressOwner(installation *PluginInstallation
 	}
 	cleanup := func() {
 		_ = listener.Close()
+		// #nosec G703 -- Only the listener created above at the host root and hashed basename is removed.
 		_ = os.Remove(socketPath)
 	}
+	// #nosec G703 -- Same newly created listener path under the host root; no plugin-provided path component.
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		cleanup()
 		return nil, err
@@ -105,10 +108,10 @@ func pluginEgressPolicyDigest(policy config.PluginSandboxEgressBrokerConfig) str
 	sort.Strings(hosts)
 	sort.Strings(schemes)
 	raw, _ := json.Marshal(struct {
-		Enabled bool `json:"enabled"`
-		Hosts []string `json:"hosts"`
-		Schemes []string `json:"schemes"`
-		RequireTLS bool `json:"require_tls"`
+		Enabled    bool     `json:"enabled"`
+		Hosts      []string `json:"hosts"`
+		Schemes    []string `json:"schemes"`
+		RequireTLS bool     `json:"require_tls"`
 	}{policy.Enabled, hosts, schemes, policy.RequireTLS})
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])[:16]

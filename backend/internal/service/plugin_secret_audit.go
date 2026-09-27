@@ -120,7 +120,7 @@ func sanitizePluginSecretAuditCode(code string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(code)) {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 		if b.Len() >= pluginSecretAuditMaxErrorCodeRunes {
 			break

@@ -177,7 +177,7 @@ func TestEgressBrokerConnectRequiresTLSAndTunnelsOnlyPort443(t *testing.T) {
 	address := strings.TrimPrefix(httpServer.URL, "http://")
 	client, err := net.DialTimeout("tcp", address, time.Second)
 	require.NoError(t, err)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	_, err = io.WriteString(client, "CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n"+
 		EgressBrokerProtocolHeader+": "+EgressBrokerProtocol+"\r\n"+
 		EgressBrokerSchemeHeader+": https\r\n"+

@@ -282,6 +282,7 @@ func ProvideAccountTestService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
+	rateLimitService *RateLimitService,
 	pluginManager *PluginManager,
 ) *AccountTestService {
 	service := NewAccountTestService(
@@ -297,6 +298,7 @@ func ProvideAccountTestService(
 	service.agentIdentityWS = openAIGatewayService
 	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
+	service.SetRateLimitService(rateLimitService)
 	service.SetPluginManager(pluginManager)
 	return service
 }
@@ -527,6 +529,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	accountCostLoss *AccountCostLossService,
 	ollamaCloudUsage *OllamaCloudUsageService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
@@ -537,6 +540,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetAccountCostLossService(accountCostLoss)
 	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
 	return svc
 }

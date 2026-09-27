@@ -64,14 +64,14 @@ type EgressBrokerOwnerOptions struct {
 // wired into plugin runtime startup yet; callers must explicitly construct it
 // after the runtime identity and binding snapshot are available.
 type EgressBrokerOwner struct {
-	server    *EgressBrokerServer
-	listener  net.Listener
-	identity  EgressBrokerIdentity
+	server     *EgressBrokerServer
+	listener   net.Listener
+	identity   EgressBrokerIdentity
 	socketPath string
-	mu        sync.Mutex
-	closed    bool
-	closeOnce sync.Once
-	closeErr  error
+	mu         sync.Mutex
+	closed     bool
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func NewEgressBrokerOwner(options EgressBrokerOwnerOptions) (*EgressBrokerOwner, error) {

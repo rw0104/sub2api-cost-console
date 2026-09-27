@@ -56,9 +56,11 @@ func TestPluginHostServiceServer_ReturnsScopedStructuredAccountMetadata(t *testi
 	require.True(t, account.Schedulable)
 	asserted := map[string]any{}
 	require.NoError(t, json.Unmarshal(account.MetadataJson, &asserted))
-	require.Equal(t, "pro", asserted["subscription"].(map[string]any)["plan_type"])
-	require.Equal(t, "host_credentials", asserted["subscription"].(map[string]any)["source"])
-	require.Equal(t, "workspace-a", asserted["subscription"].(map[string]any)["workspace_id"])
+	subscription, ok := asserted["subscription"].(map[string]any)
+	require.True(t, ok, "metadata must include a structured subscription")
+	require.Equal(t, "pro", subscription["plan_type"])
+	require.Equal(t, "host_credentials", subscription["source"])
+	require.Equal(t, "workspace-a", subscription["workspace_id"])
 	require.Equal(t, scope, directory.scope, "directory receives host binding scope")
 }
 

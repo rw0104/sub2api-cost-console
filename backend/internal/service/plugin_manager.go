@@ -1069,15 +1069,16 @@ func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthR
 				_ = json.Unmarshal(fields["revision"], &revision)
 			}
 		}
+		message := messageForUnavailableRuntime(runtime)
 		report := map[string]any{
 			"schema": 1, "config_revision": revision,
 			"generated_at": time.Now().UTC().Format(time.RFC3339Nano),
 			"engines":      0, "requests_total": uint64(0),
 			"sessions": []any{}, "pool": []any{}, "node_verifications": []any{},
-			"message":    messageForUnavailableRuntime(runtime),
+			"message":    message,
 			"error_code": codeForUnavailableRuntime(runtime),
 		}
-		payload := m.statusSnapshotJSON(installation, runtime, false, report["message"].(string), map[string]any{"schema": 1, "core_report": report})
+		payload := m.statusSnapshotJSON(installation, runtime, false, message, map[string]any{"schema": 1, "core_report": report})
 		return &pluginv1.HealthResponse{
 			Healthy:    false,
 			Message:    "插件未运行；尚无运行会话",
@@ -1714,15 +1715,6 @@ func (m *PluginManager) removeManagedPath(target string) error {
 		return errors.New("拒绝删除插件根目录之外的路径")
 	}
 	return os.RemoveAll(absTarget)
-}
-
-func bindingRollout(bindings []PluginBinding) int {
-	for _, binding := range bindings {
-		if binding.Capability == PluginCapabilityOpenAIOAuthOutbound {
-			return binding.RolloutPercent
-		}
-	}
-	return 100
 }
 
 func stablePluginBucket(accountID int64) uint64 {

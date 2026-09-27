@@ -75,11 +75,11 @@ func TestEgressBrokerOwnerRequiresPerInstanceIdentityAndListener(t *testing.T) {
 func TestEgressBrokerOwnerRejectsMismatchedHeadersBeforeAuthorizer(t *testing.T) {
 	identity := scopedOwnerIdentity()
 	listener := newTestScopedListener(t)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	authorizer := &egressTestAuthorizer{decision: EgressDecision{Allowed: true}}
 	owner, err := NewEgressBrokerOwner(scopedOwnerOptions(t, identity, listener, authorizer))
 	require.NoError(t, err)
-	defer owner.Close()
+	defer func() { _ = owner.Close() }()
 
 	request := httptest.NewRequest(http.MethodGet, "http://broker/sse", nil)
 	setEgressHeaders(request, "https://api.openai.com/events")

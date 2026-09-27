@@ -34,4 +34,3 @@ func TestPricingCatalogEndpointsExposeStableUnavailableReason(t *testing.T) {
 		require.Equal(t, "PRICING_SERVICE_UNAVAILABLE", body.Reason)
 	}
 }
-

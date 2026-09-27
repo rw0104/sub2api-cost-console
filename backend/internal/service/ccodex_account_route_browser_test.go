@@ -60,7 +60,7 @@ func ccodexAccountReuseBrowser(t *testing.T, manager *PluginManager, installatio
 		w.Header().Set("Content-Type", "application/json")
 		result, err := manager.Status(r.Context(), installation.ID)
 		if err != nil {
-			http.Error(w, "status unavailable", 503)
+			http.Error(w, "status unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(result)
@@ -107,6 +107,7 @@ func ccodexAccountReuseBrowser(t *testing.T, manager *PluginManager, installatio
 	defer cancel()
 	python := os.Getenv("SUB2API_CCODEX_UI_PYTHON")
 	require.NotEmpty(t, python)
+	// #nosec G702 -- Explicit test-runner environment selects the local Python fixture; argv is passed directly without a shell or remote input.
 	command := exec.CommandContext(ctx, python, script, "--url", server.URL, "--report-dir", os.Getenv("SUB2API_CCODEX_UI_REPORT_DIR"))
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))

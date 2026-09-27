@@ -37,7 +37,10 @@ func TestCCodexSigned503CoolingThroughHost(t *testing.T) {
 		calls.Add(1)
 		w.Header().Set("Retry-After", "120")
 		w.WriteHeader(503)
-		io.WriteString(w, "synthetic-original-503")
+		_, err := io.WriteString(w, "synthetic-original-503")
+		if err != nil {
+			t.Errorf("write fixture response: %v", err)
+		}
 	}))
 	defer origin.Close()
 	root := t.TempDir()
@@ -79,7 +82,7 @@ func TestCCodexSigned503CoolingThroughHost(t *testing.T) {
 	require.Equal(t, "120", response.Header.Get("Retry-After"))
 	require.Equal(t, "upstream", response.Header.Get("X-Sleep-State-Error-Source"))
 	body, err := io.ReadAll(response.Body)
-	response.Body.Close()
+	require.NoError(t, response.Body.Close())
 	require.NoError(t, err)
 	require.Equal(t, "synthetic-original-503", string(body))
 	var document map[string]any
@@ -108,7 +111,7 @@ func TestCCodexSigned503CoolingThroughHost(t *testing.T) {
 	require.EqualValues(t, 1, calls.Load())
 	response, err = request(42)
 	require.NoError(t, err)
-	response.Body.Close()
+	require.NoError(t, response.Body.Close())
 	require.Equal(t, 503, response.StatusCode)
 	require.EqualValues(t, 2, calls.Load(), "one scope must not pause another")
 	process.kill()

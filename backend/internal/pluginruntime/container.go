@@ -26,15 +26,15 @@ import (
 )
 
 type ContainerOptions struct {
-	BinaryPath   string
-	BinarySHA256 string
-	WorkDir      string
-	Image        string
-	MemoryMB     int
-	CPUMilli     int
-	PidsLimit    int
-	Env          []string
-	EgressBroker EgressBrokerOptions
+	BinaryPath           string
+	BinarySHA256         string
+	WorkDir              string
+	Image                string
+	MemoryMB             int
+	CPUMilli             int
+	PidsLimit            int
+	Env                  []string
+	EgressBroker         EgressBrokerOptions
 	EgressBrokerIdentity EgressBrokerIdentity
 }
 

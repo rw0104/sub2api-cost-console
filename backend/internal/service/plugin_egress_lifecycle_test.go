@@ -25,7 +25,7 @@ func TestCreatePluginEgressOwnerUsesScopedUnixSocketAndCleansIt(t *testing.T) {
 	if err != nil {
 		t.Skipf("short socket root unavailable: %v", err)
 	}
-	defer os.RemoveAll(shortRoot)
+	defer func() { _ = os.RemoveAll(shortRoot) }()
 	cfg := testPluginConfig(filepath.Join(shortRoot, "plugins"), true)
 	manager := &PluginManager{cfg: cfg, installer: NewPluginPackageInstaller(cfg, PluginHostInfo{Version: "test"})}
 	sandbox := config.PluginSandboxConfig{Mode: "container", EgressBroker: config.PluginSandboxEgressBrokerConfig{Enabled: true,
@@ -52,7 +52,7 @@ func TestPluginRuntimeKillClosesEgressOwner(t *testing.T) {
 	if err != nil {
 		t.Skipf("short socket root unavailable: %v", err)
 	}
-	defer os.RemoveAll(shortRoot)
+	defer func() { _ = os.RemoveAll(shortRoot) }()
 	manager := &PluginManager{installer: NewPluginPackageInstaller(testPluginConfig(filepath.Join(shortRoot, "plugins"), true), PluginHostInfo{Version: "test"})}
 	sandbox := config.PluginSandboxConfig{Mode: "container", EgressBroker: config.PluginSandboxEgressBrokerConfig{Enabled: true,
 		SocketPath: "/ignored.sock", AllowedHosts: []string{"api.openai.com"}, AllowedSchemes: []string{"https"}, RequireTLS: true}}
@@ -74,7 +74,7 @@ func TestEgressRuntimeCompatibilityForcesOwnerReplacementOnScopeChange(t *testin
 	if err != nil {
 		t.Skipf("short socket root unavailable: %v", err)
 	}
-	defer os.RemoveAll(shortRoot)
+	defer func() { _ = os.RemoveAll(shortRoot) }()
 	cfg := testPluginConfig(filepath.Join(shortRoot, "plugins"), true)
 	manager := &PluginManager{cfg: cfg, installer: NewPluginPackageInstaller(cfg, PluginHostInfo{Version: "test"})}
 	sandbox := config.PluginSandboxConfig{Mode: "container", EgressBroker: config.PluginSandboxEgressBrokerConfig{Enabled: true,
@@ -86,7 +86,7 @@ func TestEgressRuntimeCompatibilityForcesOwnerReplacementOnScopeChange(t *testin
 	if err != nil {
 		t.Skipf("Unix sockets unavailable on this Windows environment: %v", err)
 	}
-	defer owner.Close()
+	defer func() { _ = owner.Close() }()
 	runtime := &pluginRuntime{egressOwner: owner, egressPolicyDigest: pluginEgressPolicyDigest(sandbox.EgressBroker)}
 	require.True(t, manager.egressRuntimeCompatible(runtime, installation))
 	installation.Bindings[0].AccountIDs = []int64{99}

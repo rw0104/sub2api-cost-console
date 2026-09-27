@@ -244,9 +244,8 @@ func (c *DrainController) Snapshot() DrainProgress {
 	return progress
 }
 
-// drainRuntimeUntil is the context-aware counterpart of pluginRuntime.drain.
-// The legacy method remains unchanged for older internal callers; new batch
-// lifecycle paths use this helper to share one operation deadline.
+// drainRuntimeUntil waits for in-flight requests using the shared operation
+// deadline, then terminates the runtime. It reports whether the drain was forced.
 func drainRuntimeUntil(ctx context.Context, runtime *pluginRuntime) bool {
 	if runtime == nil {
 		return false

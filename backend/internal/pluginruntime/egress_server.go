@@ -306,7 +306,7 @@ func (s *EgressBrokerServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		s.rejectWithStarted(w, r, "sse", req, started, http.StatusBadGateway, "UPSTREAM_REQUEST_FAILED")
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		s.rejectWithStarted(w, r, "sse", req, started, http.StatusBadGateway, "UPSTREAM_STATUS")
 		return

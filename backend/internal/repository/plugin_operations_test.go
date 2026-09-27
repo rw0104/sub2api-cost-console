@@ -13,7 +13,7 @@ import (
 func TestPluginOperationRepositoryPersistsAndReadsLifecycle(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := &pluginRepository{db: db}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	op := &service.PluginOperation{ID: "plugin-op-test", PluginID: 4, Kind: "config.save", ExpectedRevision: 3,

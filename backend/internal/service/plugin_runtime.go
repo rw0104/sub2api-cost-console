@@ -29,33 +29,33 @@ import (
 )
 
 type pluginRuntime struct {
-	installation      *PluginInstallation
-	instanceID        string
-	timelineMu        sync.Mutex
-	timeline          *pluginRuntimeTimeline
-	client            *hcplugin.Client
-	api               pluginv1.TransportPluginClient
-	transport         pluginv2.TransportClient
-	extension         pluginv2.ExtensionHandler
-	isolation         string
-	host              *pluginHostServices
-	inFlight          atomic.Int64
-	draining          atomic.Bool
-	done              chan struct{}
-	doneOnce          sync.Once
-	readinessMu       sync.Mutex
-	readinessAt       time.Time
-	readinessErr      error
-	readinessFailures int
-	readinessInFlight bool
-	statusMu          sync.Mutex
-	statusAt          time.Time
-	statusValue       *pluginv1.HealthResponse
-	statusInFlight    bool
-	statusStale       bool
-	stdoutLog         *pluginRuntimeLogSink
-	stderrLog         *pluginRuntimeLogSink
-	egressOwner       *pluginruntime.EgressBrokerOwner
+	installation       *PluginInstallation
+	instanceID         string
+	timelineMu         sync.Mutex
+	timeline           *pluginRuntimeTimeline
+	client             *hcplugin.Client
+	api                pluginv1.TransportPluginClient
+	transport          pluginv2.TransportClient
+	extension          pluginv2.ExtensionHandler
+	isolation          string
+	host               *pluginHostServices
+	inFlight           atomic.Int64
+	draining           atomic.Bool
+	done               chan struct{}
+	doneOnce           sync.Once
+	readinessMu        sync.Mutex
+	readinessAt        time.Time
+	readinessErr       error
+	readinessFailures  int
+	readinessInFlight  bool
+	statusMu           sync.Mutex
+	statusAt           time.Time
+	statusValue        *pluginv1.HealthResponse
+	statusInFlight     bool
+	statusStale        bool
+	stdoutLog          *pluginRuntimeLogSink
+	stderrLog          *pluginRuntimeLogSink
+	egressOwner        *pluginruntime.EgressBrokerOwner
 	egressPolicyDigest string
 }
 
@@ -508,25 +508,6 @@ func (r *pluginRuntime) finishRequest() {
 	if r.inFlight.Add(-1) == 0 && r.draining.Load() {
 		r.doneOnce.Do(func() { close(r.done) })
 	}
-}
-
-func (r *pluginRuntime) drain(timeout time.Duration) {
-	if r == nil {
-		return
-	}
-	r.markRuntimeDrainRequested()
-	r.draining.Store(true)
-	if r.inFlight.Load() == 0 {
-		r.doneOnce.Do(func() { close(r.done) })
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-r.done:
-	case <-timer.C:
-	}
-	r.markRuntimeDrainFinished()
-	r.kill()
 }
 
 func (r *pluginRuntime) kill() {

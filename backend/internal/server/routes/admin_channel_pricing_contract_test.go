@@ -30,4 +30,3 @@ func TestRegisterChannelRoutesIncludesPricingCatalogContract(t *testing.T) {
 	// contract; the cost center must not accidentally reuse it for refresh.
 	require.True(t, routes[http.MethodGet+" /api/v1/admin/channels/pricing/sync-models"])
 }
-

@@ -1,0 +1,89 @@
+{
+  "checkedAt": "2026-09-27T02:23:29.496Z",
+  "baseline": {
+    "tag": "v0.3.10",
+    "commit": "2a7b3d27a2002c6937a723b5e05b186e2d191b2c",
+    "run": 36021332280,
+    "url": "https://github.com/rw0104/sub2api-cost-console/actions/runs/36021332280",
+    "topLevelFailedTests": 28,
+    "failedNamesIncludingSubtests": 146,
+    "lintDiagnostics": 33,
+    "uniqueNormalizedLintDiagnostics": 25,
+    "lintCategories": {
+      "errcheck": 19,
+      "gofmt": 3,
+      "gosec": 5,
+      "ineffassign": 1,
+      "staticcheck": 1,
+      "unused": 4
+    },
+    "failedPackages": [
+      "github.com/Wei-Shaw/sub2api/internal/handler",
+      "github.com/Wei-Shaw/sub2api/internal/handler/admin",
+      "github.com/Wei-Shaw/sub2api/internal/service"
+    ]
+  },
+  "final": {
+    "tag": "v0.3.11",
+    "commit": "d3146065d9dec418538b5c7ca9b2fb93b1ccc1b2",
+    "run": 36287990945,
+    "url": "https://github.com/rw0104/sub2api-cost-console/actions/runs/36287990945",
+    "topLevelFailedTests": 28,
+    "failedNamesIncludingSubtests": 146,
+    "lintDiagnostics": 33,
+    "uniqueNormalizedLintDiagnostics": 25,
+    "lintCategories": {
+      "errcheck": 19,
+      "gofmt": 3,
+      "gosec": 5,
+      "ineffassign": 1,
+      "staticcheck": 1,
+      "unused": 4
+    },
+    "failedPackages": [
+      "github.com/Wei-Shaw/sub2api/internal/handler",
+      "github.com/Wei-Shaw/sub2api/internal/handler/admin",
+      "github.com/Wei-Shaw/sub2api/internal/service"
+    ]
+  },
+  "addedTopLevelFailures": [],
+  "removedTopLevelFailures": [],
+  "addedFailureNames": [],
+  "removedFailureNames": [],
+  "lintDiagnosticCountChanges": [],
+  "topLevelFailedTests": [
+    "TestAccountStatsCustomRulesUseOwnReasoningEffortMultipliers",
+    "TestAccountTestService_OpenAI402DeactivatedWorkspaceUsesRuntimeTerminalHandling",
+    "TestCalculateRecordUsageCost_MediaReasoningPricing",
+    "TestCalculateTokenCostForRequest_ChannelConfiguresReasoningEffortMultiplier",
+    "TestCalculateTokenCostForRequest_Fable51HasNoImplicitReasoningMultiplier",
+    "TestChannelPricing_UnrelatedChannelModelNotMatched",
+    "TestFetchOpenAIAccountModelsAPIKeyAppliesAccountModelMapping",
+    "TestFetchOpenAIAccountModelsMappingChangesReuseRawCache",
+    "TestFetchOpenAIAccountModelsOAuthExcludesUnconfiguredTextModels",
+    "TestFetchOpenAIAccountModelsOAuthImageNamesMappedToText",
+    "TestFetchOpenAIAccountModelsOAuthLocalImageAlias",
+    "TestGeminiNativeReasoningPricingUsesExplicitForwardedLevel",
+    "TestNewModelPricingAliasesRetainExplicitOverrides",
+    "TestNewModelPricingCatalogFallbackAndContext",
+    "TestNewModelPricingChannelOverridesAndFamilyIsolation",
+    "TestOpenAIMessagesGLMReasoningPricingUsesForwardedEffort",
+    "TestOpenAINativeAnthropicReasoningPricingUsesForwardedEffort",
+    "TestOpenAIRefreshQuota_CreditsPersistIndependently",
+    "TestOpenAIResponsesWebSocket_CtxPoolAppliesPerTurnMappingAndPreservesRequestedModel",
+    "TestOpenAIResponsesWebSocket_PassthroughKeepsTurnMappingSnapshot",
+    "TestRateLimitService_OnlyConfirmedTerminalFailuresReachCostLossLedger",
+    "TestRateLimitService_RecoverAccountAfterSuccessfulTest_ClearsErrorAndRateLimitRelatedState",
+    "TestReasoningEffortBillingGroupOverrideAndUnitBilling",
+    "TestReasoningEffortBillingStacksWithContextTierServiceTierAndTimePricing",
+    "TestReasoningEffortBillingSupportsAllModelsAndLevels",
+    "TestRecordUsage_ImageReasoningPricing",
+    "TestRecordUsage_ReasoningPricingUsesForwardedEffort",
+    "TestTryModelFilePricing_Fable51HasNoImplicitReasoningMultiplier"
+  ],
+  "method": "Only actual Go --- FAIL: Test... lines and golangci ##[error] source diagnostics are counted. Top-level Go results require no indentation. Lint normalization removes runner path, line/column and timestamps; duplicate diagnostic counts are compared. Simulated error log messages are excluded.",
+  "limitation": "Matching failure names and lint diagnostics does not prove absence of uncovered regressions or equivalence of all assertion output. Both full backend CI runs failed.",
+  "failureSetsAndDiagnosticCountsUnchanged": true,
+  "resolutionStatus": "open: baseline comparison is not a repair",
+  "sourceHeadWhenReviewed": "d3146065d9dec418538b5c7ca9b2fb93b1ccc1b2"
+}

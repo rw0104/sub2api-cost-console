@@ -420,13 +420,12 @@ func (h *pluginHostServices) ReadSecret(ctx context.Context, r *wire.HostSecretR
 	startedAt := time.Now()
 	capability, alias := r.GetCapability(), r.GetAlias()
 	if err := h.authorize(ctx, capability, pluginv2.PermissionSecretBroker); err != nil {
-		result, errorCode := pluginSecretAuditOutcomeForError(err)
+		_, errorCode := pluginSecretAuditOutcomeForError(err)
+		result := PluginSecretAuditInternalError
 		if status.Code(err) == codes.ResourceExhausted {
 			result, errorCode = PluginSecretAuditRateLimited, "rate_limited"
 		} else if status.Code(err) == codes.PermissionDenied {
 			result, errorCode = PluginSecretAuditDenied, "permission_denied"
-		} else {
-			result = PluginSecretAuditInternalError
 		}
 		h.recordSecretAudit(ctx, capability, alias, result, errorCode, time.Time{}, startedAt)
 		return nil, err

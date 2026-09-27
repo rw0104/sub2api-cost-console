@@ -132,13 +132,13 @@ func sanitizePluginRuntimeLogText(text string) string {
 	for _, char := range text {
 		switch char {
 		case '\n', '\r', '\t':
-			builder.WriteRune(char)
+			_, _ = builder.WriteRune(char)
 		default:
 			if char < 0x20 || char == 0x7f {
-				builder.WriteString(fmt.Sprintf("\\x%02x", char))
+				_, _ = fmt.Fprintf(&builder, "\\x%02x", char)
 				continue
 			}
-			builder.WriteRune(char)
+			_, _ = builder.WriteRune(char)
 		}
 	}
 	return builder.String()

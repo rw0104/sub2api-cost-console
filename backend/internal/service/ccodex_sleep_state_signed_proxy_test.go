@@ -120,7 +120,7 @@ func TestCCodexSignedPackageProxyProtocol(t *testing.T) {
 				w.Header().Set("Set-Cookie", "not-forwarded=1")
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = io.WriteString(w, sse)
-				w.(http.Flusher).Flush()
+				assert.NoError(t, http.NewResponseController(w).Flush())
 			}))
 			t.Cleanup(origin.Close)
 			proxyURL, connects := ccodexConnectFixture(t, origin.Listener.Addr().String(), &proxyPeers)
@@ -258,7 +258,7 @@ func ccodexConnectFixture(t *testing.T, target string, proxyPeers *sync.Map) (st
 			return
 		}
 		proxyPeers.Store(upstream.LocalAddr().String(), struct{}{})
-		client, buffered, err := w.(http.Hijacker).Hijack()
+		client, buffered, err := http.NewResponseController(w).Hijack()
 		if err != nil {
 			_ = upstream.Close()
 			return

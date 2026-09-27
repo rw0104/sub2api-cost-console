@@ -195,10 +195,16 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	if err != nil {
 		return nil, err
 	}
+	// The cache holds the raw catalog; apply current account aliases to the
+	// picker's own copy so mapping changes do not require another upstream read.
+	projectedBody, err := projectAccountModelsBody(response.Body, account, nil, false)
+	if err != nil {
+		return nil, fmt.Errorf("project OpenAI account models: %w", err)
+	}
 	var payload struct {
 		Data []openai.Model `json:"data"`
 	}
-	if err := json.Unmarshal(response.Body, &payload); err != nil {
+	if err := json.Unmarshal(projectedBody, &payload); err != nil {
 		return nil, fmt.Errorf("decode OpenAI account models: %w", err)
 	}
 	// Every entry in the picker is labelled by the same rule: the upstream display
@@ -218,20 +224,35 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
 	if account != nil && account.IsOpenAIOAuthLike() {
+		passthrough := account.IsOpenAIPassthroughEnabled()
 		seen := make(map[string]bool, len(payload.Data))
 		for _, model := range payload.Data {
 			seen[model.ID] = true
 		}
 		for _, model := range openai.DefaultModels {
 			if IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) && !seen[model.ID] {
+				if !passthrough && !IsGPTImageGenerationModel(account.GetMappedModel(model.ID)) {
+					continue
+				}
 				payload.Data = append(payload.Data, model)
 				seen[model.ID] = true
 			}
 		}
-		for model := range account.GetModelMapping() {
-			if IsGPTImageGenerationModel(model) && !strings.Contains(model, "*") && !seen[model] {
-				payload.Data = append(payload.Data, openai.Model{ID: model, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(model)})
+		// The Codex catalog omits image tool models. Synthesize aliases only when
+		// their resolved target is an image model, never from a lookalike name.
+		for publicID := range account.GetModelMapping() {
+			if strings.Contains(publicID, "*") || seen[publicID] {
+				continue
 			}
+			target := publicID
+			if !passthrough {
+				target = account.GetMappedModel(publicID)
+			}
+			if !IsGPTImageGenerationModel(target) {
+				continue
+			}
+			payload.Data = append(payload.Data, openai.Model{ID: publicID, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(publicID)})
+			seen[publicID] = true
 		}
 	}
 	return payload.Data, nil

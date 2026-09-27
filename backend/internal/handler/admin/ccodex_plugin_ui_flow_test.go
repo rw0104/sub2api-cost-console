@@ -53,6 +53,24 @@ func (r *ccodexUIFlowRepository) UpdateConfigCAS(_ context.Context, _ int64, nex
 // production handlers, not the old browser harness's fabricated status success.
 // It never connects to a user database or uses a real subscription credential.
 func TestCCodexPluginHostUIFlow(t *testing.T) {
+	object := func(value any) map[string]any {
+		t.Helper()
+		result, ok := value.(map[string]any)
+		require.True(t, ok, "expected JSON object, got %T", value)
+		return result
+	}
+	array := func(value any) []any {
+		t.Helper()
+		result, ok := value.([]any)
+		require.True(t, ok, "expected JSON array, got %T", value)
+		return result
+	}
+	text := func(value any) string {
+		t.Helper()
+		result, ok := value.(string)
+		require.True(t, ok, "expected JSON string, got %T", value)
+		return result
+	}
 	packagePath := os.Getenv("SUB2API_CCODEX_SLEEP_STATE_PACKAGE")
 	if packagePath == "" {
 		t.Skip("set SUB2API_CCODEX_SLEEP_STATE_PACKAGE to the signed candidate package")
@@ -133,7 +151,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		client := &http.Client{Timeout: 40 * time.Second}
 		response, err := client.Do(req)
 		require.NoError(t, err)
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		var result map[string]any
 		require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
 		return response.StatusCode, result
@@ -143,7 +161,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, initial)
 	code, tested := request(http.MethodPost, "/api/v1/admin/plugins/1/test", nil)
 	require.Equal(t, http.StatusOK, code, tested)
-	require.Equal(t, true, tested["data"].(map[string]any)["success"])
+	require.Equal(t, true, object(tested["data"])["success"])
 	initial["subscriptions"] = []any{map[string]any{"url": subscription.URL}}
 	initial["route_request"] = map[string]any{"operation": "discover"}
 	code, discovered := request(http.MethodPut, configPath, initial)
@@ -154,9 +172,9 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 	nodes, ok := report["nodes"].([]any)
 	require.True(t, ok)
 	require.Len(t, nodes, 2)
-	selectedID := nodes[0].(map[string]any)["id"].(string)
+	selectedID := text(object(nodes[0])["id"])
 	for _, entry := range nodes {
-		node := entry.(map[string]any)
+		node := object(entry)
 		require.Equal(t, "untested", node["status"])
 		require.NotEmpty(t, node["id"])
 		require.NotEmpty(t, node["protocol"])
@@ -164,10 +182,10 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 	discovered["route_request"] = map[string]any{"operation": "test"}
 	code, checked := request(http.MethodPut, configPath, discovered)
 	require.Equal(t, http.StatusOK, code, checked)
-	checkedNodes := checked["route_report"].(map[string]any)["nodes"].([]any)
+	checkedNodes := array(object(checked["route_report"])["nodes"])
 	require.Len(t, checkedNodes, 2)
 	for _, entry := range checkedNodes {
-		node := entry.(map[string]any)
+		node := object(entry)
 		require.Equal(t, "unavailable", node["status"])
 		require.NotEmpty(t, node["error_code"], "the host must preserve safe node diagnostic codes")
 	}
@@ -226,7 +244,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		require.Len(t, pool, 2, "discovered nodes must remain visible in the pool snapshot")
 		found := false
 		for _, entry := range pool {
-			node := entry.(map[string]any)
+			node := object(entry)
 			if node["id"] == selectedID {
 				found = true
 				require.Equal(t, want, node["state"])
@@ -234,10 +252,10 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		}
 		require.True(t, found)
 		require.Empty(t, report["sessions"])
-		routes := config["route_report"].(map[string]any)["nodes"].([]any)
+		routes := array(object(config["route_report"])["nodes"])
 		require.Len(t, routes, 2, "core commands must preserve connectivity diagnostics")
 		for _, entry := range routes {
-			require.Equal(t, "unavailable", entry.(map[string]any)["status"])
+			require.Equal(t, "unavailable", object(entry)["status"])
 		}
 	}
 	assertPoolState(coreChecked, "available")
@@ -257,7 +275,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 	coreChecked["core_request"] = map[string]any{"operation": "retry", "session_id": "no-live-session"}
 	code, rejectedRetry := request(http.MethodPut, configPath, coreChecked)
 	require.Equal(t, http.StatusOK, code, rejectedRetry)
-	rejectedReport := rejectedRetry["core_report"].(map[string]any)
+	rejectedReport := object(rejectedRetry["core_report"])
 	require.Equal(t, "CORE_RETRY_REJECTED", rejectedReport["error_code"])
 	require.Empty(t, rejectedReport["sessions"], "retry without credentials cannot create a ready state")
 	require.NotContains(t, rejectedRetry, "core_request")
@@ -268,7 +286,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 	loaded["route_request"] = map[string]any{"operation": "discover"}
 	code, invalid := request(http.MethodPut, configPath, loaded)
 	require.Equal(t, http.StatusOK, code, invalid)
-	invalidReport := invalid["route_report"].(map[string]any)
+	invalidReport := object(invalid["route_report"])
 	require.NotEmpty(t, invalidReport["error_code"], "source failures must be displayed instead of becoming an opaque host RPC error")
 	if liveProxy := strings.TrimSpace(os.Getenv("CCODEX_TEST_PROXY_URL")); liveProxy != "" {
 		code, proxyChecked := request(http.MethodPut, configPath, map[string]any{
@@ -281,7 +299,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		proxyNodes, ok := proxyReport["nodes"].([]any)
 		require.True(t, ok, "live proxy diagnostic returned no node list")
 		require.Equal(t, 1, len(proxyNodes), "live proxy diagnostic must contain one node")
-		proxyNode := proxyNodes[0].(map[string]any)
+		proxyNode := object(proxyNodes[0])
 		proxyStatus, _ := proxyNode["status"].(string)
 		summary, err := json.Marshal(map[string]any{"protocol": proxyNode["protocol"], "status": proxyStatus, "http_status": proxyNode["http_status"], "error_code": proxyNode["error_code"]})
 		require.NoError(t, err)
@@ -353,6 +371,7 @@ func TestCCodexPluginHostUIFlow(t *testing.T) {
 		}
 		script, err := filepath.Abs(scriptPath)
 		require.NoError(t, err)
+		// #nosec G702 -- Explicit test-runner environment selects the local Python fixture; argv is passed directly without a shell or remote input.
 		command := exec.CommandContext(ctx, python, script, "--url", server.URL)
 		output, err := command.CombinedOutput()
 		require.NoError(t, err, string(output))

@@ -4,7 +4,7 @@ package service
 
 // issue #5256 回归测试：使用记录的费用统计没有按照渠道定价的价格进行计算。
 //
-// 场景：管理员在渠道定价把 gpt-5.6-luna 的输入价从官方 $0.2/M 调成 $0.4/M。
+// 场景：测试目录中 gpt-5.6-luna 的输入价为 $0.2/M，渠道配置为 $0.4/M。
 // 当请求模型带 effort 后缀（gpt-5.6-luna-high）而渠道只配了基名时，渠道定价查找
 // 用字面名未命中，官方兜底价却会把后缀名归一化到 gpt-5.6-luna 并命中静态价
 // （pricing_service.go 的 gpt-5.6-luna 前缀分支），计费候选循环首个成功即返回
@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	// 1M 输入 token 下，渠道价与官方兜底价的期望费用（USD）
+	// 1M 输入 token 下，渠道价与固定测试目录价的期望费用（USD）。
+	// 路由回归使用固定目录，不随生产价格更新改变断言。
 	channelPricingExpectedChannelCost  = 0.4
 	channelPricingExpectedOfficialCost = 0.2
 	// 用于验证「不相关的渠道配置不会被误命中」的对照价
@@ -62,6 +63,11 @@ func recordUsageWithChannelPricing(t *testing.T, requestedModel string, subscrip
 
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	// Exercise the actual built-in fallback path for the effort-suffixed name;
+	// a catalog entry for only the base name would still take the static alias fallback.
+	svc.billingService.fallbackPrices["gpt-5.6-luna"] = &ModelPricing{
+		InputPricePerToken: channelPricingExpectedOfficialCost / 1e6,
+	}
 	cs := newChannelServiceWithPricings(groupID, pricings)
 	svc.channelService = cs
 	svc.resolver = NewModelPricingResolver(cs, svc.billingService)

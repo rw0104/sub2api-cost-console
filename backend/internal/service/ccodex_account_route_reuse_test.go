@@ -27,6 +27,24 @@ import (
 // The gate uses the signed, installed process and production SaveConfig/CAS,
 // not a mocked plugin or a UI assertion standing in for real B qualification.
 func TestCCodexSignedAccountRouteReuse(t *testing.T) {
+	object := func(value any) map[string]any {
+		t.Helper()
+		result, ok := value.(map[string]any)
+		require.True(t, ok, "expected JSON object, got %T", value)
+		return result
+	}
+	array := func(value any) []any {
+		t.Helper()
+		result, ok := value.([]any)
+		require.True(t, ok, "expected JSON array, got %T", value)
+		return result
+	}
+	text := func(value any) string {
+		t.Helper()
+		result, ok := value.(string)
+		require.True(t, ok, "expected JSON string, got %T", value)
+		return result
+	}
 	packagePath := os.Getenv("SUB2API_CCODEX_SLEEP_STATE_PACKAGE")
 	if packagePath == "" || runtime.GOOS != "linux" {
 		t.Skip("requires signed package and Linux test CA launcher")
@@ -105,7 +123,7 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		if !probe && bytes.Contains(body, []byte("hold-sol")) {
 			w.WriteHeader(200)
-			w.(http.Flusher).Flush()
+			assert.NoError(t, http.NewResponseController(w).Flush())
 			close(solStarted)
 			select {
 			case <-releaseStream:
@@ -116,7 +134,7 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 		}
 		if !probe && bytes.Contains(body, []byte("hold-stream")) {
 			w.WriteHeader(200)
-			w.(http.Flusher).Flush()
+			assert.NoError(t, http.NewResponseController(w).Flush())
 			close(streamStarted)
 			select {
 			case <-releaseStream:
@@ -183,11 +201,15 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 		require.NoError(t, err)
 		var envelope map[string]any
 		require.NoError(t, json.Unmarshal([]byte(result.StatusJson), &envelope))
-		return envelope["core_report"].(map[string]any)
+		report, ok := envelope["core_report"].(map[string]any)
+		require.True(t, ok, "runtime status must contain a core report")
+		return report
 	}
 	_, err = save(map[string]any{"enabled": true, "inject_state": true, "harvest_on_demand": true, "fail_closed": false, "pool_enabled": true, "account_mode": "personal", "state_refresh_mode": "on_demand", "cooldown_seconds": 1, "probe_timeout_seconds": 2, "probe_round_seconds": 3, "max_probes_per_round": 1, "models": []string{"gpt-6-astra", "gpt-5.6-sol"}, "proxy_urls": []string{proxy}, "accounts": map[string]any{"42": map[string]any{"inject_state": false, "harvest_on_demand": false, "account_mode": "team"}}, "route_request": map[string]any{"operation": "discover"}})
 	require.NoError(t, err)
-	route := saved["route_report"].(map[string]any)["nodes"].([]any)[0].(map[string]any)["id"].(string)
+	routeNodes := array(object(saved["route_report"])["nodes"])
+	require.NotEmpty(t, routeNodes)
+	route := text(object(routeNodes[0])["id"])
 	request := func(account int64, model, message string) *http.Response {
 		payload, _ := json.Marshal(map[string]any{"model": model, "input": []map[string]string{{"role": "user", "content": message}}, "stream": true})
 		r, err := http.NewRequestWithContext(ctx, "POST", origin.URL+"/backend-api/codex/responses", bytes.NewReader(payload))
@@ -217,7 +239,7 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	}
 	if os.Getenv("SUB2API_CCODEX_REUSE_BROWSER_SCRIPT") == "" {
 		initial := load()
-		initial["accounts"].(map[string]any)["42"].(map[string]any)["model_route_bindings"] = map[string]any{"gpt-5.6-sol": map[string]any{"route_id": route, "enabled": true, "inject_state": true, "harvest_on_demand": true}}
+		object(object(initial["accounts"])["42"])["model_route_bindings"] = map[string]any{"gpt-5.6-sol": map[string]any{"route_id": route, "enabled": true, "inject_state": true, "harvest_on_demand": true}}
 		_, err = save(initial)
 		require.NoError(t, err)
 		bMismatch.Store(false)
@@ -228,12 +250,12 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	finish(request(42, "gpt-6-astra", "private-user-message"))
 	report := getReport()
 	var aSession, bSession string
-	for _, raw := range report["sessions"].([]any) {
-		s := raw.(map[string]any)
+	for _, raw := range array(report["sessions"]) {
+		s := object(raw)
 		if s["account_id"] == float64(41) {
-			aSession = s["id"].(string)
+			aSession = text(s["id"])
 		} else if s["model"] == "gpt-6-astra" {
-			bSession = s["id"].(string)
+			bSession = text(s["id"])
 		}
 	}
 	require.NotEmpty(t, aSession)
@@ -250,8 +272,8 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	repo.failSave = false
 	afterFailedSave := getReport()
 	foundA := false
-	for _, raw := range afterFailedSave["sessions"].([]any) {
-		row := raw.(map[string]any)
+	for _, raw := range array(afterFailedSave["sessions"]) {
+		row := object(raw)
 		if row["id"] == aSession {
 			foundA = true
 			require.Equal(t, true, row["usable"])
@@ -283,12 +305,14 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	}
 	var sourceResult string
 	wait(func(r map[string]any) bool {
-		for _, raw := range r["node_verifications"].([]any) {
-			v := raw.(map[string]any)
+		for _, raw := range array(r["node_verifications"]) {
+			v := object(raw)
 			if v["session_id"] == aSession && v["state"] == "completed" {
-				row := v["rows"].([]any)[0].(map[string]any)
+				rows := array(v["rows"])
+				require.NotEmpty(t, rows)
+				row := object(rows[0])
 				require.Equal(t, true, row["qualified"])
-				sourceResult = row["result_id"].(string)
+				sourceResult = text(row["result_id"])
 				return true
 			}
 		}
@@ -304,20 +328,20 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 		if report, ok := saved["core_report"].(map[string]any); ok {
 			if rows, ok := report["account_route_jobs"].([]any); ok {
 				for _, raw := range rows {
-					before[raw.(map[string]any)["id"].(string)] = true
+					before[text(object(raw)["id"])] = true
 				}
 			}
 		}
 		out, err := command(map[string]any{"operation": "verify_route_for_account", "operation_id": operation, "source_result_id": sourceResult, "session_id": bSession, "route_id": route})
 		require.NoError(t, err)
-		r := out["core_report"].(map[string]any)
+		r := object(out["core_report"])
 		require.Empty(t, r["error_code"])
-		jobs := r["account_route_jobs"].([]any)
+		jobs := array(r["account_route_jobs"])
 		if id := operationJobs[operation]; id != "" {
 			require.Len(t, jobs, len(before), "duplicate operation created another job")
 			found := false
 			for _, raw := range jobs {
-				current := raw.(map[string]any)["id"].(string)
+				current := text(object(raw)["id"])
 				require.True(t, before[current])
 				if current == id {
 					found = true
@@ -327,7 +351,7 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 			return id
 		}
 		for _, raw := range jobs {
-			id := raw.(map[string]any)["id"].(string)
+			id := text(object(raw)["id"])
 			if !before[id] {
 				require.Len(t, jobs, len(before)+1)
 				operationJobs[operation] = id
@@ -338,8 +362,8 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 		return ""
 	}
 	jobRow := func(r map[string]any, id string) map[string]any {
-		for _, raw := range r["account_route_jobs"].([]any) {
-			j := raw.(map[string]any)
+		for _, raw := range array(r["account_route_jobs"]) {
+			j := object(raw)
 			if j["id"] == id {
 				return j
 			}
@@ -350,11 +374,11 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	badReport := wait(func(r map[string]any) bool { j := jobRow(r, bad); return j != nil && j["state"] == "failed" })
 	badRow := jobRow(badReport, bad)
 	require.Equal(t, false, badRow["can_apply"])
-	require.Equal(t, float64(332), badRow["target"].(map[string]any)["expected_length"])
-	require.Equal(t, float64(356), badRow["target"].(map[string]any)["observed_length"])
+	require.Equal(t, float64(332), object(badRow["target"])["expected_length"])
+	require.Equal(t, float64(356), object(badRow["target"])["observed_length"])
 	out, err := command(map[string]any{"operation": "apply_account_route", "job_id": bad, "expected_binding_revision": ""})
 	require.NoError(t, err)
-	require.Equal(t, "TARGET_NOT_QUALIFIED", out["core_report"].(map[string]any)["error_code"])
+	require.Equal(t, "TARGET_NOT_QUALIFIED", object(out["core_report"])["error_code"])
 	bMismatch.Store(false)
 	good := start("B-qualified-check")
 	duplicate := start("B-qualified-check")
@@ -370,14 +394,15 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	require.ErrorIs(t, err, ErrPluginStateChanged)
 	repo.failSave = false
 	original := load()
-	require.NotContains(t, original["accounts"].(map[string]any)["42"].(map[string]any)["model_route_bindings"].(map[string]any), "gpt-6-astra")
+	originalBindings := object(object(object(original["accounts"])["42"])["model_route_bindings"])
+	require.NotContains(t, originalBindings, "gpt-6-astra")
 	out, err = command(map[string]any{"operation": "apply_account_route", "job_id": good, "expected_binding_revision": "", "enable_protection": true})
 	require.NoError(t, err)
-	require.Empty(t, out["core_report"].(map[string]any)["error_code"])
-	bindings := out["accounts"].(map[string]any)["42"].(map[string]any)["model_route_bindings"].(map[string]any)
+	require.Empty(t, object(out["core_report"])["error_code"])
+	bindings := object(object(object(out["accounts"])["42"])["model_route_bindings"])
 	require.Len(t, bindings, 2)
-	require.Equal(t, original["accounts"].(map[string]any)["42"].(map[string]any)["model_route_bindings"].(map[string]any)["gpt-5.6-sol"], bindings["gpt-5.6-sol"])
-	require.Equal(t, route, bindings["gpt-6-astra"].(map[string]any)["route_id"])
+	require.Equal(t, originalBindings["gpt-5.6-sol"], bindings["gpt-5.6-sol"])
+	require.Equal(t, route, object(bindings["gpt-6-astra"])["route_id"])
 	release()
 	finish(aResponse)
 	finish(solResponse)
@@ -394,30 +419,30 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	countsMu.Unlock()
 	report = getReport()
 	var revision string
-	for _, raw := range report["account_bindings"].([]any) {
-		v := raw.(map[string]any)
+	for _, raw := range array(report["account_bindings"]) {
+		v := object(raw)
 		if v["account_id"] == float64(42) && v["model"] == "gpt-6-astra" {
-			revision = v["revision"].(string)
+			revision = text(v["revision"])
 		}
 	}
 	require.NotEmpty(t, revision)
 	out, err = command(map[string]any{"operation": "remove_account_route_binding", "account_id": 42, "model": "gpt-6-astra", "expected_binding_revision": ""})
 	require.NoError(t, err)
-	require.Equal(t, "CONFIG_CONFLICT", out["core_report"].(map[string]any)["error_code"])
+	require.Equal(t, "CONFIG_CONFLICT", object(out["core_report"])["error_code"])
 	out, err = command(map[string]any{"operation": "remove_account_route_binding", "account_id": 42, "model": "gpt-6-astra", "expected_binding_revision": revision})
 	require.NoError(t, err)
-	require.Empty(t, out["core_report"].(map[string]any)["error_code"])
-	views := out["core_report"].(map[string]any)["account_bindings"].([]any)
+	require.Empty(t, object(out["core_report"])["error_code"])
+	views := array(object(out["core_report"])["account_bindings"])
 	var removedRevision string
 	for _, raw := range views {
-		view := raw.(map[string]any)
+		view := object(raw)
 		if view["account_id"] == float64(42) && view["model"] == "gpt-6-astra" {
-			removedRevision = view["revision"].(string)
+			removedRevision = text(view["revision"])
 		}
 	}
 	out, err = command(map[string]any{"operation": "restore_account_route_binding", "account_id": 42, "model": "gpt-6-astra", "expected_binding_revision": removedRevision})
 	require.NoError(t, err)
-	require.Empty(t, out["core_report"].(map[string]any)["error_code"])
+	require.Empty(t, object(out["core_report"])["error_code"])
 	// A fresh process keeps the binding but cannot use old process result IDs.
 	proc.kill()
 	nextProc := ccodexStartWithTestCA(t, ctx, installation, t.TempDir(), origin.Certificate().Raw)
@@ -429,7 +454,7 @@ func TestCCodexSignedAccountRouteReuse(t *testing.T) {
 	require.NoError(t, nextProc.validateAndApplyConfig(ctx, stored))
 	out, err = command(map[string]any{"operation": "apply_account_route", "job_id": good, "expected_binding_revision": ""})
 	require.NoError(t, err)
-	require.Equal(t, "VERIFICATION_EXPIRED", out["core_report"].(map[string]any)["error_code"])
+	require.Equal(t, "VERIFICATION_EXPIRED", object(out["core_report"])["error_code"])
 	finish(request(42, "gpt-6-astra", "private-user-message"))
 	require.Positive(t, connects.Load())
 	t.Log("verified: A/B independent credentials and Team policy, B mismatch rejected, idempotent validation, CAS rollback/retry, A and B-other-model in-flight SSE/state preserved, B-only binding/own-state harvest, stale-save refusal, restore and process restart")

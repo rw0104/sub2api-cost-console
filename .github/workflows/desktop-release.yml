@@ -8,9 +8,11 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  # Serialize publication with the standalone core channel workflow.
+  group: compatible-core-auto-update
   cancel-in-progress: false
 
 jobs:
@@ -121,9 +123,79 @@ jobs:
         working-directory: frontend
         run: node scripts/prepare-desktop-release.mjs --validate-notes-only
 
+      - name: Require complete backend CI for the release commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            $runs = @(gh run list --repo '${{ github.repository }}' --workflow backend-ci.yml --commit $env:GITHUB_SHA --limit 30 --json headSha,status,conclusion | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to read backend CI results' }
+            $matching = @($runs | Where-Object { $_.headSha -eq $env:GITHUB_SHA })
+            if (@($matching | Where-Object { $_.conclusion -eq 'success' }).Count -gt 0) { exit 0 }
+            if ($matching.Count -gt 0 -and @($matching | Where-Object { $_.status -ne 'completed' }).Count -eq 0) {
+              throw "Full backend CI failed for release commit $env:GITHUB_SHA; refusing publication"
+            }
+            Start-Sleep -Seconds 30
+          }
+          throw "No successful full backend CI found for release commit $env:GITHUB_SHA"
+
+      - name: Build and verify the matching stable core
+        working-directory: frontend
+        shell: pwsh
+        env:
+          CORE_RELEASE_TAG: core-stable
+          CORE_RELEASE_CHANNEL: stable
+        run: |
+          node --test scripts/core-release-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Core release contract tests failed' }
+          node scripts/prepare-core-release.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Core packaging or binary identity verification failed' }
+          $manifest = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          $archive = Join-Path release-assets $manifest.platforms.'windows-x86_64'.archive_name
+          node scripts/core-release-contract.mjs verify release-assets/core-latest.json $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Core artifact contract failed' }
+
       - name: Build and verify public plugin developer kit
         working-directory: frontend
         run: python scripts/prepare-plugin-devkit.py
+
+      - name: Publish compatible core before its desktop installer
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $target = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          gh release download core-stable --repo '${{ github.repository }}' --pattern core-latest.json --output release-assets/core-stable-before.json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read existing stable core; refusing blind replacement' }
+          $stable = Get-Content -Raw release-assets/core-stable-before.json | ConvertFrom-Json
+          if ([version]$stable.version -gt [version]$target.version -or
+              ([version]$stable.version -eq [version]$target.version -and [version]$stable.extension_version -gt [version]$target.extension_version)) {
+            throw 'Refusing to downgrade core-stable'
+          }
+          if ($stable.version -eq $target.version -and $stable.upstream_commit -ne $target.upstream_commit) {
+            throw 'Stable upstream identity changed unexpectedly'
+          }
+          if ($stable.platforms.'windows-x86_64'.archive_name -eq $target.platforms.'windows-x86_64'.archive_name -and
+              $stable.platforms.'windows-x86_64'.sha256 -ne $target.platforms.'windows-x86_64'.sha256) {
+            throw 'Refusing to replace an advertised core archive with different bytes; increment CORE_EXTENSION_VERSION'
+          }
+          $archive = Join-Path release-assets $target.platforms.'windows-x86_64'.archive_name
+          # Upload payload first. Existing clients keep the old manifest until
+          # its corresponding new binary has become downloadable.
+          gh release upload core-stable --repo '${{ github.repository }}' $archive --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core binary upload failed' }
+          gh release upload core-stable --repo '${{ github.repository }}' release-assets/CORE_SHA256SUMS.txt release-assets/core-latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core metadata upload failed' }
+          gh release download core-stable --repo '${{ github.repository }}' --pattern core-latest.json --output release-assets/core-stable-published.json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read published stable core' }
+          New-Item -ItemType Directory -Force release-assets/published-core | Out-Null
+          gh release download core-stable --repo '${{ github.repository }}' --pattern $target.platforms.'windows-x86_64'.archive_name --dir release-assets/published-core
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download the published core payload' }
+          $publishedArchive = Join-Path release-assets/published-core $target.platforms.'windows-x86_64'.archive_name
+          node scripts/core-release-contract.mjs verify release-assets/core-stable-published.json $publishedArchive
+          if ($LASTEXITCODE -ne 0) { throw 'Published core is incompatible with this desktop' }
 
       - name: Build and publish Tauri installer
         uses: tauri-apps/tauri-action@v1

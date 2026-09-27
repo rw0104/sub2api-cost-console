@@ -172,24 +172,6 @@ func (m *PluginManager) Rollback(ctx context.Context, id, versionID int64, accep
 	return result, nil
 }
 
-func (m *PluginManager) replaceVersion(ctx context.Context, current, candidate *PluginInstallation, acceptUntested bool) (result *PluginInstallation, err error) {
-	op, err := m.beginPluginOperation(ctx, current.ID, "version.replace", current.Revision)
-	if err != nil {
-		return nil, err
-	}
-	operationCommitted := false
-	defer func() {
-		if err != nil && !operationCommitted {
-			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
-		}
-	}()
-	result, err = m.replaceVersionWithOperation(ctx, current, candidate, acceptUntested, op)
-	if err == nil {
-		operationCommitted = true
-	}
-	return result, err
-}
-
 func (m *PluginManager) replaceVersionWithOperation(ctx context.Context, current, candidate *PluginInstallation, acceptUntested bool, op *PluginOperation) (result *PluginInstallation, err error) {
 	repo, ok := m.repo.(PluginVersionRepository)
 	if !ok {

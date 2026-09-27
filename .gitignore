@@ -140,6 +140,8 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/CI_RELEASE_LESSONS.md
+!docs/CI_BASELINE_V0.3.11.json
 !docs/2026-08-15_native-client-launcher-report.md
 !docs/2026-08-15_core-sync-conflict-repair.md
 !docs/ANTIGRAVITY_ATTRIBUTION_429.md
