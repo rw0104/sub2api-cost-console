@@ -30,6 +30,7 @@
 - 多代理可并行编辑互不重叠模块，但全量编译/lint须在相关文件冻结后启动。package loader 若先枚举旧文件、后读到引用新 helper 的文件，会报告不存在于最终代码的 typechecking 失败；必须以冻结快照重跑，不能把中间态错误算成旧债务，也不能据 `0 issues` 宣布通过。
 - WS 定价测试必须注入真实价格解析器并加载 APIKey.Group；仅设置 GroupID 或渠道价格样本不会保证经过对应生产计费分支。对目录价格漂移，使用实例私有的受控价格样本，保留行为和金额断言，不回退已更新的真实价格。
 - CAS 旧回调测试必须明确构造不同的持久化版本/时间值。`TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort` 曾用第二次 `time.Now()+5s` 作为“新”截止时间，Windows 上可能与刚写入的旧值相同（30 次定向执行失败 27 次），此时 CAS 合理匹配。改为以已持久化值明确偏移 1ms；不靠 Sleep、不放宽断言，也不为无效样本改生产算法。
+- unit 长期失败会遮住后续 integration 的结果。修复 unit 后发现 `TestPluginRepositoryV2MetadataAndScopeIsolation` 仍断言 v1 全局单 scope 独占，但迁移 246/247 已明确改为多插件按优先级及账号/用户/分组范围路由。应对照当前迁移与路由合同更新样本，并继续用真正非法的同插件重复 binding 验证事务回滚；不能为了旧测试恢复已废弃的全局唯一索引。
 - 发布必须绑定同一源码 SHA 的完整后端 CI 结果；不能用另一个提交或仅桌面成功充当后端质量证明。记录跳过项和非绿检查。
 - 协议能力或宿主补丁改变时递增扩展版本。桌面安装器与 `core-stable` 必须包含同一轮已验证内核；先上传实际二进制包，再发布含真实 SHA-256 的清单，最后发布依赖它的桌面版本。
 - 已被稳定清单引用的同名内核包禁止用不同 SHA-256 覆盖，重发不同内容须递增扩展版本；否则即使先包后清单，清单上传中断也会让旧客户端下载到哈希不符的包。
@@ -39,7 +40,9 @@
 
 ## 状态解释与验证边界
 
-v0.3.12 的验收入口：[源码及安装包](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.12)、[稳定内核通道](https://github.com/rw0104/sub2api-cost-console/releases/tag/core-stable)、[CI 执行记录](https://github.com/rw0104/sub2api-cost-console/actions/workflows/backend-ci.yml)。关闭事故须同时核对发布 tag 的源码 SHA、该 SHA 的完整 CI，以及下载后验签/哈希结果；只完成本地修复不等于线上已恢复。
+2026-09-27 本机 `go test -tags=unit -p 2 ./... -json` 完整执行 exit 0，61 个有测试的包通过，原 28 项失败逐项核对全部通过；Windows/Linux 不限诊断数量的 lint 均 exit 0、0 issues。纠正后的插件仓储集成用例在临时 PostgreSQL 18.1 / Redis 8.4 容器中通过真实迁移、路由范围、唯一约束和事务回滚校验，容器已自动清理；发布仍须通过最终源码 SHA 的 GitHub 完整检查。
+
+v0.3.12 的验收入口：[源码及安装包](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.12)、[稳定内核通道](https://github.com/rw0104/sub2api-cost-console/releases/tag/core-stable)、[CI 执行记录](https://github.com/rw0104/sub2api-cost-console/actions/workflows/backend-ci.yml)、[发布后下载验证报告](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.12/RELEASE_VERIFICATION.json)。关闭事故须同时核对发布 tag 的源码 SHA、该 SHA 的完整 CI，以及下载后验签/哈希结果；只完成本地修复不等于线上已恢复。
 
 Header Probe 是只读探针。请求不带状态头时长度 0 是合法结果；目标值 `—` 表示没有配置目标，不能单独证明插件失效。结合请求数、最近观测时间、runtime/PID 及绑定判断。当前只启用探针的原生 WebSocket 覆盖仍有限，不得宣称所有 v2 能力已经完整接入。
 

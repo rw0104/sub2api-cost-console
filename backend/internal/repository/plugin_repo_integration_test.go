@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,6 +104,10 @@ func TestPluginRepositoryV2MetadataAndScopeIsolation(t *testing.T) {
 		return repo.UpdateBindingsAndState(ctx, p.ID, bindings, service.PluginStateEnabled, "", &now, service.PluginStateStarting, p.BinarySHA256)
 	}
 	transport := install("transport", service.PluginCapabilityOpenAIOAuthOutbound)
+	transport.Bindings[0].Priority = 10
+	transport.Bindings[0].AccountIDs = []int64{101}
+	transport.Bindings[0].UserIDs = []int64{201}
+	transport.Bindings[0].GroupIDs = []int64{301}
 	extension := install("extension", pluginv2.CapabilityRequestPreprocess)
 	conflict := install("conflict", pluginv2.CapabilityRequestPreprocess)
 	require.NoError(t, enable(transport), "transport and preprocess occupy independent scopes")
@@ -112,12 +117,57 @@ func TestPluginRepositoryV2MetadataAndScopeIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, service.PluginStateEnabled, stored.State)
 	require.True(t, stored.Bindings[0].Enabled)
-	transportConflict := install("transport-conflict", service.PluginCapabilityOpenAIOAuthOutbound)
-	require.Error(t, enable(transportConflict), "v1 transport scopes remain exclusive")
-	conflicted, err := repo.GetByID(ctx, transportConflict.ID)
+	// Migrations 246/247 moved v1 exclusivity from the database to scoped host
+	// route selection. Separate plugins must retain independent enabled routes.
+	secondTransport := install("second-transport", service.PluginCapabilityOpenAIOAuthOutbound)
+	secondTransport.Bindings[0].Priority = 20
+	secondTransport.Bindings[0].AccountIDs = []int64{102}
+	secondTransport.Bindings[0].UserIDs = []int64{202}
+	secondTransport.Bindings[0].GroupIDs = []int64{302}
+	require.NoError(t, enable(secondTransport), "v1 routes may coexist across plugins")
+	firstStored, err := repo.GetByID(ctx, transport.ID)
 	require.NoError(t, err)
-	require.Equal(t, service.PluginStateStarting, conflicted.State)
-	require.False(t, conflicted.Bindings[0].Enabled, "the conflicting transaction must roll back")
+	secondStored, err := repo.GetByID(ctx, secondTransport.ID)
+	require.NoError(t, err)
+	for index, installed := range []*service.PluginInstallation{firstStored, secondStored} {
+		require.Equal(t, service.PluginStateEnabled, installed.State)
+		require.Len(t, installed.Bindings, 1)
+		binding := installed.Bindings[0]
+		require.True(t, binding.Enabled)
+		require.Equal(t, installed.ID, binding.PluginID)
+		require.Equal(t, (index+1)*10, binding.Priority)
+		require.Equal(t, []int64{int64(101 + index)}, binding.AccountIDs)
+		require.Equal(t, []int64{int64(201 + index)}, binding.UserIDs)
+		require.Equal(t, []int64{int64(301 + index)}, binding.GroupIDs)
+		routes, err := listPluginRoutes(ctx, integrationDB, installed.ID)
+		require.NoError(t, err)
+		require.Equal(t, installed.Bindings, routes, "the persisted route must retain its plugin scope")
+	}
+
+	// A duplicate scope inside one plugin is still forbidden. Exercise the
+	// actual uniqueness constraint after the state update and binding deletes,
+	// then prove the entire transaction (including route rows) rolled back.
+	duplicate := secondStored.Bindings[0]
+	duplicate.Enabled = false
+	duplicate.AccountIDs = []int64{999}
+	err = repo.UpdateBindingsAndState(ctx, secondStored.ID, []service.PluginBinding{duplicate, duplicate},
+		service.PluginStateDisabled, "must roll back", nil, service.PluginStateEnabled, secondStored.BinarySHA256)
+	var constraintError *pq.Error
+	require.ErrorAs(t, err, &constraintError)
+	require.Equal(t, pq.ErrorCode("23505"), constraintError.Code)
+	require.Equal(t, "sub2api_plugin_bindings_scope_unique", constraintError.Constraint)
+	afterRollback, err := repo.GetByID(ctx, secondStored.ID)
+	require.NoError(t, err)
+	require.Equal(t, secondStored, afterRollback, "failed replacement must preserve state, revision and original bindings")
+	legacyBindings, err := listLegacyPluginBindings(ctx, integrationDB, secondStored.ID)
+	require.NoError(t, err)
+	require.Equal(t, secondStored.Bindings, legacyBindings)
+	routes, err := listPluginRoutes(ctx, integrationDB, secondStored.ID)
+	require.NoError(t, err)
+	require.Equal(t, secondStored.Bindings, routes, "failed replacement must restore the original route rows")
+	firstAfterRollback, err := repo.GetByID(ctx, firstStored.ID)
+	require.NoError(t, err)
+	require.Equal(t, firstStored, firstAfterRollback, "another plugin's route must remain untouched")
 	current, err := repo.GetByID(ctx, extension.ID)
 	require.NoError(t, err)
 	require.True(t, current.Bindings[0].Enabled)
