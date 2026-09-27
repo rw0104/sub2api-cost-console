@@ -242,7 +242,8 @@ jobs:
           gh release upload "${{ steps.release-meta.outputs.tag }}" `
             (Resolve-Path release-assets/latest.json) `
             (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) `
-            (Resolve-Path DESKTOP_RELEASE_NOTES.md) --clobber
+            (Resolve-Path DESKTOP_RELEASE_NOTES.md) `
+            (Resolve-Path ../assets/qq-community-qrcode.jpg) --clobber
 
       - name: Publish plugin development guide and source kit
         shell: pwsh

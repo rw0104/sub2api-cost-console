@@ -40,3 +40,9 @@
 
 - v0.3.12 及更早桌面仍可能存在本次托盘事件丢失问题；回退时需考虑此限制。
 - Tauri updater 的 `.sig` 用于自动更新验签，不代表 Windows Authenticode 发行者签名。
+
+## 用户交流
+
+欢迎加入 QQ 用户交流群 **960663114**，交流安装使用、插件配置和运维经验。[查看 README 交流群入口](https://github.com/rw0104/sub2api-cost-console#community)。
+
+<img src="https://raw.githubusercontent.com/rw0104/sub2api-cost-console/v0.3.13/assets/qq-community-qrcode.jpg" alt="Sub2API Cost Console QQ 用户交流群二维码，群号 960663114" width="320" />

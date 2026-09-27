@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/rw0104/sub2api-cost-console?label=最新版本)](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 [![License](https://img.shields.io/badge/License-LGPL--3.0--or--later-blue)](LICENSE)
 
-[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [插件与开发者](#plugin-development) · [常见问题](#faq) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
+[下载 Windows 版](https://github.com/rw0104/sub2api-cost-console/releases/latest) · [开始使用](#getting-started) · [完整功能](#features) · [插件与开发者](#plugin-development) · [常见问题](#faq) · [用户交流群](#community) · [反馈问题](https://github.com/rw0104/sub2api-cost-console/issues)
 
 </div>
 
@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.3.7 更新兼容内核到上游 v0.2.8，并修复成本中心价格目录同步 404。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.7 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.7) 下载配套 SDK 与示例。
+**v0.3.13 修复最小化到托盘后无法恢复主窗口，以及 Header Probe 观测状态显示不准确的问题。** 管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.13 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.13) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
@@ -363,13 +363,25 @@
 
 ## 版本说明与反馈
 
-这份介绍按 **桌面 v0.3.7** 的功能整理，内置兼容内核基线为 **v0.2.8**；可下载安装的版本以发布页为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+本轮更新为 **桌面 v0.3.13**，内置兼容内核基线为 **v0.2.8**、扩展 **1.3.5**；可下载安装的版本以发布页为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)
 - [提交问题或功能建议](https://github.com/rw0104/sub2api-cost-console/issues)
 
 反馈时，带上桌面与内核版本、出问题前的操作、报错内容和脱敏截图，会更容易复现。成本问题还可以补充观察时间范围和账号计费方式，无需提供真实密钥。
+
+<a id="community"></a>
+
+## 用户交流群
+
+欢迎加入 **Sub2API Cost Console QQ 用户交流群**，交流安装使用、账号管理、插件配置和日常运维经验。
+
+**QQ群号：960663114**。使用 QQ 扫描下方二维码加入，也可以按群号搜索；点击图片可查看原图。
+
+<a href="assets/qq-community-qrcode.jpg"><img src="assets/qq-community-qrcode.jpg" alt="Sub2API Cost Console QQ 用户交流群二维码，群号 960663114" width="320" /></a>
+
+需要持续跟进的错误或功能建议，也欢迎提交到 [GitHub Issues](https://github.com/rw0104/sub2api-cost-console/issues)。
 
 ## 致谢与许可
 
