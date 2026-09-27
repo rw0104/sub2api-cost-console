@@ -2619,22 +2619,23 @@ mod tests {
         official.algorithm_version = "1.6.0".into();
 
         assert_eq!(effective_algorithm_version(&official), "unavailable");
-        official.capabilities = vec!["account_cost_loss_ledger.v1".into()];
-        assert_eq!(effective_algorithm_version(&official), "unavailable");
-        official
-            .capabilities
-            .push("account_economics_sampling.v1".into());
-        assert_eq!(effective_algorithm_version(&official), "unavailable");
-        official.capabilities.push("plugin_extensions.v2".into());
-        assert_eq!(effective_algorithm_version(&official), "unavailable");
-        official
-            .capabilities
-            .push("openai.oauth.protection_transport.v1".into());
-        assert_eq!(effective_algorithm_version(&official), "unavailable");
-        official
-            .capabilities
-            .push("plugin_publisher_trust.v1".into());
+        let required = required_capabilities();
+        assert!(!required.is_empty());
+        official.capabilities = required.clone();
         assert_eq!(effective_algorithm_version(&official), "1.6.0");
+
+        for missing in &required {
+            official.capabilities = required
+                .iter()
+                .filter(|capability| *capability != missing)
+                .cloned()
+                .collect();
+            assert_eq!(
+                effective_algorithm_version(&official),
+                "unavailable",
+                "a core missing {missing} must not claim the desktop algorithm"
+            );
+        }
     }
 
     #[test]
