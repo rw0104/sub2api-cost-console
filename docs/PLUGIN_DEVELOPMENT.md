@@ -1,8 +1,10 @@
-# 插件开发指南 · 正式版 v0.3.13
+# 插件开发指南 · 正式版 v0.3.14
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应正式桌面 **0.3.13**、兼容内核 **0.2.8**、扩展 **1.3.5**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1` 及通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.8，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+> 本指南对应正式桌面 **0.3.14**、兼容内核 **0.2.9**、扩展 **1.3.6**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1` 及通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.9，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+
+v0.3.14 接入上游 v0.2.9，扩展 1.3.6 保留插件拒绝、已发送请求失败与客户端取消的处理边界，插件协议及六项内核必需能力保持兼容。桌面或内核升级后首次启动会停用旧插件一次，保留配置、原包、发布者信任和路由作用域，确认兼容后可重新启用。
 
 v0.3.11 已修复宿主异步健康探测被提前取消导致的插件周期重建；v0.3.12 将桌面与扩展 1.3.4 的稳定内核同步发布，已有兼容插件无需重新打包。当前仅启用预处理或请求头探针时，原生 WebSocket 不保证进入 HTTP hook；通用 Provider Adapter、事件消费和后台 Worker 尚未注册。账号元数据 RPC 已有宿主实现，但标准 Go SDK 的 `HostClient` 尚未暴露该方法，不能将协议声明等同于完整 SDK 接入。
 
@@ -22,10 +24,10 @@ v0.3.13 修复 Windows 托盘点击被丢弃导致主窗口无法恢复的问题
 
 宿主保留插件协议、SDK、通用运行时、管理界面和契约测试，这些是宿主支持插件所需的代码；具体第三方插件实现和历史开发产物不属于宿主。仓库 CI 会拒绝重新纳入根目录 `plugins/` 或旧插件产物目录。
 
-- 推荐下载 [v0.3.13 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.13/sub2api-plugin-devkit-v0.3.13.zip)，解压后先读根目录 `START_HERE.md`。
+- 推荐下载 [v0.3.14 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.3.14/sub2api-plugin-devkit-v0.3.14.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 只需安装 Go 1.27.0 即可编译示例；无需 Rust、Node.js 或主程序源码。vendor 支持在已有 Go 1.27.0 工具链的机器上离线构建，Go 工具链自身不在包内。
-- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.13` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.3.14` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
 - 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
@@ -90,7 +92,7 @@ Write-Output "    publisher-demo: '$publicKey'"
 
 ### 开发环境验收
 
-1. 安装正式桌面 v0.3.13，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
+1. 安装正式桌面 v0.3.14，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
@@ -262,7 +264,7 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 | 503 extension_error | fail_closed、超时、并发、熔断、进程或绑定状态不可用 |
 | 未修改请求 | 检查作用域交集、优先级、灰度、权限和白名单 |
 | 容器启动失败 | 本地镜像、Docker Linux Engine、Linux 静态二进制与架构 |
-| 找不到 Host API/能力 | 检查正式桌面 0.3.13、扩展 1.3.5，以及实际连接的宿主身份，不能只看内核 0.2.8 |
+| 找不到 Host API/能力 | 检查正式桌面 0.3.14、扩展 1.3.6，以及实际连接的宿主身份，不能只看内核 0.2.9 |
 
 ### 向别人分发自己的插件
 
@@ -290,7 +292,7 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 
 若旧版本显示插件错误且 Codex 请求被阻断，先在插件管理中点击停用，使路由绑定真正关闭，再检查兼容性并重新启用。无须卸载插件来清理绑定。直接覆盖安装新版桌面也会在首次启动修复此类遗留启用状态。
 
-导入时报 `json: unknown field "failure_mode"`，表示实际接收安装请求的内核解析器不认识 v2 清单字段。核对「版本与更新」中的扩展版本和连接方式；上游原版即使内核号也是 0.2.8，也不包含本项目的 v2 扩展。外部服务需单独更新，桌面外壳升级不等于外部 API 已升级。不要删除清单字段或重新压缩已签名的安装包。
+导入时报 `json: unknown field "failure_mode"`，表示实际接收安装请求的内核解析器不认识 v2 清单字段。核对「版本与更新」中的扩展版本和连接方式；上游原版即使内核号也是 0.2.9，也不包含本项目的 v2 扩展。外部服务需单独更新，桌面外壳升级不等于外部 API 已升级。不要删除清单字段或重新压缩已签名的安装包。
 
 ## v0.3.4 的密钥持久化与旧配置恢复
 
