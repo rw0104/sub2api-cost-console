@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.3.15 接入上游 v0.2.9，并修复桌面插件配置保存的 CORS 预检。** 允许插件携带版本头保存配置，并读取版本与操作 ID；同时保留 v0.3.14 的图片计费、长上下文成本、自动用卡调度、模型目录兼容、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.15 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.15) 下载配套 SDK 与示例。
+**v0.3.16 接入上游 v0.2.10，并继续修复桌面插件配置保存的 CORS 预检。** 同步 Claude Sonnet 5.5、原生重置额度、风控白名单、复合分组 WebSocket 路由和流式用量修复；同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.16 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.16) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
@@ -363,7 +363,7 @@
 
 ## 版本说明与反馈
 
-本轮更新为 **桌面 v0.3.15**，内置兼容内核基线为 **v0.2.9**、扩展 **1.3.7**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.3.15 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.15) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+本轮更新为 **桌面 v0.3.16**，内置兼容内核基线为 **v0.2.10**、扩展 **1.3.8**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.3.16 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.16) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)

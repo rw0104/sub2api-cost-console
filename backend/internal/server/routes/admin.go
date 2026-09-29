@@ -375,6 +375,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/cost-loss-events/:event_id/refund", h.Admin.Account.RecordCostLossRefund)
 		accounts.POST("/:id/cost-loss/reverse", h.Admin.Account.ReverseCostLoss)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
+		accounts.GET("/:id/claude/reset-credits", h.Admin.Account.ClaudeResetCredits)
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)
 		accounts.POST("/check-mixed-channel", h.Admin.Account.CheckMixedChannel)
