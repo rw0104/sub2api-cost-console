@@ -8,7 +8,8 @@ $reviewedPaths = @(
     'backend/internal/service/account_test_service.go',
     'backend/internal/service/ratelimit_service.go',
     'backend/internal/service/openai_gateway_upstream_errors.go',
-    'backend/internal/service/openai_ws_http_bridge.go'
+    'backend/internal/service/openai_ws_http_bridge.go',
+    'backend/internal/handler/openai_gateway_handler.go'
 )
 if ($Path -notin $reviewedPaths) {
     throw "Unsupported compatible-core merge path: $Path"
@@ -173,6 +174,23 @@ func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
 	}
 "@
         $merged = $merged.Replace($insertBefore, $modelBlock + $insertBefore)
+    } elseif ($Path -eq 'backend/internal/handler/openai_gateway_handler.go') {
+        if ($conflictMatches.Count -ne 1) {
+            throw "The reviewed Responses WebSocket merge shape changed; leaving the conflict blocked"
+        }
+        $match = $conflictMatches[0]
+        if ($match.Groups['ours'].Value -notmatch 'ResolveChannelMappingAndRestrict\(ctx, apiKey\.GroupID, reqModel\)' -or
+            $match.Groups['ours'].Value -notmatch 'WithOpenAIForwardModel' -or
+            $match.Groups['theirs'].Value -notmatch 'ResolveChannelMappingAndRestrict\(ctx, apiKey\.GroupID, wsRouteModel\)' -or
+            $match.Groups['theirs'].Value -notmatch 'openAIChannelForwardModel\(channelMappingWS, wsRouteModel\)') {
+            throw "The reviewed Responses WebSocket merge content changed; leaving the conflict blocked"
+        }
+        $replacement = [string]::Join("`n", @(
+            "`tchannelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, wsRouteModel)"
+            "`twsForwardModel := openAIChannelForwardModel(channelMappingWS, wsRouteModel)"
+            "`tctx = service.WithOpenAIForwardModel(ctx, wsForwardModel, false)"
+        )) + "`n"
+        $merged = $merged.Remove($match.Index, $match.Length).Insert($match.Index, $replacement)
     } else {
         $merged = [Text.Encoding]::UTF8.GetString((Get-GitBlobBytes ":3:$Path"))
         $merged = $merged.Replace(
@@ -203,6 +221,11 @@ func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
     if ($Path -eq 'backend/internal/service/openai_ws_http_bridge.go' -and
         $merged -notmatch 'account\.IsK12Account\(\)') {
         throw "Reviewed OpenAI WS bridge merge dropped K12 failover routing"
+    }
+    if ($Path -eq 'backend/internal/handler/openai_gateway_handler.go' -and
+        ($merged -notmatch 'ResolveChannelMappingAndRestrict\(ctx, apiKey\.GroupID, wsRouteModel\)' -or
+         $merged -notmatch 'WithOpenAIForwardModel\(ctx, wsForwardModel, false\)')) {
+        throw "Reviewed Responses WebSocket merge dropped composite routing or cost context"
     }
 
     $utf8NoBom = [Text.UTF8Encoding]::new($false)
