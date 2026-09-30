@@ -24,6 +24,7 @@ var DefaultModels = []Model{
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
 	{ID: "gpt-5.6-luna", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Luna"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
+	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
 	{ID: "gpt-5.5", Object: "model", Created: 1776873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.5"},
@@ -121,6 +122,7 @@ func CanonicalizeOpenAIModelAliasSpelling(model string) string {
 		{"gpt-5.3-codexspark", "gpt-5.3-codex-spark"},
 		{"gpt-5.3codexspark", "gpt-5.3-codex-spark"},
 		{"gpt-5.3codex", "gpt-5.3-codex"},
+		{"gpt-6.1sol", "gpt-6.1-sol"},
 	}
 	for _, replacement := range replacements {
 		normalized = strings.ReplaceAll(normalized, replacement.from, replacement.to)
@@ -173,6 +175,25 @@ func IsGPT6SolOrLunaModelSpelling(model string) bool {
 			case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// IsGPT61SolModelSpelling recognizes GPT-6.1 Sol (gpt-6.1-sol) and its effort/
+// compact suffix variants. Kept separate from IsGPT6SolOrLunaModelSpelling so it
+// canonicalizes to its own billing/catalog identity instead of collapsing into
+// gpt-6-sol / gpt-6-luna.
+func IsGPT61SolModelSpelling(model string) bool {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	const base = "gpt-6.1-sol"
+	if canonical == base {
+		return true
+	}
+	if suffix, ok := strings.CutPrefix(canonical, base+"-"); ok {
+		switch suffix {
+		case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
+			return true
 		}
 	}
 	return false

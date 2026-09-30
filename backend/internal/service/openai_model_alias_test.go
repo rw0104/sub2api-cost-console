@@ -12,6 +12,19 @@ func TestNormalizeKnownOpenAICodexModelGPT6Astra(t *testing.T) {
 	}
 }
 
+func TestNormalizeKnownOpenAICodexModelGPT61Sol(t *testing.T) {
+	for _, model := range []string{
+		"gpt-6.1-sol", "openai/gpt-6.1-sol", "GPT-6.1-SOL", "gpt-6.1sol",
+		"gpt-6.1-sol-max", "openai/gpt-6.1-sol-high", "gpt-6.1-sol-openai-compact",
+	} {
+		require.Equal(t, "gpt-6.1-sol", normalizeKnownOpenAICodexModel(model), model)
+		require.True(t, isOpenAIGPT6Model(model), model)
+	}
+	// GPT-6.1 Sol must not collapse into the gpt-6-sol / gpt-6-luna identity.
+	require.NotEqual(t, "gpt-6-sol", normalizeKnownOpenAICodexModel("gpt-6.1-sol"))
+	require.NotEqual(t, "gpt-6-luna", normalizeKnownOpenAICodexModel("gpt-6.1-sol"))
+}
+
 func TestNormalizeKnownOpenAICodexModel_BareGPT56RoutesToSol(t *testing.T) {
 	tests := map[string]string{
 		"gpt-5.6":            "gpt-5.6-sol",
