@@ -280,19 +280,56 @@ export async function getConfig(id: number): Promise<Record<string, unknown>> {
   return data
 }
 
+export interface PluginConfigSaveResult {
+  /** 保存后的配置内容（后端回显）。 */
+  config: Record<string, unknown>
+  /** 写入路径返回的权威 revision（来自 X-Plugin-Revision 响应头）。 */
+  revision?: number
+  /** 本次写入的 ETag（如 "plugin-<id>-<rev>"）。 */
+  etag?: string
+  /** 本次写入的操作 ID（X-Plugin-Operation-ID），用于日志/幂等排查。 */
+  operationId?: string
+}
+
+/** 解析 X-Plugin-Revision 响应头为正整数 revision，非法或缺失返回 undefined。 */
+function parsePluginRevisionHeader(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+/** 读取字符串响应头，空白/缺失返回 undefined。 */
+function readStringHeader(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
 export async function saveConfig(
   id: number,
   config: Record<string, unknown>,
   expectedRevision?: number
-): Promise<Record<string, unknown>> {
+): Promise<PluginConfigSaveResult> {
+  const headers: Record<string, string> = {}
   if (expectedRevision && expectedRevision > 0) {
-    const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config, {
-      headers: { 'If-Match': String(expectedRevision) },
-    })
-    return data
+    // 优先走 X-Plugin-Revision 专用通道（后端优先读取它）。
+    // If-Match 保留为向后兼容回退，兼顾仅识别 If-Match 的旧宿主。
+    headers['X-Plugin-Revision'] = String(expectedRevision)
+    headers['If-Match'] = String(expectedRevision)
   }
-  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config)
-  return data
+  const response = await apiClient.put<Record<string, unknown>>(
+    `/admin/plugins/${id}/config`,
+    config,
+    Object.keys(headers).length ? { headers } : undefined
+  )
+  return {
+    config: response.data,
+    revision: parsePluginRevisionHeader(response.headers['x-plugin-revision']),
+    etag: readStringHeader(response.headers['etag']),
+    operationId: readStringHeader(response.headers['x-plugin-operation-id']),
+  }
 }
 
 export async function test(id: number): Promise<PluginTestResult> {
