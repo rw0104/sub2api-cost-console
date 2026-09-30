@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { inspect, upload, upgrade } from '../plugins'
+import { inspect, saveConfig, upload, upgrade } from '../plugins'
 
 const { adapter } = vi.hoisted(() => ({ adapter: vi.fn() }))
 vi.mock('@/api/client', async () => {
@@ -43,5 +43,37 @@ describe('plugin package multipart encoding', () => {
     expect(form.get('trust_publisher')).toBe('true')
     expect(form.get('package_sha256')).toBe(approval.package_sha256)
     expect(form.get('publisher_fingerprint')).toBe(approval.publisher_fingerprint)
+  })
+})
+
+describe('plugin config save revision headers', () => {
+  beforeEach(() => {
+    adapter.mockReset()
+    adapter.mockImplementation(async config => ({ data: {}, status: 200, statusText: 'OK', headers: {}, config }))
+  })
+  it('以 X-Plugin-Revision 为主通道并保留 If-Match 回退，同时解析写入响应头', async () => {
+    adapter.mockImplementationOnce(async config => ({
+      data: { enabled: true }, status: 200, statusText: 'OK',
+      headers: { 'x-plugin-revision': '5', etag: 'plugin-7-5', 'x-plugin-operation-id': 'op-1' },
+      config,
+    }))
+    const result = await saveConfig(7, { enabled: true }, 4)
+    const request = adapter.mock.calls[0][0]
+    expect(request.url).toBe('/admin/plugins/7/config')
+    expect(request.headers.get('X-Plugin-Revision')).toBe('4')
+    expect(request.headers.get('If-Match')).toBe('4')
+    expect(result).toEqual({ config: { enabled: true }, revision: 5, etag: 'plugin-7-5', operationId: 'op-1' })
+  })
+  it('未提供 expectedRevision 时不带 revision 相关请求头', async () => {
+    await saveConfig(7, { enabled: false })
+    const request = adapter.mock.calls[0][0]
+    expect(request.headers.get('X-Plugin-Revision')).toBeFalsy()
+    expect(request.headers.get('If-Match')).toBeFalsy()
+  })
+  it('非正数或非法的 revision 响应头按缺失处理', async () => {
+    adapter.mockImplementationOnce(async config => ({ data: {}, status: 200, statusText: 'OK', headers: { 'x-plugin-revision': '0' }, config }))
+    expect((await saveConfig(7, {}, 1)).revision).toBeUndefined()
+    adapter.mockImplementationOnce(async config => ({ data: {}, status: 200, statusText: 'OK', headers: { 'x-plugin-revision': 'not-a-number' }, config }))
+    expect((await saveConfig(7, {}, 1)).revision).toBeUndefined()
   })
 })

@@ -199,7 +199,7 @@ describe('管理员插件页二次验证', () => {
       binary_sha256: 'b'.repeat(64), saved_at: '2026-09-17T12:00:00Z',
       expires_at: '2026-09-18T12:00:00Z', manifest: plugin.manifest, compatibility: plugin.compatibility,
     }])
-    savePluginConfig.mockResolvedValue({ enabled: true })
+    savePluginConfig.mockResolvedValue({ config: { enabled: true }, revision: 2, etag: 'plugin-7-2', operationId: 'op-1' })
     loadPluginConfig.mockResolvedValue({})
     recoverPluginConfig.mockResolvedValue({ enabled: true })
     createUISession.mockResolvedValue({
@@ -350,6 +350,32 @@ describe('管理员插件页二次验证', () => {
     expect(savePluginConfig).not.toHaveBeenCalled()
     expect(stepUpRun).toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('admin.plugins.configUnreadable')
+  })
+
+  it('保存配置携带 revision 并以写入响应头对账，避免重放滞后的 revision', async () => {
+    listPlugins.mockResolvedValue([{ ...plugin, revision: 1 }])
+    // 保存后的全量刷新故意返回滞后的 revision（仍为 1），用于证明前端会采用
+    // 写入响应头返回的权威 revision，而不是重放读副本可能滞后的旧值。
+    getPlugin.mockImplementation(async () => ({ ...plugin, revision: 1 }))
+    savePluginConfig
+      .mockResolvedValueOnce({ config: { enabled: true }, revision: 2, etag: 'plugin-7-2', operationId: 'op-1' })
+      .mockResolvedValueOnce({ config: { enabled: false }, revision: 3, etag: 'plugin-7-3', operationId: 'op-2' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'admin.plugins.configure')!.trigger('click')
+    await flushPromises()
+    const frame = wrapper.get('iframe').element as HTMLIFrameElement
+    const save = async (id: string, config: object) => {
+      window.dispatchEvent(new MessageEvent('message', { origin: 'null', source: frame.contentWindow,
+        data: { source: 'sub2api-plugin-ui', bridge_token: 'bridge', type: 'config.save', request_id: id, config } }))
+      await flushPromises()
+    }
+    await save('save-1', { enabled: true })
+    expect(savePluginConfig).toHaveBeenNthCalledWith(1, 7, { enabled: true }, 1)
+    await save('save-2', { enabled: false })
+    // 全量刷新返回 revision 1，但写入响应头声明为 2，第二次保存必须发送 2，
+    // 而不是重放滞后的 1。
+    expect(savePluginConfig).toHaveBeenNthCalledWith(2, 7, { enabled: false }, 2)
   })
 
   it('切换插件时丢弃迟到的配置解密失败和确认', async () => {

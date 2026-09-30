@@ -1019,17 +1019,30 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
             }
             return adminAPI.plugins.recoverConfig(pluginID, message.config as Record<string, unknown>, digest);
           }
-          const saved = configPlugin.value?.revision && configPlugin.value.revision > 0
+          const result = configPlugin.value?.revision && configPlugin.value.revision > 0
             ? await adminAPI.plugins.saveConfig(
               pluginID,
               message.config as Record<string, unknown>,
               configPlugin.value.revision,
             )
             : await adminAPI.plugins.saveConfig(pluginID, message.config as Record<string, unknown>);
-          // Refresh the installation metadata so the next bridge save uses
-          // the newly issued revision instead of replaying a stale ETag.
-          configPlugin.value = await adminAPI.plugins.get(pluginID);
-          return saved;
+          // Refresh the installation metadata so the UI reflects the latest state.
+          const refreshed = await adminAPI.plugins.get(pluginID);
+          // The write path returns the authoritative revision/etag in response
+          // headers. Prefer them over this follow-up read (which may hit a lagging
+          // replica) so the next bridge save never replays a stale ETag and gets
+          // rejected as a conflict.
+          if (result.revision && result.revision > (refreshed.revision ?? 0)) {
+            refreshed.revision = result.revision;
+            if (result.etag) refreshed.etag = result.etag;
+          }
+          configPlugin.value = refreshed;
+          if (result.operationId) {
+            console.debug(
+              `[plugin] config saved operation=${result.operationId} revision=${result.revision ?? refreshed.revision ?? "?"}`,
+            );
+          }
+          return result.config;
         });
         if (generation !== frameGeneration) break;
         configRecoveryDigest.value = "";
