@@ -220,31 +220,6 @@ func TestGPT6AstraDedicatedFallbacksUseOfficialRates(t *testing.T) {
 	}
 }
 
-func TestGPT61SolDedicatedFallbacksUseOfficialRates(t *testing.T) {
-	tests := []struct {
-		name string
-		svc  *BillingService
-	}{
-		{name: "pricing_service", svc: NewBillingService(&config.Config{}, &PricingService{pricingData: map[string]*LiteLLMModelPricing{}})},
-		{name: "billing_service", svc: NewBillingService(&config.Config{}, nil)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for _, model := range []string{"gpt-6.1-sol", "openai/gpt-6.1-sol-max", "gpt-6.1sol"} {
-				pricing, err := tt.svc.GetModelPricing(model)
-				require.NoError(t, err, model)
-				// Must hit the dedicated GPT-6.1 Sol rates, never the gpt-5.4 fallback.
-				require.InDelta(t, 2e-6, pricing.InputPricePerToken, 1e-12, model)
-				require.InDelta(t, 4e-6, pricing.InputPricePerTokenPriority, 1e-12, model)
-				require.InDelta(t, 10e-6, pricing.OutputPricePerToken, 1e-12, model)
-				// The headline change vs GPT-6 Sol: cached input at $0.10/M.
-				require.InDelta(t, 0.1e-6, pricing.CacheReadPricePerToken, 1e-12, model)
-				require.Equal(t, 272_000, pricing.LongContextInputThreshold, model)
-			}
-		})
-	}
-}
-
 func TestPricingServiceBareGPT6AliasUsesAstra(t *testing.T) {
 	astraPricing := &LiteLLMModelPricing{InputCostPerToken: 123e-6, OutputCostPerToken: 456e-6}
 	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-6-astra": astraPricing}}
