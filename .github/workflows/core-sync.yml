@@ -154,7 +154,8 @@ jobs:
               'backend/internal/service/account_test_service.go',
               'backend/internal/service/ratelimit_service.go',
               'backend/internal/service/openai_gateway_upstream_errors.go',
-              'backend/internal/service/openai_ws_http_bridge.go'
+              'backend/internal/service/openai_ws_http_bridge.go',
+              'backend/internal/handler/openai_gateway_handler.go'
             )
             $localOverlayPaths = @(
               'README.md',
