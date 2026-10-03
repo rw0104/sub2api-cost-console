@@ -6,17 +6,20 @@
     </div>
     <form @submit.prevent="save">
       <label>
-        <span>监听地址</span>
-        <input v-model.trim="host" list="desktop-listen-hosts" spellcheck="false" :disabled="working || busy" />
-        <datalist id="desktop-listen-hosts">
-          <option value="127.0.0.1">仅本机</option>
-          <option value="localhost">仅本机</option>
-          <option value="0.0.0.0">局域网可访问</option>
-        </datalist>
+        <span>监听范围</span>
+        <select v-model="mode" :disabled="working || busy">
+          <option value="127.0.0.1">仅本机（127.0.0.1）</option>
+          <option value="0.0.0.0">局域网可访问（0.0.0.0）</option>
+          <option value="custom">自定义 IPv4</option>
+        </select>
+      </label>
+      <label v-if="mode === 'custom'">
+        <span>IPv4 地址</span>
+        <input v-model.trim="customHost" type="text" placeholder="192.168.1.10" autocomplete="off" spellcheck="false" :disabled="working || busy" />
       </label>
       <label>
         <span>端口</span>
-        <input v-model.number="port" type="number" min="1024" max="65535" :disabled="working || busy" />
+        <input v-model.trim="portText" type="text" inputmode="numeric" maxlength="5" autocomplete="off" :disabled="working || busy" />
       </label>
       <button type="submit" :disabled="working || busy || !changed">保存</button>
     </form>
@@ -49,19 +52,23 @@ interface ListenSettingsView {
 defineProps<{ busy?: boolean }>()
 
 const view = ref<ListenSettingsView | null>(null)
-const host = ref('')
-const port = ref(0)
+const mode = ref<'127.0.0.1' | '0.0.0.0' | 'custom'>('127.0.0.1')
+const customHost = ref('')
+const portText = ref('')
 const working = ref(false)
 const errorMessage = ref('')
 
+const host = computed(() => (mode.value === 'custom' ? customHost.value : mode.value))
+const port = computed(() => (/^\d{1,5}$/.test(portText.value) ? Number(portText.value) : NaN))
 const changed = computed(() => !!view.value && (host.value !== view.value.host || port.value !== view.value.port))
 const exposed = computed(() => !/^(localhost|127(\.\d{1,3}){3})$/i.test(host.value))
 
 function accept(next: ListenSettingsView | null | undefined) {
   if (!next) return
   view.value = next
-  host.value = next.host
-  port.value = next.port
+  mode.value = next.host === '127.0.0.1' || next.host === '0.0.0.0' ? next.host : 'custom'
+  customHost.value = mode.value === 'custom' ? next.host : ''
+  portText.value = String(next.port)
 }
 
 function messageOf(error: unknown): string {
@@ -70,10 +77,14 @@ function messageOf(error: unknown): string {
 
 async function save() {
   if (working.value) return
+  if (!Number.isInteger(port.value)) {
+    errorMessage.value = '端口必须是 1024 到 65535 之间的数字'
+    return
+  }
   working.value = true
   errorMessage.value = ''
   try {
-    accept(await invoke<ListenSettingsView>('desktop_listen_settings_save', { host: host.value, port: Number(port.value) }))
+    accept(await invoke<ListenSettingsView>('desktop_listen_settings_save', { host: host.value, port: port.value }))
   } catch (error) {
     errorMessage.value = messageOf(error)
   } finally {
@@ -104,13 +115,13 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.desktop-listen { margin: 14px; padding: 14px 16px; border: 1px solid #303b32; background: #161c17; }
+.desktop-listen { margin: 14px 0 0; padding: 14px 16px; border: 1px solid #303b32; border-radius: 12px; background: #161c17; }
 .desktop-listen__title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .desktop-listen__title span { color: #7f8e82; font-size: 10px; }
 .desktop-listen__title strong { color: #dce6dd; font: 12px 'Cascadia Mono', monospace; }
-.desktop-listen form { display: grid; grid-template-columns: 1fr 96px auto; align-items: end; gap: 8px; margin-top: 12px; }
+.desktop-listen form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: end; gap: 8px; margin-top: 12px; }
 .desktop-listen label span { display: block; margin-bottom: 4px; color: #718078; font-size: 10px; }
-.desktop-listen input { width: 100%; min-height: 32px; padding: 0 9px; color: #dce6dd; border: 1px solid #38443a; border-radius: 8px; background: #111611; font: 12px 'Cascadia Mono', monospace; }
+.desktop-listen input, .desktop-listen select { width: 100%; min-height: 32px; padding: 0 9px; color: #dce6dd; border: 1px solid #38443a; border-radius: 8px; background: #111611; font: 12px 'Cascadia Mono', monospace; }
 .desktop-listen button { min-height: 32px; padding: 0 12px; color: #11160f; border: 1px solid #b9e55a; border-radius: 8px; background: #b9e55a; font-size: 11px; font-weight: 700; }
 .desktop-listen button:disabled { opacity: .45; }
 .desktop-listen p { margin: 10px 0 0; font-size: 10px; line-height: 1.6; }

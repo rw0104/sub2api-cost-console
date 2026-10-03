@@ -24,7 +24,7 @@
         <button type="button" class="cost-api-copy" @click="copyToClipboard(gatewayBase, '接口地址已复制')">
           <Copy :size="14" /> 复制
         </button>
-        <small>{{ desktopMode ? '仅本机可访问 · 桌面内核运行时有效' : '使用当前站点公开接口地址' }}</small>
+        <small>{{ desktopMode ? '本机客户端使用此地址 · 桌面内核运行时有效' : '使用当前站点公开接口地址' }}</small>
       </div>
       <div class="cost-api-status-card">
         <span>鉴权方式</span>
@@ -40,6 +40,8 @@
         <small v-if="opsOverview">上游 TTFT P95：{{ formatLatency(opsOverview.ttft?.p95_ms) }}</small>
       </div>
     </div>
+
+    <DesktopListenSettings v-if="showNativeLauncher" />
 
     <div class="cost-api-access__grid">
       <div class="cost-api-card cost-api-card--setup">
@@ -216,6 +218,7 @@ import type { ApiKey } from '@/types'
 import type { OpsDashboardOverview } from '@/api/admin/ops'
 import { useClipboard } from '@/composables/useClipboard'
 import { getDesktopGatewayBase, isDesktopRuntime } from '@/api/url'
+import DesktopListenSettings from '@/features/desktop/DesktopListenSettings.vue'
 import {
   getNativeWorkingDirectory,
   getStoredNativeWorkingDirectory,
