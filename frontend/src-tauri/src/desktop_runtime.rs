@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     fs,
     io::Write,
-    net::{SocketAddr, TcpStream},
+    net::TcpStream,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -27,8 +27,6 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-const BACKEND_HOST: &str = "127.0.0.1";
-use crate::desktop_profile::BACKEND_PORT;
 const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
 const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest";
 const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
@@ -62,7 +60,9 @@ pub struct BackendStatus {
     pub phase: BackendPhase,
     pub managed: bool,
     pub pid: Option<u32>,
+    pub host: String,
     pub port: u16,
+    pub api_origin: String,
     pub data_dir: String,
     pub core_version: String,
     pub algorithm_version: String,
@@ -77,11 +77,14 @@ pub struct BackendStatus {
 
 impl BackendStatus {
     fn initial(data_dir: &Path, versions: &CoreVersions) -> Self {
+        let listen = crate::desktop_listen::active();
         Self {
             phase: BackendPhase::Starting,
             managed: true,
             pid: None,
-            port: BACKEND_PORT,
+            api_origin: format!("http://{}", listen.connect_address()),
+            host: listen.host,
+            port: listen.port,
             data_dir: data_dir.display().to_string(),
             core_version: versions.current_version.clone(),
             algorithm_version: versions.current_algorithm_version.clone(),
@@ -678,7 +681,7 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
     let active_path = active_core_path(app)?;
     let previous_path = previous_core_path(app)?;
     if port_is_open() {
-        stop_owned_listener(BACKEND_PORT, &active_path)?;
+        stop_owned_listener(crate::desktop_listen::active().port, &active_path)?;
         wait_for_backend_port_release_blocking()?;
     }
     if let Some(parent) = active_path.parent() {
@@ -720,13 +723,17 @@ pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn initialize_backend(app: &AppHandle) -> Result<BackendSupervisor, String> {
+    let data_dir = backend_data_dir(app)?;
+    if let Some(app_data_dir) = data_dir.parent() {
+        // config.yaml is written when the setup wizard finishes.
+        crate::desktop_listen::initialize(app_data_dir, data_dir.join("config.yaml").is_file());
+    }
     let activation_warning = activate_pending_core(app).err().map(|error| {
         let mut state = load_core_state(app);
         let warning = defer_pending_activation_failure(&mut state, &error);
         let _ = save_core_state(app, &state);
         warning
     });
-    let data_dir = backend_data_dir(app)?;
     let versions = current_core_versions(app);
     let supervisor = BackendSupervisor::new(&data_dir, &versions);
     if let Some(warning) = activation_warning {
@@ -739,7 +746,7 @@ pub fn initialize_backend(app: &AppHandle) -> Result<BackendSupervisor, String> 
 }
 
 fn port_is_open() -> bool {
-    let address = SocketAddr::from(([127, 0, 0, 1], BACKEND_PORT));
+    let address = crate::desktop_listen::active().connect_address();
     TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
 }
 
@@ -903,7 +910,7 @@ fn spawn_backend_process(
 
     if port_is_open() {
         // An owned orphan can be reclaimed; an unrelated listener is never killed.
-        if stop_owned_listener(BACKEND_PORT, &executable).unwrap_or(false) {
+        if stop_owned_listener(crate::desktop_listen::active().port, &executable).unwrap_or(false) {
             wait_for_backend_port_release_blocking()?;
         } else if crate::desktop_profile::PREVIEW {
             return Err("测试版端口 19765 已被其他进程占用；不会接管或连接已有服务。".into());
@@ -923,6 +930,7 @@ fn spawn_backend_process(
         }
     }
 
+    let listen = crate::desktop_listen::active();
     let mut command = app.shell().command(&executable);
     if crate::desktop_profile::PREVIEW {
         command = command
@@ -935,8 +943,8 @@ fn spawn_backend_process(
     command = command
         .current_dir(&data_dir)
         .env("DATA_DIR", &data_dir)
-        .env("SERVER_HOST", BACKEND_HOST)
-        .env("SERVER_PORT", BACKEND_PORT.to_string())
+        .env("SERVER_HOST", &listen.host)
+        .env("SERVER_PORT", listen.port.to_string())
         .env("ZONEINFO", &zoneinfo_path)
         .env("SUB2API_DESKTOP", "1")
         .env("SUB2API_DESKTOP_CONTROL", "stdin-v1")
@@ -1042,7 +1050,10 @@ async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation
             return;
         }
         let setup = client
-            .get(format!("http://{BACKEND_HOST}:{BACKEND_PORT}/setup/status"))
+            .get(format!(
+                "http://{}/setup/status",
+                crate::desktop_listen::active().connect_address()
+            ))
             .send()
             .await;
         let healthy = match setup {
@@ -1111,8 +1122,10 @@ async fn recover_unhealthy_backend(
         inner.starting = false;
         inner.generation += 1;
         inner.status.phase = BackendPhase::Error;
-        inner.status.message =
-            format!("端口 {BACKEND_PORT} 上的服务没有通过 Sub2API 健康检查，请检查端口占用。");
+        inner.status.message = format!(
+            "端口 {} 上的服务没有通过 Sub2API 健康检查，请检查端口占用。",
+            crate::desktop_listen::active().port
+        );
         drop(inner);
         emit_backend_status(&app, &supervisor);
         return;
@@ -1239,7 +1252,7 @@ pub async fn desktop_backend_prepare_relaunch(
         return Ok(());
     }
     let active_path = active_core_path(&app)?;
-    stop_owned_listener(BACKEND_PORT, &active_path)?;
+    stop_owned_listener(crate::desktop_listen::active().port, &active_path)?;
     wait_for_backend_port_release()
         .await
         .map_err(|_| "本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
@@ -2005,7 +2018,8 @@ pub async fn restore_bundled_core(
     stop_backend_internal(&supervisor, false)?;
     if wait_for_backend_port_release().await.is_err() {
         let active_path = active_core_path(&app)?;
-        if let Err(error) = stop_owned_listener(BACKEND_PORT, &active_path) {
+        if let Err(error) = stop_owned_listener(crate::desktop_listen::active().port, &active_path)
+        {
             return Err(abort_bundled_restore_and_restart(
                 &app,
                 supervisor.inner(),

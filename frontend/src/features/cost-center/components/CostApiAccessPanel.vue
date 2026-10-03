@@ -215,7 +215,7 @@ import { authAPI, keysAPI } from '@/api'
 import type { ApiKey } from '@/types'
 import type { OpsDashboardOverview } from '@/api/admin/ops'
 import { useClipboard } from '@/composables/useClipboard'
-import { isDesktopRuntime } from '@/api/url'
+import { getDesktopGatewayBase, isDesktopRuntime } from '@/api/url'
 import {
   getNativeWorkingDirectory,
   getStoredNativeWorkingDirectory,
@@ -229,8 +229,6 @@ import {
   type NativeGatewayProfile,
 } from '@/api/nativeClientLauncher'
 
-const LOCAL_GATEWAY_BASE = import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
-  ? 'http://127.0.0.1:19765/v1' : 'http://127.0.0.1:18765/v1'
 
 type PresetId = 'chatgpt' | 'codex' | 'claude-code' | 'opencode' | 'cursor' | 'grok' | 'cline' | 'python' | 'node' | 'curl'
 
@@ -276,7 +274,7 @@ const presets = [
 ]
 
 const gatewayBase = computed(() => {
-  if (props.desktopMode) return LOCAL_GATEWAY_BASE
+  if (props.desktopMode) return getDesktopGatewayBase()
   const value = publicBaseUrl.value || window.location.origin
   const trimmed = value.replace(/\/+$/, '')
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
@@ -351,7 +349,7 @@ const configText = computed(() => {
   if (preset.value === 'grok') {
     return `$env:GROK_MODELS_BASE_URL = "${nativeV1BaseUrl.value}"\n$env:XAI_API_KEY = "<从 API Key 管理页复制>"\n\ngrok --model "${model}"`
   }
-  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
+  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
 })
 
 function maskKey(key: string): string {

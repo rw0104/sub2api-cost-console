@@ -176,6 +176,11 @@ fn codex_plan(
         format!("model_providers.sub2api.base_url={}", toml_string(base_url)),
         "-c".into(),
         format!(
+            "model_providers.sub2api.model_catalog_url={}",
+            toml_string(&format!("{}/models", base_url.trim_end_matches('/')))
+        ),
+        "-c".into(),
+        format!(
             "model_providers.sub2api.env_key={}",
             toml_string(CODEX_API_KEY_ENV)
         ),
@@ -906,6 +911,9 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair[0] == "-c" && pair[1].contains("base_url")));
+        assert!(plan.args.windows(2).any(|pair| pair[0] == "-c"
+            && pair[1]
+                == "model_providers.sub2api.model_catalog_url=\"https://gateway.example.test/api/models\""));
         assert!(plan
             .environment
             .iter()

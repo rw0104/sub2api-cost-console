@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod client_launcher;
+mod desktop_listen;
 mod desktop_profile;
 mod desktop_proxy;
 mod desktop_runtime;
@@ -14,6 +15,7 @@ use client_launcher::{
     launch_native_client, list_native_clients, native_working_directory,
     pick_native_working_directory, preview_native_client_launch,
 };
+use desktop_listen::{desktop_listen_settings, desktop_listen_settings_save};
 use desktop_runtime::{
     check_core_update, desktop_backend_prepare_relaunch, desktop_backend_start,
     desktop_backend_status, desktop_backend_stop, initialize_backend, inspect_core_identity,
@@ -69,6 +71,8 @@ fn main() {
             desktop_backend_start,
             desktop_backend_stop,
             desktop_backend_prepare_relaunch,
+            desktop_listen_settings,
+            desktop_listen_settings_save,
             detect_setup_environment,
             provision_quick_setup,
             check_core_update,

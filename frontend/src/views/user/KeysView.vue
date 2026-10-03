@@ -1208,6 +1208,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { getDesktopGatewayBase, isDesktopRuntime } from '@/api/url'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
@@ -1410,8 +1411,7 @@ const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
 const gatewayBaseUrl = computed(() => {
-  if ('__TAURI_INTERNALS__' in (window as any)) return import.meta.env.VITE_DESKTOP_CHANNEL === 'plugin-preview'
-    ? 'http://127.0.0.1:19765/v1' : 'http://127.0.0.1:18765/v1'
+  if (isDesktopRuntime()) return getDesktopGatewayBase()
   return publicSettings.value?.api_base_url || ''
 })
 const dropdownRef = ref<HTMLElement | null>(null)

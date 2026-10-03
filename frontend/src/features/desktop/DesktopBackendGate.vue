@@ -12,7 +12,7 @@
 
       <dl v-if="status" class="desktop-gate__facts">
         <div><dt>连接方式</dt><dd>{{ status.managed ? '安装包受管内核' : '本机现有服务' }}</dd></div>
-        <div><dt>服务地址</dt><dd>127.0.0.1:{{ status.port }}</dd></div>
+        <div><dt>服务地址</dt><dd>{{ status.host || '127.0.0.1' }}:{{ status.port }}</dd></div>
         <div><dt>Sub2API 上游基线 / 成本算法</dt><dd>v{{ status.core_version }} / v{{ status.algorithm_version }}</dd></div>
       </dl>
 
@@ -23,6 +23,8 @@
           {{ retrying ? '正在重新检测…' : '重新检测并启动' }}
         </button>
       </div>
+
+      <DesktopListenSettings v-if="canRetry" class="desktop-gate__listen" />
 
       <details v-if="status" class="desktop-gate__details">
         <summary>查看技术详情</summary>
@@ -38,6 +40,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { syncDesktopBackendOrigin } from '@/api/url'
+import DesktopListenSettings from './DesktopListenSettings.vue'
 
 type BackendPhase = 'starting' | 'waiting_for_dependencies' | 'ready' | 'stopped' | 'error'
 
@@ -45,7 +49,9 @@ interface BackendStatus {
   phase: BackendPhase
   managed: boolean
   pid: number | null
+  host?: string
   port: number
+  api_origin?: string
   data_dir: string
   core_version: string
   algorithm_version: string
@@ -76,6 +82,11 @@ const title = computed(() => {
 
 function acceptStatus(next: BackendStatus) {
   status.value = next
+  // A changed listen address only reaches the API client through a reload.
+  if (next.api_origin && syncDesktopBackendOrigin(next.api_origin)) {
+    window.location.reload()
+    return
+  }
   if (next.phase === 'ready' && !didEmitReady) {
     didEmitReady = true
     emit('ready')
@@ -161,6 +172,7 @@ h1 { margin: 0; font-size: 27px; line-height: 1.25; }
 .desktop-gate__facts div:last-child { border-right: 0; }
 .desktop-gate__facts dt { color: #708078; font-size: 11px; }
 .desktop-gate__facts dd { overflow: hidden; margin: 6px 0 0; color: #d7dfd8; font: 12px/1.4 'Cascadia Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-gate__listen { margin: 18px 0 0; text-align: left; }
 .desktop-gate__error { margin-top: 22px; padding: 16px; border-left: 3px solid #dc745c; background: #261b17; }
 .desktop-gate__error strong { color: #f0a18e; }
 .desktop-gate__error p { margin: 7px 0 13px; color: #c4aaa3; font-size: 12px; line-height: 1.55; word-break: break-word; }

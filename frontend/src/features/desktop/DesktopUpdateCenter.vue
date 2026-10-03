@@ -115,6 +115,8 @@
         </div>
       </div>
 
+      <DesktopListenSettings :busy="isBusy" />
+
       <footer>
         <button type="button" :disabled="checking || isBusy" @click="checkAll(false)">
           <RefreshCcw :size="14" :class="{ spinning: checking }" />
@@ -149,6 +151,7 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { CheckCircle2, Code2, Download, ExternalLink, History, RefreshCcw, ShoppingBag, WifiOff, X } from '@lucide/vue'
 import { isDesktopRuntime } from '@/api/url'
+import DesktopListenSettings from './DesktopListenSettings.vue'
 import { ACCOUNT_PURCHASE_URL, openProjectExternalUrl, PROJECT_REPOSITORY_URL } from './externalLinks'
 import { describeCoreUpdateFailure, describeDesktopUpdateFailure, resolveUpdateCheckState } from './updateStatus'
 

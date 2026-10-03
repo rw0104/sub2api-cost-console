@@ -28,7 +28,10 @@ vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({ copyToClipboard: mocks.copy }),
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
-vi.mock('@/api/url', () => ({ isDesktopRuntime: nativeMocks.isDesktopRuntime }))
+vi.mock('@/api/url', () => ({
+  isDesktopRuntime: nativeMocks.isDesktopRuntime,
+  getDesktopGatewayBase: () => 'http://127.0.0.1:18765/v1',
+}))
 vi.mock('@/api/nativeClientLauncher', () => ({
   getNativeWorkingDirectory: nativeMocks.getWorkingDirectory,
   getStoredNativeWorkingDirectory: nativeMocks.getStoredWorkingDirectory,
@@ -115,6 +118,7 @@ describe('CostApiAccessPanel data truthfulness', () => {
 
     expect(wrapper.text()).toContain('启动本机客户端')
     expect(wrapper.text()).toContain('启动 Codex CLI')
+    expect(wrapper.text()).toContain('model_catalog_url = "http://127.0.0.1:18765/v1/models"')
     expect(wrapper.find('input.cost-api-input').exists()).toBe(true)
   })
 

@@ -3,6 +3,8 @@ const DEFAULT_DESKTOP_API_BASE_URL = import.meta.env.VITE_DESKTOP_CHANNEL === 'p
   ? 'http://127.0.0.1:19765/api/v1'
   : 'http://127.0.0.1:18765/api/v1'
 
+const DESKTOP_BACKEND_URL_STORAGE_KEY = 'sub2api.desktop.backendUrl'
+
 export function isDesktopRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in (window as any)
 }
@@ -15,7 +17,7 @@ function getConfiguredAPIBaseURL(): unknown {
 
   if (isDesktopRuntime()) {
     try {
-      return localStorage.getItem('sub2api.desktop.backendUrl') || DEFAULT_DESKTOP_API_BASE_URL
+      return localStorage.getItem(DESKTOP_BACKEND_URL_STORAGE_KEY) || DEFAULT_DESKTOP_API_BASE_URL
     } catch {
       return DEFAULT_DESKTOP_API_BASE_URL
     }
@@ -41,6 +43,28 @@ function normalizeAPIBaseURL(value: unknown): string {
 
 export function getAPIBaseURL(): string {
   return API_BASE_URL
+}
+
+/**
+ * Points the WebView at the origin the desktop shell reports for its managed
+ * backend. The base URL is resolved once at load, so a `true` result means the
+ * caller must reload the page for the new address to take effect.
+ */
+export function syncDesktopBackendOrigin(origin: string): boolean {
+  if (import.meta.env.VITE_API_BASE_URL || !origin) return false
+  const expected = normalizeAPIBaseURL(`${origin.replace(/\/+$/, '')}${DEFAULT_API_BASE_URL}`)
+  if (expected === API_BASE_URL) return false
+  try {
+    localStorage.setItem(DESKTOP_BACKEND_URL_STORAGE_KEY, expected)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Gateway base (`…/v1`) of the desktop-managed backend for local clients. */
+export function getDesktopGatewayBase(): string {
+  return buildGatewayUrl('/v1')
 }
 
 export function getCurrentAppPath(): string {
