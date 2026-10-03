@@ -276,23 +276,15 @@ func loadCodexGroupCatalogAccounts(ctx context.Context, repo AccountRepository, 
 func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
-	// Same-name entries on OAuth accounts only whitelist models the live Codex
-	// manifest already describes. A group configured with nothing else keeps
-	// the official picker instead of a locally generated catalog. Shadow
-	// accounts are excluded: their mapping scopes a quota dimension.
-	customized := false
 	for i := range accounts {
 		account := &accounts[i]
 		if account.Platform != PlatformOpenAI {
 			continue
 		}
-		for modelID, target := range account.GetModelMapping() {
+		for modelID := range account.GetModelMapping() {
 			modelID = strings.TrimSpace(modelID)
 			if modelID == "" || strings.Contains(modelID, "*") {
 				continue
-			}
-			if !account.IsOpenAIOAuth() || account.ParentAccountID != nil || strings.TrimSpace(target) != modelID {
-				customized = true
 			}
 			if _, exists := seen[modelID]; exists {
 				continue
@@ -300,9 +292,6 @@ func openAIConfiguredCodexModelIDs(accounts []Account) []string {
 			seen[modelID] = struct{}{}
 			models = append(models, modelID)
 		}
-	}
-	if !customized {
-		return nil
 	}
 	sort.Strings(models)
 	return models

@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.3.21 基于上游 v0.2.13。** 桌面端可在「API 接入」里自定义本地服务的监听地址与端口，Codex 模型列表在仅使用官方 OAuth 账号时与官方清单一致；同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.21 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.21) 下载配套 SDK 与示例。
+**v0.3.21 基于上游 v0.2.13。** 桌面端可在「API 接入」里自定义本地服务的监听地址与端口，地址和端口可直接输入；同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.21 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.21) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
