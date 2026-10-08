@@ -188,6 +188,8 @@ fn codex_plan(
         "model_providers.sub2api.wire_api=\"responses\"".into(),
         "-c".into(),
         "model_providers.sub2api.requires_openai_auth=false".into(),
+        "-c".into(),
+        "features.api_key_model_discovery=true".into(),
     ];
     let display_command = format!(
         "{} {}",
@@ -914,6 +916,10 @@ mod tests {
         assert!(plan.args.windows(2).any(|pair| pair[0] == "-c"
             && pair[1]
                 == "model_providers.sub2api.model_catalog_url=\"https://gateway.example.test/api/models\""));
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair[0] == "-c" && pair[1] == "features.api_key_model_discovery=true"));
         assert!(plan
             .environment
             .iter()

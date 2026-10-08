@@ -119,6 +119,7 @@ describe('CostApiAccessPanel data truthfulness', () => {
     expect(wrapper.text()).toContain('启动本机客户端')
     expect(wrapper.text()).toContain('启动 Codex CLI')
     expect(wrapper.text()).toContain('model_catalog_url = "http://127.0.0.1:18765/v1/models"')
+    expect(wrapper.text()).toContain('[features]\napi_key_model_discovery = true\ngoals = true')
     expect(wrapper.find('input.cost-api-input').exists()).toBe(true)
   })
 

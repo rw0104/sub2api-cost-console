@@ -352,7 +352,7 @@ const configText = computed(() => {
   if (preset.value === 'grok') {
     return `$env:GROK_MODELS_BASE_URL = "${nativeV1BaseUrl.value}"\n$env:XAI_API_KEY = "<从 API Key 管理页复制>"\n\ngrok --model "${model}"`
   }
-  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
+  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\napi_key_model_discovery = true\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
 })
 
 function maskKey(key: string): string {
