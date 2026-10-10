@@ -1714,6 +1714,7 @@ func (m *PluginManager) removeManagedPath(target string) error {
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return errors.New("拒绝删除插件根目录之外的路径")
 	}
+	//nolint:gosec // absTarget is constrained below installer.RootDir by the filepath.Rel check above.
 	return os.RemoveAll(absTarget)
 }
 
