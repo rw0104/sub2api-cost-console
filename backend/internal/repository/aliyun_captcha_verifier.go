@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	captcha "github.com/alibabacloud-go/captcha-20230305/client"
 	openapiutil "github.com/alibabacloud-go/darabonba-openapi/v2/utils"
@@ -65,6 +66,12 @@ func (v *aliyunCaptchaVerifier) VerifyCaptcha(ctx context.Context, cred service.
 func normalizeAliyunCaptchaError(err error) error {
 	var teaErr *tea.SDKError
 	if errors.As(err, &teaErr) {
+		// The SDK also uses tea.SDKError as a transport wrapper. Only errors
+		// carrying an API code or HTTP status represent an Aliyun API response;
+		// preserve connection and timeout errors for callers to classify.
+		if !isAliyunCaptchaAPIError(strings.TrimSpace(tea.StringValue(teaErr.Code)), teaErr.StatusCode) {
+			return err
+		}
 		return &service.AliyunCaptchaAPIError{
 			Code:    tea.StringValue(teaErr.Code),
 			Message: tea.StringValue(teaErr.Message),
@@ -72,10 +79,22 @@ func normalizeAliyunCaptchaError(err error) error {
 	}
 	var daraErr *dara.SDKError
 	if errors.As(err, &daraErr) {
+		if !isAliyunCaptchaAPIError(strings.TrimSpace(dara.StringValue(daraErr.Code)), daraErr.StatusCode) {
+			return err
+		}
 		return &service.AliyunCaptchaAPIError{
 			Code:    dara.StringValue(daraErr.Code),
 			Message: dara.StringValue(daraErr.Message),
 		}
 	}
 	return err
+}
+
+func isAliyunCaptchaAPIError(code string, statusCode *int) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "", "nil", "<nil>":
+		return statusCode != nil && *statusCode >= 400 && *statusCode < 500
+	default:
+		return true
+	}
 }

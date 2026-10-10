@@ -599,10 +599,17 @@ describe('管理员插件页二次验证', () => {
 
     expect(wrapper.text()).not.toContain('obsolete failure')
     expect(wrapper.text()).toContain('admin.plugins.loadingUI')
-    resolveCurrent({ url: '/current-session', bridge_token: 'current', ui_bridge_version: 1, expires_at: '' })
+    resolveCurrent({ url: '/api/v1/plugin-ui/current-session', bridge_token: 'current', ui_bridge_version: 1, expires_at: '' })
     await flushPromises()
     await wrapper.get('iframe').trigger('load')
-    expect(wrapper.get('iframe').attributes('src')).toBe('/current-session')
+    expect(wrapper.get('iframe').attributes('src')).toContain('/api/v1/plugin-ui/current-session')
+    const frame = wrapper.get('iframe').element as HTMLIFrameElement
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'null',
+      source: frame.contentWindow,
+      data: { source: 'sub2api-plugin-ui', type: 'sub2api.plugin.ready', bridge_token: 'current' },
+    }))
+    await flushPromises()
     expect(wrapper.text()).not.toContain('admin.plugins.loadingUI')
   })
 
