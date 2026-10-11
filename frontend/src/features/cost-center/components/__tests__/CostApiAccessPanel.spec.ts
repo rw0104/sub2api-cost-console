@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { GroupPlatform } from '@/types'
 import CostApiAccessPanel from '../CostApiAccessPanel.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -32,7 +33,8 @@ vi.mock('@/api/url', () => ({
   isDesktopRuntime: nativeMocks.isDesktopRuntime,
   getDesktopGatewayBase: () => 'http://127.0.0.1:18765/v1',
 }))
-vi.mock('@/api/nativeClientLauncher', () => ({
+vi.mock('@/api/nativeClientLauncher', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/nativeClientLauncher')>(),
   getNativeWorkingDirectory: nativeMocks.getWorkingDirectory,
   getStoredNativeWorkingDirectory: nativeMocks.getStoredWorkingDirectory,
   pickNativeWorkingDirectory: nativeMocks.pickWorkingDirectory,
@@ -41,7 +43,7 @@ vi.mock('@/api/nativeClientLauncher', () => ({
   storeNativeWorkingDirectory: nativeMocks.storeWorkingDirectory,
 }))
 
-const makeKey = (platform: 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'composite' = 'openai') => ({
+const makeKey = (platform: GroupPlatform = 'openai') => ({
   id: 7,
   user_id: 1,
   key: 'sk-test-key',
@@ -213,6 +215,94 @@ describe('CostApiAccessPanel data truthfulness', () => {
       base_url: 'http://127.0.0.1:18765/v1beta',
       api_key: 'sk-test-key',
     }))
+  })
+
+  it.each([
+    ['anthropic', 'anthropic', '/v1'],
+    ['openai', 'openai', '/v1'],
+    ['gemini', 'gemini', '/v1beta'],
+    ['antigravity', 'antigravity', '/antigravity/v1'],
+    ['grok', 'grok', '/v1'],
+    ['kimi', 'openai', '/v1'],
+    ['zhipu', 'openai', '/v1'],
+    ['deepseek', 'openai', '/v1'],
+    ['minimax', 'openai', '/v1'],
+    ['opencode_go', 'openai', '/v1'],
+    ['typesafe', 'anthropic', '/v1'],
+    ['command_code', 'openai', '/v1'],
+    ['cline', 'openai', '/v1'],
+    ['composite', 'composite', '/v1'],
+  ] as const)('normalizes the %s group for both OpenCode preview and launch', async (platform, profile, path) => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey(platform)], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get('[role="tablist"] button:nth-child(4)').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="native-launch"]').trigger('click')
+    await flushPromises()
+
+    const request = expect.objectContaining({
+      client_id: 'opencode',
+      gateway_profile: profile,
+      base_url: `http://127.0.0.1:18765${path}`,
+      api_key: 'sk-test-key',
+    })
+    expect(nativeMocks.preview).toHaveBeenCalledWith(request)
+    expect(nativeMocks.launch).toHaveBeenCalledWith(request)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['command_code', 'codex', 2, '/v1'],
+    ['cline', 'codex', 2, '/v1'],
+    ['command_code', 'claude-code', 3, ''],
+    ['cline', 'claude-code', 3, ''],
+    ['command_code', 'cursor', 5, '/v1'],
+    ['cline', 'cursor', 5, '/v1'],
+    ['command_code', 'grok', 6, '/v1'],
+    ['cline', 'grok', 6, '/v1'],
+  ] as const)('normalizes %s credentials when using %s', async (platform, clientId, tabIndex, path) => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey(platform)], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get(`[role="tablist"] button:nth-child(${tabIndex})`).trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="native-launch"]').trigger('click')
+    await flushPromises()
+
+    expect(nativeMocks.launch).toHaveBeenCalledWith(expect.objectContaining({
+      client_id: clientId,
+      gateway_profile: 'openai',
+      base_url: `http://127.0.0.1:18765${path}`,
+    }))
+    wrapper.unmount()
+  })
+
+  it('blocks unknown group protocols before IPC while keeping ChatGPT Desktop independent', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey('future-provider')], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前分组平台 future-provider 尚不支持原生启动，请更新桌面应用后重试。')
+    expect((wrapper.get('[data-test="native-preview"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('[data-test="native-launch"]').element as HTMLButtonElement).disabled).toBe(true)
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await wrapper.get('[data-test="native-launch"]').trigger('click')
+    expect(nativeMocks.preview).not.toHaveBeenCalled()
+    expect(nativeMocks.launch).not.toHaveBeenCalled()
+
+    await wrapper.get('[role="tablist"] button:nth-child(1)').trigger('click')
+    await flushPromises()
+    expect((wrapper.get('[data-test="native-launch"]').element as HTMLButtonElement).disabled).toBe(false)
+    await wrapper.get('[data-test="native-launch"]').trigger('click')
+    await flushPromises()
+    expect(nativeMocks.launch).toHaveBeenCalledWith(expect.objectContaining({
+      client_id: 'chatgpt',
+      gateway_profile: 'composite',
+    }))
+    wrapper.unmount()
   })
 
   it.each([

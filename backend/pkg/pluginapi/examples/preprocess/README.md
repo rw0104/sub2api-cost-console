@@ -4,7 +4,7 @@
 
 ## 构建和打包
 
-以下命令在完整仓库或公开 SDK 开发包的 `backend` 目录执行，需要 Go 1.27.0。推荐先按[正式版开发指南](../../../../../docs/PLUGIN_DEVELOPMENT.md)生成自己的发布者密钥并签名。输出文件必须尚不存在，打包器不会覆盖已有包。
+以下命令在完整仓库或公开 SDK 开发包的 `backend` 目录执行，需要满足该目录下 [`go.mod`](../../../../go.mod) 的 `go` 指令所指定最低版本的 Go 工具链。推荐先按[正式版开发指南](../../../../../docs/PLUGIN_DEVELOPMENT.md)生成自己的发布者密钥并签名。输出文件必须尚不存在，打包器不会覆盖已有包。
 
 ```powershell
 $keyPrefix = Join-Path $env:LOCALAPPDATA 'Sub2API-PluginKeys/preprocess-demo'

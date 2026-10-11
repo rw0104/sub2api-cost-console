@@ -141,7 +141,7 @@
               type="button"
               class="cost-api-button cost-api-button--quiet"
               data-test="native-preview"
-              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId"
+              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId || !!nativeLaunchUnavailableReason"
               @click="previewNativeClient"
             >
               <RefreshCcw :size="15" :class="{ 'cost-api-spin': nativeLaunchLoading }" /> 检查客户端
@@ -150,7 +150,7 @@
               type="button"
               class="cost-api-button cost-api-button--primary"
               data-test="native-launch"
-              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId"
+              :disabled="nativeLaunchLoading || nativeDirectoryLoading || (!selectedKey && nativeClientId !== 'chatgpt') || !nativeClientId || !!nativeLaunchUnavailableReason"
               @click="launchNativeClientFromPanel"
             >
               <LoaderCircle v-if="nativeLaunchLoading" :size="15" class="cost-api-spin" />
@@ -159,6 +159,9 @@
           </div>
           <p v-if="!nativeClientId" class="cost-api-native-launcher__hint">
             当前模板没有原生启动适配器，请使用右侧复制配置。
+          </p>
+          <p v-else-if="nativeLaunchUnavailableReason" class="cost-api-native-launcher__hint is-error" role="alert">
+            {{ nativeLaunchUnavailableReason }}
           </p>
           <p
             v-else-if="nativePreview"
@@ -225,11 +228,11 @@ import {
   launchNativeClient,
   pickNativeWorkingDirectory,
   previewNativeClientLaunch,
+  resolveNativeGatewayProfile,
   storeNativeWorkingDirectory,
   type NativeClientId,
   type NativeClientLaunchPreview,
   type NativeClientLaunchRequest,
-  type NativeGatewayProfile,
 } from '@/api/nativeClientLauncher'
 
 
@@ -287,7 +290,7 @@ const activeKeys = computed(() => keys.value.filter((key) => key.status === 'act
 const selectedKey = computed(() => keys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
 const connectionLabel = computed(() => testing.value ? '正在测试' : testOk.value ? '接口正常' : lastProbeMs.value !== null ? '接口异常' : '未测试')
 const connectionClass = computed(() => testOk.value ? 'is-ok' : lastProbeMs.value !== null ? 'is-error' : '')
-const nativeGatewayProfile = computed<NativeGatewayProfile>(() => (selectedKey.value?.group?.platform || 'composite') as NativeGatewayProfile)
+const nativeGatewayProfile = computed(() => resolveNativeGatewayProfile(selectedKey.value?.group?.platform))
 const nativeBaseRoot = computed(() => gatewayBase.value.replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, ''))
 const nativeV1BaseUrl = computed(() => `${nativeBaseRoot.value}/v1`)
 const nativeClaudeBaseUrl = computed(() => nativeGatewayProfile.value === 'antigravity'
@@ -302,6 +305,10 @@ const nativeClientId = computed<NativeClientId | null>(() => {
   if (preset.value === 'grok') return 'grok'
   return null
 })
+const nativeLaunchUnavailableReason = computed(() =>
+  nativeClientId.value && nativeClientId.value !== 'chatgpt' && selectedKey.value && !nativeGatewayProfile.value
+    ? `当前分组平台 ${selectedKey.value.group?.platform} 尚不支持原生启动，请更新桌面应用后重试。`
+    : '')
 const nativeClientLabel = computed(() => presets.find((item) => item.id === preset.value)?.label || '')
 const showNativeLauncher = computed(() => props.desktopMode && isDesktopRuntime())
 const configTitle = computed(() => {
@@ -434,6 +441,8 @@ async function copyKeyCommand() {
 
 function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
   if (!nativeClientId.value || (nativeClientId.value !== 'chatgpt' && !selectedKey.value)) return null
+  const profile = nativeClientId.value === 'chatgpt' ? 'composite' : nativeGatewayProfile.value
+  if (!profile) return null
 
   let baseUrl = gatewayBase.value
   if (nativeClientId.value === 'claude-code') {
@@ -452,7 +461,7 @@ function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
 
   return {
     client_id: nativeClientId.value,
-    gateway_profile: nativeGatewayProfile.value,
+    gateway_profile: profile,
     base_url: baseUrl,
     api_key: selectedKey.value?.key || '',
     working_directory: nativeWorkingDirectory.value.trim() || nativeDetectedWorkingDirectory.value || '.',
@@ -466,7 +475,7 @@ function nativeErrorMessage(error: unknown): string {
 async function previewNativeClient() {
   const request = buildNativeLaunchRequest()
   if (!request) {
-    nativeLaunchError.value = nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动'
+    nativeLaunchError.value = nativeLaunchUnavailableReason.value || (nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动')
     return
   }
   nativeLaunchLoading.value = true
@@ -490,7 +499,7 @@ async function previewNativeClient() {
 async function launchNativeClientFromPanel() {
   const request = buildNativeLaunchRequest()
   if (!request) {
-    nativeLaunchError.value = nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动'
+    nativeLaunchError.value = nativeLaunchUnavailableReason.value || (nativeClientId.value ? '请先选择一个启用中的 API Key' : '当前客户端模板不支持原生启动')
     return
   }
   nativeLaunchLoading.value = true

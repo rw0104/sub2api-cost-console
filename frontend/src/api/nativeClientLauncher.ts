@@ -1,8 +1,18 @@
 import { invoke } from '@tauri-apps/api/core'
+import { getPlatformSpec } from '@/constants/platformCatalog'
 import { isDesktopRuntime } from './url'
 
 export type NativeClientId = 'chatgpt' | 'codex' | 'claude-code' | 'cursor' | 'opencode' | 'grok'
 export type NativeGatewayProfile = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'composite'
+
+/** Native profiles describe gateway protocols, not individual upstream providers. */
+export function resolveNativeGatewayProfile(platform: string | null | undefined): NativeGatewayProfile | null {
+  if (!platform || platform === 'composite') return 'composite'
+  const spec = getPlatformSpec(platform)
+  if (!spec) return null
+  // Grok shares the OpenAI gateway but keeps its own native client defaults.
+  return spec.id === 'grok' ? 'grok' : spec.gateway
+}
 
 export interface NativeClientLaunchRequest {
   client_id: NativeClientId

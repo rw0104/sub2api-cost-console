@@ -66,6 +66,10 @@ def main() -> None:
         # The vendor tree enables builds with an already installed Go toolchain offline.
         run(["go", "mod", "tidy"], kit / "backend")
         run(["go", "mod", "vendor"], kit / "backend")
+        go_directive = re.search(r"(?m)^go[ \t]+(\d+\.\d+(?:\.\d+)?)[ \t]*(?://[^\n]*)?$", (kit / "backend/go.mod").read_text(encoding="utf-8"))
+        if not go_directive:
+            raise ValueError("Packaged backend/go.mod has no valid minimum Go version")
+        minimum_go_version = go_directive.group(1)
         print("Prepared SDK module and vendored dependencies", flush=True)
 
         # Retain offline links inside the kit. Host-only implementation references
@@ -93,7 +97,7 @@ def main() -> None:
 
 对应正式桌面 v{version}、内核 {(root / 'frontend/CORE_VERSION').read_text().strip()}、扩展 {(root / 'frontend/CORE_EXTENSION_VERSION').read_text().strip()}。
 
-1. 安装 Go 1.27.0，进入本开发包的 `backend` 目录。
+1. 安装 Go {minimum_go_version} 或更新版本，进入本开发包的 `backend` 目录。最低版本来自随包 `backend/go.mod` 的 `go` 指令。
 2. 按[开发指南第 2 节](docs/PLUGIN_DEVELOPMENT.md)编译和签名公开示例。
 3. 用自己的插件 ID、业务逻辑和配置 UI 替换示例，同步更新运行时与清单。
 4. 将已编译的 `.s2plugin` 交给用户；用户在正式主程序首次导入时确认发布者即可安装，不需要编译或修改配置。
@@ -104,7 +108,7 @@ go test ./pkg/pluginapi/... -count=1
 go build -o preprocess.exe ./pkg/pluginapi/examples/preprocess
 ```
 
-源码与 vendor 已包含，不需要 Rust、Node.js、完整宿主仓库或主程序编译。已有 Go 1.27.0 工具链时上述步骤可离线运行。打包安装的完整命令见开发指南；不要直接运行插件 exe，宿主负责协议握手。
+源码与 vendor 已包含，不需要 Rust、Node.js、完整宿主仓库或主程序编译。已安装 Go {minimum_go_version} 或更新版本的工具链时上述步骤可离线运行，Go 工具链自身不在包内。打包安装的完整命令见开发指南；不要直接运行插件 exe，宿主负责协议握手。
 
 - [SDK 总览](backend/pkg/pluginapi/README.md)
 - [请求预处理示例](backend/pkg/pluginapi/examples/preprocess/README.md)
@@ -138,7 +142,7 @@ go build -o preprocess.exe ./pkg/pluginapi/examples/preprocess
         print("SDK tests, offline example compilation and signed package generation passed", flush=True)
 
         files = {p.relative_to(kit).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(kit.rglob("*")) if p.is_file()}
-        manifest = {"desktop_version": version, "core_version": (root / "frontend/CORE_VERSION").read_text().strip(), "extension_version": (root / "frontend/CORE_EXTENSION_VERSION").read_text().strip(), "source_commit": source_commit, "files": files, "verified": ["sdk_tests", "offline_example_build", "signed_example_package_hashes", "ed25519_signature", "real_process_mtls_rpc"], "contains_private_plugins": False}
+        manifest = {"desktop_version": version, "core_version": (root / "frontend/CORE_VERSION").read_text().strip(), "extension_version": (root / "frontend/CORE_EXTENSION_VERSION").read_text().strip(), "source_commit": source_commit, "minimum_go_version": minimum_go_version, "files": files, "verified": ["sdk_tests", "offline_example_build", "signed_example_package_hashes", "ed25519_signature", "real_process_mtls_rpc"], "contains_private_plugins": False}
         (kit / "DEVKIT_MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
         with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as zipped:
             for file in sorted(kit.rglob("*")):
