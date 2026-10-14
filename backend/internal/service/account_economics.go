@@ -184,11 +184,18 @@ type AccountEconomicsService struct {
 	repo      AccountEconomicsRepository
 	losses    *AccountCostLossService
 	startOnce sync.Once
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	// done is closed when the background sampler goroutine has returned.
+	done      chan struct{}
 	startedAt time.Time
 }
 
 func NewAccountEconomicsService(accounts AccountEconomicsAccountReader, repo AccountEconomicsRepository, losses *AccountCostLossService) *AccountEconomicsService {
-	return &AccountEconomicsService{accounts: accounts, repo: repo, losses: losses, startedAt: time.Now().UTC()}
+	return &AccountEconomicsService{
+		accounts: accounts, repo: repo, losses: losses, startedAt: time.Now().UTC(),
+		stopCh: make(chan struct{}), done: make(chan struct{}),
+	}
 }
 
 func (s *AccountEconomicsService) Start() {
@@ -197,6 +204,7 @@ func (s *AccountEconomicsService) Start() {
 	}
 	s.startOnce.Do(func() {
 		go func() {
+			defer close(s.done)
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			iteration := 0
@@ -212,10 +220,23 @@ func (s *AccountEconomicsService) Start() {
 				}
 				cancel()
 				iteration++
-				<-ticker.C
+				select {
+				case <-s.stopCh:
+					return
+				case <-ticker.C:
+				}
 			}
 		}()
 	})
+}
+
+// Stop ends the background sampler so shutdown does not sample against a
+// database connection that the cleanup sequence is about to close.
+func (s *AccountEconomicsService) Stop() {
+	if s == nil || s.stopCh == nil {
+		return
+	}
+	s.stopOnce.Do(func() { close(s.stopCh) })
 }
 
 func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query AccountEconomicsQuery) (*AccountEconomicsSnapshot, error) {
