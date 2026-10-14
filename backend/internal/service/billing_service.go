@@ -493,12 +493,15 @@ func (s *BillingService) initFallbackPricing() {
 	// rates double to $1.50/$7.50/$0.15 from 2027-01-01). Antigravity's
 	// -high/-low/-medium/-tiered aliases are matched below so unavailable
 	// remote pricing never records token-bearing requests at $0.
-	s.fallbackPrices["gemini-3.6-flash"] = &ModelPricing{
+	// Priority 档按标准价 1.8 倍，与目录条目的 *_cost_per_token_priority 绝对价同口径：
+	// 不显式带上，usePriorityServiceTierPricing 会落到通用服务档 2x 倍率，
+	// 远程目录不可用期间 priority 请求比官方价多收 11%。
+	s.fallbackPrices["gemini-3.6-flash"] = pricingWithPriorityMultiplier(&ModelPricing{
 		InputPricePerToken:     0.75e-6,
 		OutputPricePerToken:    3.75e-6,
 		CacheReadPricePerToken: 0.075e-6,
 		SupportsCacheBreakdown: false,
-	}
+	}, 1.8)
 
 	// Gemini 3.7 Flash (Google AI pricing: $0.75 input / $3.75 output /
 	// $0.075 cached input per MTok, promotional through 2026-12-31; official
