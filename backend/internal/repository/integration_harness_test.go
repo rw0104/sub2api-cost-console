@@ -38,6 +38,10 @@ var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 	integrationRedis     *redisclient.Client
+	// integrationDSN points at the harness database. Tests that must own a
+	// whole schema history (migration upgrade paths) derive a scratch
+	// database from it instead of mutating the shared one.
+	integrationDSN string
 
 	redisNamespaceSeq uint64
 )
@@ -90,6 +94,7 @@ func TestMain(m *testing.M) {
 		log.Printf("failed to get postgres dsn: %v", err)
 		os.Exit(1)
 	}
+	integrationDSN = dsn
 
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
