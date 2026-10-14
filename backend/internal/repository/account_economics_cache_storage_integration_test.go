@@ -21,6 +21,10 @@ import (
 //
 // 两行合计必须等于每行各自的成本基数乘账号倍率之和：NULL 回落不能把存储费漏掉，
 // 也不能因为创建行已含存储费而重复累加。
+//
+// SumUsageTotals 只接受 *sql.DB，无法在 ent 事务里执行，因此前置数据写的是共享库。
+// 用例结束必须把这些行删干净 —— 否则多出来的账号会泄漏给同包其它套件，账号列表、
+// 可调度筛选与看板聚合都会各自多数出一个。
 func TestAccountEconomicsSumUsageTotals_CacheStorageCountedOnce(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -35,6 +39,23 @@ func TestAccountEconomicsSumUsageTotals_CacheStorageCountedOnce(t *testing.T) {
 		Name: fmt.Sprintf("cache-storage-economics-%d", stamp), Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey,
 	})
 	apiKey := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID})
+
+	t.Cleanup(func() {
+		for _, step := range []struct {
+			query string
+			arg   int64
+		}{
+			{"DELETE FROM usage_logs WHERE account_id = $1", account.ID},
+			{"DELETE FROM api_keys WHERE id = $1", apiKey.ID},
+			{"DELETE FROM accounts WHERE id = $1", account.ID},
+			{"DELETE FROM groups WHERE id = $1", group.ID},
+			{"DELETE FROM users WHERE id = $1", user.ID},
+		} {
+			if _, err := integrationDB.ExecContext(context.Background(), step.query, step.arg); err != nil {
+				t.Errorf("清理共享库失败，会污染同包其它套件: %s: %v", step.query, err)
+			}
+		}
+	})
 
 	const (
 		groupRate   = 1.5
