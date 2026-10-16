@@ -20,7 +20,7 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.3.25 基于上游 v0.2.16。** 本轮同步上游的 Gemini 显式上下文缓存、Claude Haiku 5.5 价卡与临时不可调度规则作用域，并修正 gemini-3.6-flash 内置兜底价缺失的 priority 档；默认分支同步包含上游 v0.2.16 的完整合并和宿主修复。桌面端继续支持自定义本地服务监听地址与端口，同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.25 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.25) 下载配套 SDK 与示例。
+**v0.3.26 基于上游 v0.2.17。** 本轮同步上游的 Gemini 4 Argon 模型与计费、ChatGPT 订阅上游的 GPT-5.5 退役判定、Vertex 服务账号失效与共享容量 429 处理，以及多项支付修复；K12 模型白名单随上游的模型判定重构迁移到公共出口，调度路径仍受其约束。默认分支同步包含上游 v0.2.17 的完整合并和宿主修复。桌面端继续支持自定义本地服务监听地址与端口，同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.3.26 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.26) 下载配套 SDK 与示例。
 
 ## 你可以用它做什么
 
@@ -363,7 +363,7 @@
 
 ## 版本说明与反馈
 
-本轮更新为 **桌面 v0.3.25**，内置兼容内核基线为 **v0.2.16**、扩展 **1.3.17**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.3.25 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.25) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+本轮更新为 **桌面 v0.3.26**，内置兼容内核基线为 **v0.2.17**、扩展 **1.3.18**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.3.26 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.3.26) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)
