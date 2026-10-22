@@ -126,7 +126,7 @@ func (s *baselineProbeStream) Send(request *pluginv1.ForwardRequest) error {
 		s.start = start
 	}
 	if chunk := request.GetBodyChunk(); len(chunk) > 0 {
-		s.body.Write(chunk)
+		_, _ = s.body.Write(chunk)
 	}
 	if request.GetBodyEnd() {
 		s.doneOnce.Do(func() { close(s.requestDone) })
@@ -650,7 +650,7 @@ func baselineProbeDirectSSEUpstream(t *testing.T) *httpUpstreamRecorder {
 	t.Helper()
 	var stream bytes.Buffer
 	for _, chunk := range baselineProbeSSEReply(t, baselineProbeMapped).chunks {
-		stream.Write(chunk)
+		_, _ = stream.Write(chunk)
 	}
 	return &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
