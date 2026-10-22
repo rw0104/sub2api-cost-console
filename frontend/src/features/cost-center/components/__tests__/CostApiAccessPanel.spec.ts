@@ -125,6 +125,36 @@ describe('CostApiAccessPanel data truthfulness', () => {
     expect(wrapper.find('input.cost-api-input').exists()).toBe(true)
   })
 
+  // Codex 0.149 起，requires_openai_auth = false 的自定义 Provider 不再读取 auth.json，
+  // 只认 env_key 指向的环境变量。示例配置缺少 env_key 会让 Codex 不带密钥访问网关并收到 401。
+  it('puts the Codex API key on env_key instead of an ignored auth.json', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('requires_openai_auth = false')
+    expect(text).toContain('env_key = "SUB2API_API_KEY"')
+    expect(text).toContain('$env:SUB2API_API_KEY = "<从 API Key 管理页复制>"')
+    expect(text).not.toContain('%USERPROFILE%\\.codex\\auth.json')
+    expect(text).not.toContain('{ "OPENAI_API_KEY"')
+  })
+
+  it('copies the key command for the variable the Codex config reads, and keeps OPENAI_API_KEY for SDK presets', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+
+    const copyKeyButton = () => wrapper.findAll('button').find((button) => button.text().includes('复制密钥命令'))!
+    await copyKeyButton().trigger('click')
+    expect(mocks.copy).toHaveBeenLastCalledWith('$env:SUB2API_API_KEY = "sk-test-key"', 'PowerShell 密钥命令已复制')
+
+    const pythonPreset = wrapper.findAll('.cost-api-presets button').find((button) => button.text().includes('Python'))!
+    await pythonPreset.trigger('click')
+    await copyKeyButton().trigger('click')
+    expect(mocks.copy).toHaveBeenLastCalledWith('$env:OPENAI_API_KEY = "sk-test-key"', 'PowerShell 密钥命令已复制')
+  })
+
   it('shows the detected directory and applies a directory selected by the user', async () => {
     mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
     nativeMocks.pickWorkingDirectory.mockResolvedValue('D:\\Projects\\demo')

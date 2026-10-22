@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -9,6 +10,20 @@ import (
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
+}
+
+// withProtectionOriginal 在构造出站请求前把“本次传输的比较基线”挂到 ctx 上。
+//
+// 保护传输插件用它判断宿主是否对请求做了有损改写（OriginalBodyJson），并据此推导
+// 映射后模型与默认 instructions 摘要。基线必须取自“即将交给 buildUpstreamRequest*
+// 的最终请求体”，并随请求上下文传递给 doOpenAIUpstream；不挂基线时，真实流量的
+// OriginalBodyJson 为空，启用完整性检查的插件会把每个 /responses 请求判为拒绝。
+// 账号未命中保护传输时原样返回 ctx，没有额外开销。
+func (s *OpenAIGatewayService) withProtectionOriginal(ctx context.Context, account *Account, body []byte) context.Context {
+	if s == nil || s.pluginManager == nil || !s.pluginManager.hasProtectionTransport(account) {
+		return ctx
+	}
+	return withPluginProtectionOriginal(ctx, account, body)
 }
 
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。

@@ -251,6 +251,8 @@ const keyLoadState = ref<'loading' | 'measured' | 'empty' | 'unavailable'>('load
 const keyLoadError = ref('')
 const selectedKeyId = ref('')
 const preset = ref<PresetId>('codex')
+// Codex 自定义 Provider 的密钥只能通过 env_key 指向的环境变量传入（与「使用密钥」弹窗一致）。
+const codexKeyEnvName = 'SUB2API_API_KEY'
 const models = ref<string[]>([])
 const selectedModel = ref('')
 const testing = ref(false)
@@ -359,7 +361,7 @@ const configText = computed(() => {
   if (preset.value === 'grok') {
     return `$env:GROK_MODELS_BASE_URL = "${nativeV1BaseUrl.value}"\n$env:XAI_API_KEY = "<从 API Key 管理页复制>"\n\ngrok --model "${model}"`
   }
-  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\napi_key_model_discovery = true\ngoals = true\n\n# %USERPROFILE%\\.codex\\auth.json\n# { "OPENAI_API_KEY": "<从 API Key 管理页复制>" }`
+  return `# %USERPROFILE%\\.codex\\config.toml\nmodel_provider = "Sub2APILocal"\nmodel = "${model}"\nreview_model = "${model}"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.Sub2APILocal]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nenv_key = "${codexKeyEnvName}"\nwire_api = "responses"\nrequires_openai_auth = false\n\n[features]\napi_key_model_discovery = true\ngoals = true\n\n# PowerShell：启动 Codex 前先设置密钥。Codex 0.149 起，requires_openai_auth = false 的自定义 Provider\n# 不会再读取 auth.json，只认 env_key 指向的环境变量，缺少它会以 401 连不上网关。\n$env:${codexKeyEnvName} = "<从 API Key 管理页复制>"`
 })
 
 function maskKey(key: string): string {
@@ -436,7 +438,8 @@ async function testConnection() {
 
 async function copyKeyCommand() {
   if (!selectedKey.value) return
-  await copyToClipboard(`$env:OPENAI_API_KEY = "${selectedKey.value.key}"`, 'PowerShell 密钥命令已复制')
+  const envName = preset.value === 'codex' ? codexKeyEnvName : 'OPENAI_API_KEY'
+  await copyToClipboard(`$env:${envName} = "${selectedKey.value.key}"`, 'PowerShell 密钥命令已复制')
 }
 
 function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
