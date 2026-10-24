@@ -163,6 +163,7 @@ export default {
 
   // Navigation
   nav: {
+    costCenter: 'Cost Console',
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',

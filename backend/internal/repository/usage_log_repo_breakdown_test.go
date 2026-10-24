@@ -41,6 +41,7 @@ func TestResolveModelDimensionExpression(t *testing.T) {
 	}{
 		{usagestats.ModelSourceRequested, "COALESCE(NULLIF(TRIM(requested_model), ''), model)"},
 		{usagestats.ModelSourceUpstream, "COALESCE(NULLIF(TRIM(upstream_model), ''), model)"},
+		{usagestats.ModelSourceResponse, "COALESCE(NULLIF(TRIM(upstream_response_model), ''), COALESCE(NULLIF(TRIM(upstream_model), ''), model))"},
 		{usagestats.ModelSourceMapping, "(COALESCE(NULLIF(TRIM(requested_model), ''), model) || ' -> ' || COALESCE(NULLIF(TRIM(upstream_model), ''), model))"},
 		{"", "COALESCE(NULLIF(TRIM(requested_model), ''), model)"},
 		{"invalid", "COALESCE(NULLIF(TRIM(requested_model), ''), model)"},

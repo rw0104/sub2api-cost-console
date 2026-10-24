@@ -756,6 +756,8 @@ func parseOpsTimeRange(c *gin.Context, defaultRange string) (time.Time, time.Tim
 
 func parseOpsDuration(v string) (time.Duration, bool) {
 	switch strings.TrimSpace(v) {
+	case "1m":
+		return time.Minute, true
 	case "5m":
 		return 5 * time.Minute, true
 	case "30m":

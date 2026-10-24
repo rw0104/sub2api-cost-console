@@ -1,0 +1,85 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const scriptDirectory = dirname(fileURLToPath(import.meta.url))
+const frontendDirectory = resolve(scriptDirectory, '..')
+const repositoryDirectory = resolve(frontendDirectory, '..')
+const backendDirectory = resolve(repositoryDirectory, 'backend')
+const tauriDirectory = resolve(frontendDirectory, 'src-tauri')
+const embeddedIndex = resolve(backendDirectory, 'internal', 'web', 'dist', 'index.html')
+const coreVersionFile = resolve(frontendDirectory, 'CORE_VERSION')
+const upstreamCommitFile = resolve(frontendDirectory, 'UPSTREAM_SUB2API_COMMIT')
+const extensionVersionFile = resolve(frontendDirectory, 'CORE_EXTENSION_VERSION')
+const capabilitiesFile = resolve(frontendDirectory, 'CORE_CAPABILITIES')
+const output = resolve(
+  tauriDirectory,
+  'binaries',
+  'sub2api-backend-x86_64-pc-windows-msvc.exe',
+)
+
+if (!existsSync(embeddedIndex)) {
+  console.error('Missing embedded backend UI. Run `corepack pnpm@9 build` before preparing the sidecar.')
+  process.exit(1)
+}
+
+const version = (process.env.SUB2API_CORE_VERSION || readFileSync(coreVersionFile, 'utf8')).trim()
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+  console.error(`CORE_VERSION must be SemVer, received ${JSON.stringify(version)}`)
+  process.exit(1)
+}
+
+function capture(command, args, fallback) {
+  const result = spawnSync(command, args, {
+    cwd: repositoryDirectory,
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  return result.status === 0 ? result.stdout.trim() || fallback : fallback
+}
+
+const commit = readFileSync(upstreamCommitFile, 'utf8').trim()
+const extensionVersion = (process.env.SUB2API_CORE_EXTENSION_VERSION || readFileSync(extensionVersionFile, 'utf8')).trim()
+const capabilities = readFileSync(capabilitiesFile, 'utf8').trim().split(/\s+/).filter(Boolean).join('|')
+const date = capture('git', ['show', '-s', '--format=%cI', commit], 'unknown')
+const ldflags = [
+  '-s',
+  '-w',
+  // Build the Windows sidecar as a GUI subsystem executable. Tauri owns the
+  // process and captures its pipes; a console subsystem binary flashes a
+  // command window every time the desktop starts or restarts the core.
+  ...(process.platform === 'win32' ? ['-H=windowsgui'] : []),
+  `-X main.Version=${version}`,
+  `-X main.Commit=${commit}`,
+  `-X main.Date=${date}`,
+  `-X main.CoreExtensionVersion=${extensionVersion}`,
+  `-X main.CoreCapabilities=${capabilities}`,
+  '-X main.BuildType=release',
+  ...(process.env.SUB2API_PLUGIN_PREVIEW_BUILD === '1'
+    ? ['-X github.com/Wei-Shaw/sub2api/internal/config.PluginPreviewBuild=1', '-X main.BuildType=plugin-preview'] : []),
+].join(' ')
+
+mkdirSync(dirname(output), { recursive: true })
+console.log(`Building managed Sub2API core ${version} -> ${output}`)
+const build = spawnSync(
+  'go',
+  ['build', '-trimpath', '-ldflags', ldflags, '-o', output, './cmd/server'],
+  {
+    cwd: backendDirectory,
+    stdio: 'inherit',
+    windowsHide: true,
+    env: {
+      ...process.env,
+      CGO_ENABLED: '0',
+      GOOS: 'windows',
+      GOARCH: 'amd64',
+    },
+  },
+)
+
+if (build.error) {
+  console.error(build.error.message)
+  process.exit(1)
+}
+process.exit(build.status ?? 1)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"time"
 
@@ -213,14 +214,6 @@ func setAccountModelRateLimitSnapshot(account *Account, scope string, resetAt ti
 	if account == nil || strings.TrimSpace(scope) == "" {
 		return
 	}
-	if account.Extra == nil {
-		account.Extra = make(map[string]any)
-	}
-	limits, ok := account.Extra[modelRateLimitsKey].(map[string]any)
-	if !ok {
-		limits = make(map[string]any)
-		account.Extra[modelRateLimitsKey] = limits
-	}
 	payload := map[string]any{
 		"rate_limited_at":     now.UTC().Format(time.RFC3339),
 		"rate_limit_reset_at": resetAt.UTC().Format(time.RFC3339),
@@ -228,5 +221,17 @@ func setAccountModelRateLimitSnapshot(account *Account, scope string, resetAt ti
 	if reason = strings.TrimSpace(reason); reason != "" {
 		payload["reason"] = reason
 	}
+
+	// Extra and model_rate_limits may be shared by scheduler snapshots. Copy
+	// both maps before replacing the account field so a replica never mutates
+	// its master or a sibling replica.
+	oldLimits, _ := account.Extra[modelRateLimitsKey].(map[string]any)
+	limits := make(map[string]any, len(oldLimits)+1)
+	maps.Copy(limits, oldLimits)
 	limits[scope] = payload
+
+	extra := make(map[string]any, len(account.Extra)+1)
+	maps.Copy(extra, account.Extra)
+	extra[modelRateLimitsKey] = limits
+	account.Extra = extra
 }

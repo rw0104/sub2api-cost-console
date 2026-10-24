@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -72,12 +73,67 @@ func (h *PluginHandler) Upload(c *gin.Context) {
 		userID := subject.UserID
 		installedBy = &userID
 	}
-	plugin, err := h.manager.Install(c.Request.Context(), file, installedBy)
+	approval, err := pluginPublisherApproval(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	plugin, err := h.manager.InstallWithApproval(c.Request.Context(), file, installedBy, approval)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 	response.Created(c, plugin)
+}
+
+// AuthorizeUpload is protected by the same admin/step-up middleware as Upload.
+// A small request lets browsers finish 2FA before sending a large package; an
+// early 403 during multipart upload can otherwise close the HTTP connection.
+func (h *PluginHandler) AuthorizeUpload(c *gin.Context) {
+	response.Success(c, gin.H{"authorized": true})
+}
+
+// Inspect verifies all bytes before presenting a publisher consent screen. It
+// does not install files, execute plugin code or persist publisher trust.
+func (h *PluginHandler) Inspect(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.manager.MaxUploadBytes()+(1<<20))
+	file, header, err := c.Request.FormFile("plugin")
+	if err != nil {
+		response.BadRequest(c, "请选择有效的 .s2plugin 文件")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".s2plugin") {
+		response.BadRequest(c, "请选择已编译的 .s2plugin 安装包，不能安装源码或 SDK 压缩包")
+		return
+	}
+	inspection, err := h.manager.InspectPackage(c.Request.Context(), file)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, inspection)
+}
+
+func pluginPublisherApproval(c *gin.Context) (*service.PluginPublisherApproval, error) {
+	flag := c.PostForm("trust_publisher")
+	if flag == "" || flag == "false" {
+		return nil, nil
+	}
+	if flag != "true" {
+		return nil, errors.New("发布者确认参数无效")
+	}
+	packageSHA := c.PostForm("package_sha256")
+	fingerprint := c.PostForm("publisher_fingerprint")
+	decoded, err := hex.DecodeString(packageSHA)
+	if err != nil || len(decoded) != 32 || packageSHA != strings.ToLower(packageSHA) {
+		return nil, errors.New("请先检查插件包，再确认安装")
+	}
+	publicSHA, err := hex.DecodeString(strings.TrimPrefix(fingerprint, "sha256:"))
+	if err != nil || len(publicSHA) != 32 || !strings.HasPrefix(fingerprint, "sha256:") || fingerprint != strings.ToLower(fingerprint) {
+		return nil, errors.New("发布者签名指纹无效")
+	}
+	return &service.PluginPublisherApproval{PackageSHA256: packageSHA, Fingerprint: fingerprint}, nil
 }
 
 type pluginEnableRequest struct {
@@ -116,6 +172,185 @@ func (h *PluginHandler) Disable(c *gin.Context) {
 	response.Success(c, plugin)
 }
 
+func (h *PluginHandler) Versions(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	versions, err := h.manager.ListVersions(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, versions)
+}
+
+func (h *PluginHandler) SaveRouting(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Policies          []service.PluginRoutingPolicy `json:"policies" binding:"required,min=1,max=16"`
+		ExpectedUpdatedAt time.Time                     `json:"expected_updated_at"`
+		ExpectedRevision  int64                         `json:"expected_revision"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256*1024)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "插件路由参数无效")
+		return
+	}
+	if request.ExpectedRevision <= 0 && request.ExpectedUpdatedAt.IsZero() {
+		response.BadRequest(c, "插件路由 revision 无效，请刷新后重试")
+		return
+	}
+	var plugin *service.PluginInstallation
+	var err error
+	if request.ExpectedRevision > 0 {
+		plugin, err = h.manager.SaveRoutingWithRevision(c.Request.Context(), id, request.Policies, request.ExpectedRevision)
+	} else {
+		plugin, err = h.manager.SaveRouting(c.Request.Context(), id, request.Policies, request.ExpectedUpdatedAt)
+	}
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if plugin.OperationID != "" {
+		c.Header("X-Plugin-Operation-ID", plugin.OperationID)
+	}
+	response.Success(c, plugin)
+}
+
+func (h *PluginHandler) HostStats(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	snapshot, err := h.manager.HostStats(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, snapshot)
+}
+func (h *PluginHandler) SecretGrants(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	grants, err := h.manager.ListSecretGrants(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, grants)
+}
+func (h *PluginHandler) PutSecretGrant(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	var request struct {
+		Capability string `json:"capability" binding:"required"`
+		Alias      string `json:"alias" binding:"required"`
+		Value      string `json:"value" binding:"required"`
+		TTLSeconds int    `json:"ttl_seconds" binding:"required,min=1,max=3600"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "秘密授权参数无效")
+		return
+	}
+	if err := h.manager.PutSecretGrant(c.Request.Context(), id, request.Capability, request.Alias, request.Value, request.TTLSeconds); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"saved": true})
+}
+func (h *PluginHandler) DeleteSecretGrant(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+	var request struct {
+		Capability string `json:"capability" binding:"required"`
+		Alias      string `json:"alias" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "秘密授权参数无效")
+		return
+	}
+	if err := h.manager.DeleteSecretGrant(c.Request.Context(), id, request.Capability, request.Alias); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}
+
+func (h *PluginHandler) Upgrade(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.manager.MaxUploadBytes()+(1<<20))
+	file, header, err := c.Request.FormFile("plugin")
+	if err != nil {
+		response.BadRequest(c, "请选择有效的 .s2plugin 文件")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".s2plugin") {
+		response.BadRequest(c, "插件包扩展名必须是 .s2plugin")
+		return
+	}
+	acceptUntested := false
+	if raw := c.PostForm("accept_untested"); raw != "" {
+		acceptUntested, err = strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "版本确认参数无效")
+			return
+		}
+	}
+	var installedBy *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		userID := subject.UserID
+		installedBy = &userID
+	}
+	approval, err := pluginPublisherApproval(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	plugin, err := h.manager.UpgradeWithApproval(c.Request.Context(), id, file, installedBy, acceptUntested, approval)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, plugin)
+}
+
+func (h *PluginHandler) Rollback(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		VersionID      int64 `json:"version_id" binding:"required,gt=0"`
+		AcceptUntested bool  `json:"accept_untested"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "回滚版本参数无效")
+		return
+	}
+	plugin, err := h.manager.Rollback(c.Request.Context(), id, request.VersionID, request.AcceptUntested)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, plugin)
+}
+
 func (h *PluginHandler) Delete(c *gin.Context) {
 	id, ok := pluginIDParam(c)
 	if !ok {
@@ -133,10 +368,21 @@ func (h *PluginHandler) GetConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	installation, err := h.manager.Get(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	configJSON, err := h.manager.GetConfig(c.Request.Context(), id)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if installation.ETag != "" {
+		c.Header("ETag", installation.ETag)
+	}
+	if installation.Revision > 0 {
+		c.Header("X-Plugin-Revision", strconv.FormatInt(installation.Revision, 10))
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", configJSON)
 }
@@ -162,7 +408,84 @@ func (h *PluginHandler) SaveConfig(c *gin.Context) {
 		response.BadRequest(c, "插件配置无法序列化")
 		return
 	}
-	saved, err := h.manager.SaveConfig(c.Request.Context(), id, raw)
+	expectedRevision, revisionErr := pluginExpectedRevision(c)
+	if revisionErr != nil {
+		response.BadRequest(c, revisionErr.Error())
+		return
+	}
+	var saved json.RawMessage
+	var mutation service.PluginMutationResult
+	if expectedRevision > 0 {
+		saved, mutation, err = h.manager.SaveConfigWithRevision(c.Request.Context(), id, raw, expectedRevision)
+	} else {
+		saved, mutation, err = h.manager.SaveConfigWithRevision(c.Request.Context(), id, raw, 0)
+	}
+	if err != nil {
+		if infraerrors.Reason(err) == service.PluginConfigUnreadableReason {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if mutation.ETag != "" {
+		c.Header("ETag", mutation.ETag)
+	}
+	if mutation.OperationID != "" {
+		c.Header("X-Plugin-Operation-ID", mutation.OperationID)
+	}
+	if mutation.Revision > 0 {
+		c.Header("X-Plugin-Revision", strconv.FormatInt(mutation.Revision, 10))
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", saved)
+}
+
+func pluginExpectedRevision(c *gin.Context) (int64, error) {
+	raw := strings.TrimSpace(c.GetHeader("X-Plugin-Revision"))
+	if raw == "" {
+		raw = strings.TrimSpace(c.GetHeader("If-Match"))
+	}
+	if raw == "" {
+		return 0, nil
+	}
+	if strings.HasPrefix(raw, `"plugin-`) && strings.HasSuffix(raw, `"`) {
+		parts := strings.Split(strings.Trim(raw, `"`), "-")
+		if len(parts) == 3 {
+			raw = parts[2]
+		}
+	}
+	revision, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || revision <= 0 {
+		return 0, errors.New("插件配置 revision 无效，请刷新后重试")
+	}
+	return revision, nil
+}
+
+func (h *PluginHandler) RecoverConfig(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Config         json.RawMessage `json:"config"`
+		ExpectedDigest string          `json:"expected_config_digest"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4*1024*1024+1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		response.BadRequest(c, "重新配置请求无效")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		response.BadRequest(c, "重新配置请求只能包含一个 JSON 对象")
+		return
+	}
+	var recoveredBy *int64
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		userID := subject.UserID
+		recoveredBy = &userID
+	}
+	saved, err := h.manager.RecoverConfig(c.Request.Context(), id, request.Config, request.ExpectedDigest, recoveredBy)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -247,11 +570,14 @@ func (h *PluginHandler) ServeUIAsset(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("X-Frame-Options", "SAMEORIGIN")
+	// Desktop UI is served from Tauri's asset origin, separately from the
+	// loopback backend. X-Frame-Options cannot express these exact ancestors;
+	// CSP below allows only our web origin and the known desktop origins.
+	c.Writer.Header().Del("X-Frame-Options")
 	// sandbox iframe 没有 allow-same-origin，会以不透明来源加载自己的 CSS/JS。
 	// 资源 URL 由短时随机能力 Token 保护，Bridge Token 只存在于 fragment 中。
 	c.Header("Cross-Origin-Resource-Policy", "cross-origin")
-	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; navigate-to 'none'")
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' tauri://localhost http://tauri.localhost https://tauri.localhost")
 	c.Data(http.StatusOK, contentType, data)
 }
 

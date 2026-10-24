@@ -714,13 +714,14 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 }
 
 // mapUpstreamStatus collapses upstream HTTP statuses into a stable set we
-// surface from the admin handler. 4xx upstream errors are surfaced as 502
-// (BadGateway) so callers can distinguish "your input is bad" (400) from
-// "upstream said no" (502); 401/403 are bubbled directly to hint at re-auth.
+// surface from admin account-probe handlers. Every account-owned upstream
+// authentication failure is a Bad Gateway from the panel's perspective;
+// returning 401/403 here would make the browser mistake an invalid account
+// token for the administrator's own expired session.
 func mapUpstreamStatus(status int) int {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return status
+		return http.StatusBadGateway
 	case status == http.StatusTooManyRequests:
 		return http.StatusTooManyRequests
 	case status >= 400 && status < 500:

@@ -502,6 +502,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	buildUpstreamRequest := func(requestBody []byte) (*http.Request, error) {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		defer releaseUpstreamCtx()
+		// 桥接后的 HTTP 请求体就是保护传输的比较基线；重试改写请求体时会重新捕获。
+		upstreamCtx = s.withProtectionOriginal(upstreamCtx, account, requestBody)
 		var upstreamReq *http.Request
 		var buildErr error
 		if account.Platform == PlatformGrok {

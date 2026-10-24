@@ -67,8 +67,10 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
-	cfg                     *config.Config
+	accountCostLoss         *service.AccountCostLossService
+	accountEconomics        *service.AccountEconomicsService
 	opencodeGoUsage         *service.OpenCodeGoUsageService
+	cfg                     *config.Config
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -78,6 +80,14 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
+}
+
+func (h *AccountHandler) SetAccountCostLossService(costLoss *service.AccountCostLossService) {
+	h.accountCostLoss = costLoss
+}
+
+func (h *AccountHandler) SetAccountEconomicsService(economics *service.AccountEconomicsService) {
+	h.accountEconomics = economics
 }
 
 func (h *AccountHandler) SetOpenCodeGoUsageService(usage *service.OpenCodeGoUsageService) {
@@ -681,22 +691,14 @@ func (h *AccountHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if len(accounts) > 0 {
+	if h.ollamaCloudUsage != nil && len(accounts) > 0 {
 		accountPointers := make([]*service.Account, len(accounts))
 		for index := range accounts {
 			accountPointers[index] = &accounts[index]
 		}
-		if h.ollamaCloudUsage != nil {
-			if err := h.ollamaCloudUsage.ResolveAccounts(c.Request.Context(), accountPointers); err != nil {
-				response.ErrorFrom(c, err)
-				return
-			}
-		}
-		if h.opencodeGoUsage != nil {
-			if err := h.opencodeGoUsage.ResolveOpenCodeGoUsageAccounts(c.Request.Context(), accountPointers); err != nil {
-				response.ErrorFrom(c, err)
-				return
-			}
+		if err := h.ollamaCloudUsage.ResolveAccounts(c.Request.Context(), accountPointers); err != nil {
+			response.ErrorFrom(c, err)
+			return
 		}
 	}
 
@@ -953,12 +955,6 @@ func (h *AccountHandler) GetByID(c *gin.Context) {
 	}
 	if h.ollamaCloudUsage != nil {
 		if err := h.ollamaCloudUsage.ResolveAccounts(c.Request.Context(), []*service.Account{account}); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	}
-	if h.opencodeGoUsage != nil {
-		if err := h.opencodeGoUsage.ResolveOpenCodeGoUsageAccounts(c.Request.Context(), []*service.Account{account}); err != nil {
 			response.ErrorFrom(c, err)
 			return
 		}
@@ -1419,7 +1415,9 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		tokenInfo, err := h.openaiOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
 			// 刷新失败但 access_token 可能仍有效，尝试设置隐私
-			h.adminService.EnsureOpenAIPrivacy(ctx, account)
+			service.AfterAccountCommit(ctx, func(committed context.Context) {
+				h.adminService.EnsureOpenAIPrivacy(committed, account)
+			})
 			return nil, "", err
 		}
 
@@ -1471,7 +1469,10 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			if updateErr != nil {
 				return nil, "", fmt.Errorf("failed to update credentials: %w", updateErr)
 			}
-			h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
+			h.invalidateScopedAccountToken(ctx, updatedAccount)
+			service.AfterAccountCommit(ctx, func(committed context.Context) {
+				h.adminService.EnsureAntigravityPrivacy(committed, updatedAccount)
+			})
 			return updatedAccount, "missing_project_id_temporary", nil
 		}
 
@@ -1527,17 +1528,19 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		return nil, "", err
 	}
 
-	// 刷新成功后，清除 token 缓存，确保下次请求使用新 token
-	if h.tokenCacheInvalidator != nil {
-		if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(ctx, updatedAccount); invalidateErr != nil {
-			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", updatedAccount.ID, invalidateErr)
+	service.AfterAccountCommit(ctx, func(ctx context.Context) {
+		// 刷新成功后，清除 token 缓存，确保下次请求使用新 token
+		if h.tokenCacheInvalidator != nil {
+			if invalidateErr := h.tokenCacheInvalidator.InvalidateToken(ctx, updatedAccount); invalidateErr != nil {
+				log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", updatedAccount.ID, invalidateErr)
+			}
 		}
-	}
 
-	// OpenAI OAuth: 刷新成功后检查并设置 privacy_mode
-	h.adminService.EnsureOpenAIPrivacy(ctx, updatedAccount)
-	// Antigravity OAuth: 刷新成功后检查并设置 privacy_mode
-	h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
+		// OpenAI OAuth: 刷新成功后检查并设置 privacy_mode
+		h.adminService.EnsureOpenAIPrivacy(ctx, updatedAccount)
+		// Antigravity OAuth: 刷新成功后检查并设置 privacy_mode
+		h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
+	})
 
 	return updatedAccount, "", nil
 }
@@ -1630,11 +1633,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 
-	// Re-auth only returns authentication fields. Preserve account configuration
-	// stored alongside them (for example model_mapping), while allowing the new
-	// OAuth values to replace their existing counterparts.
+	// Re-auth replaces token material while preserving readable, non-auth account
+	// metadata such as model mappings and workspace identity. Sensitive residue is
+	// removed after the merge so passwords/cookies cannot survive the transition.
 	req.Credentials = service.MergeCredentials(existing.Credentials, req.Credentials)
-	// Drop SSO/password residue; re-auth must leave only OAuth tokens on disk.
 	req.Credentials = service.SanitizeStoredCredentials(existing.Platform, req.Credentials)
 
 	updatedAccount, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{
@@ -1743,6 +1745,11 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if h.accountCostLoss != nil {
+		if _, reverseErr := h.accountCostLoss.ReverseActiveLossesForAccount(c.Request.Context(), accountID, time.Now().UTC(), "account error cleared by administrator"); reverseErr != nil {
+			log.Printf("[WARN] Failed to reverse account cost loss for account %d: %v", accountID, reverseErr)
+		}
 	}
 
 	// 清除错误后，同时清除 token 缓存，确保下次请求会获取最新的 token（触发刷新或从 DB 读取）
@@ -1945,6 +1952,11 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 				})
 				mu.Unlock()
 				return nil
+			}
+			if h.accountCostLoss != nil {
+				if _, reverseErr := h.accountCostLoss.ReverseActiveLossesForAccount(gctx, accountID, time.Now().UTC(), "account error batch-cleared by administrator"); reverseErr != nil {
+					log.Printf("[WARN] Failed to reverse account cost loss for account %d: %v", accountID, reverseErr)
+				}
 			}
 
 			// 清除错误后，同时清除 token 缓存
@@ -2677,6 +2689,9 @@ func (h *AccountHandler) GetTodayStats(c *gin.Context) {
 // BatchTodayStatsRequest 批量今日统计请求体。
 type BatchTodayStatsRequest struct {
 	AccountIDs []int64 `json:"account_ids" binding:"required"`
+	// StartTime lets desktop clients use the same local-day boundary shown in
+	// their UI instead of silently mixing it with the server's configured zone.
+	StartTime string `json:"start_time"`
 }
 
 type BatchUsageRequest struct {
@@ -2699,7 +2714,20 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		return
 	}
 
+	var requestedStart *time.Time
+	if raw := strings.TrimSpace(req.StartTime); raw != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, raw)
+		if parseErr != nil {
+			response.BadRequest(c, "Invalid start_time: use RFC3339")
+			return
+		}
+		requestedStart = &parsed
+	}
+
 	cacheKey := buildAccountTodayStatsBatchCacheKey(accountIDs)
+	if requestedStart != nil {
+		cacheKey += ":" + requestedStart.UTC().Format(time.RFC3339)
+	}
 	if cached, ok := accountTodayStatsBatchCache.Get(cacheKey); ok {
 		if cached.ETag != "" {
 			c.Header("ETag", cached.ETag)
@@ -2714,7 +2742,13 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.accountUsageService.GetTodayStatsBatch(c.Request.Context(), accountIDs)
+	var stats map[int64]*service.WindowStats
+	var err error
+	if requestedStart != nil {
+		stats, err = h.accountUsageService.GetWindowStatsBatch(c.Request.Context(), accountIDs, *requestedStart)
+	} else {
+		stats, err = h.accountUsageService.GetTodayStatsBatch(c.Request.Context(), accountIDs)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2804,6 +2838,10 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	h.respondAvailableModels(c, account)
+}
+
+func (h *AccountHandler) respondAvailableModels(c *gin.Context, account *service.Account) {
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
 		// Prefer the shared, account-keyed upstream catalog. If discovery fails,

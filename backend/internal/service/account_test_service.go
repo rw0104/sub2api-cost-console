@@ -146,6 +146,7 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	settingService            *SettingService
+	rateLimitService          *RateLimitService
 	tlsFPProfileService       *TLSFingerprintProfileService
 	modelMetadataRegistryMu   sync.Mutex
 	modelMetadataRegistry     map[string]modelsDevProvider
@@ -162,6 +163,12 @@ type AccountTestService struct {
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
 	if s != nil {
 		s.settingService = settingService
+	}
+}
+
+func (s *AccountTestService) SetRateLimitService(rateLimitService *RateLimitService) {
+	if s != nil {
+		s.rateLimitService = rateLimitService
 	}
 }
 
@@ -188,9 +195,8 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	if err != nil {
 		return nil, err
 	}
-	// The shared discovery response is the raw upstream catalog. Project it
-	// through the account mapping before exposing it in the admin picker so
-	// configured aliases remain public names and unconfigured models stay out.
+	// The cache holds the raw catalog; apply current account aliases to the
+	// picker's own copy so mapping changes do not require another upstream read.
 	projectedBody, err := projectAccountModelsBody(response.Body, account, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("project OpenAI account models: %w", err)
@@ -232,13 +238,8 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 				seen[model.ID] = true
 			}
 		}
-		// Image models that a configured alias points at are absent from the Codex
-		// manifest, so the projection alone cannot surface them. Resolve each public
-		// name to its target and keep the entry when that target is an image model.
-		// Judging by the target rather than the public name keeps a lookalike name
-		// (for example an alias spelled "gpt-image-*" that maps to a text model)
-		// from being synthesized into the picker.
-		// Passthrough keeps native image names without applying mapping targets.
+		// The Codex catalog omits image tool models. Synthesize aliases only when
+		// their resolved target is an image model, never from a lookalike name.
 		for publicID := range account.GetModelMapping() {
 			if strings.Contains(publicID, "*") || seen[publicID] {
 				continue
@@ -299,7 +300,7 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 }
 
 // generateSessionString generates a Claude Code style session string.
-// The output format is determined by the UA version in claude.DefaultHeaders(),
+// The output format is determined by the UA version in claude.DefaultHeaders,
 // ensuring consistency between the user_id format and the UA sent to upstream.
 func generateSessionString() (string, error) {
 	b := make([]byte, 32)
@@ -801,16 +802,21 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
 
-	// Default to openai.DefaultTestModel for OpenAI testing
+	// API-key compatible upstreams may require provider-specific model IDs.
 	testModelID := modelID
-	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
+	if testModelID == "" && account.Type == AccountTypeAPIKey {
+		// The selector already returns an upstream model, so do not map it twice.
+		testModelID = selectOpenAIAPIKeyTestModel(account)
+	} else {
+		if testModelID == "" {
+			testModelID = openai.DefaultTestModel
+		}
+		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
-	// account model mapping. Native remote compaction v2 rides the ordinary
-	// /responses wire and does NOT apply the legacy compact-only mapping
-	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
+	// account model mapping. Native remote compaction v2 uses the ordinary
+	// /responses wire and does not apply legacy compact-only mapping.
 	testModelID = account.GetMappedModel(testModelID)
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
@@ -903,6 +909,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
 	}
+	req = req.WithContext(WithOpenAIForwardModel(req.Context(), upstreamTestModelID, false))
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
 	// Set common headers
@@ -975,14 +982,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
 		}
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
-		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -2147,9 +2147,6 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
-	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA，与真实转发路径一致。
-	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
-
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)
 	applyOpenCodeSessionHeader(c, account, apiURL, req.Header, payloadBytes)
@@ -2167,13 +2164,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -2246,6 +2237,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
 	}
+	req = req.WithContext(WithOpenAIForwardModel(req.Context(), testModelID, false))
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 
 	req.Header.Set("Content-Type", "application/json")
@@ -2324,17 +2316,10 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
 		}
-		// 探测如返回 429,主动同步限流状态,避免后续短时间内继续选中。
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-		}
+		s.reconcileOpenAIProbeFailure(ctx, account, resp.StatusCode, resp.Header, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
@@ -2362,7 +2347,8 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		resetAt = &t
 	}
 	if resetAt == nil {
-		return
+		fallback := time.Now().Add(defaultRateLimit429CooldownSeconds * time.Second)
+		resetAt = &fallback
 	}
 
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
@@ -2380,6 +2366,36 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		account.Status = StatusActive
 		account.ErrorMessage = ""
 	}
+}
+
+func (s *AccountTestService) reconcileOpenAIProbeFailure(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte) {
+	if s == nil || account == nil {
+		return
+	}
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusPaymentRequired && statusCode != http.StatusTooManyRequests {
+		return
+	}
+	if s.rateLimitService != nil {
+		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+		return
+	}
+	if statusCode == http.StatusTooManyRequests {
+		s.reconcileOpenAI429State(ctx, account, headers, body)
+		return
+	}
+	if s.accountRepo == nil {
+		return
+	}
+	message := fmt.Sprintf("Authentication failed (%d): %s", statusCode, string(body))
+	if statusCode == http.StatusPaymentRequired {
+		message = fmt.Sprintf("Payment required (402): %s", string(body))
+		if isOpenAIWorkspaceDeactivated(body) {
+			message = "Workspace deactivated (402): workspace has been deactivated"
+		}
+	}
+	_ = s.accountRepo.SetError(ctx, account.ID, message)
+	account.Status = StatusError
+	account.ErrorMessage = message
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection
@@ -3167,6 +3183,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
 	}
+	req = req.WithContext(WithOpenAIForwardModel(req.Context(), upstreamModel, false))
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Host = "chatgpt.com"
 	if credentialAccount.IsOpenAIAgentIdentity() {

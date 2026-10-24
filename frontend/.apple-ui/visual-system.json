@@ -1,0 +1,662 @@
+{
+  "schema_version": "1.0",
+  "contract": "apple-fidelity-web/v1",
+  "visual_intent": {
+    "mode": "apple-fidelity",
+    "reason": "Strict Apple fidelity is the default visual contract."
+  },
+  "profile": "macos-productivity",
+  "profile_analogy": "macOS dense pointer-and-keyboard productivity window",
+  "source_evidence": {
+    "brief_path": ".apple-ui/design-brief.json",
+    "brief_sha256": "196df2bd38213f0641902ae2ad0e7ed1dfe240f078f279ef52f0fe888d36cfde",
+    "official": [
+      {
+        "id": "official-1",
+        "evidence_class": "official",
+        "source_ref": "https://developer.apple.com/design/human-interface-guidelines/materials",
+        "observation": "Apple describes Liquid Glass as a distinct functional layer for navigation and controls, while content surfaces such as tables and data panels remain standard or opaque; status and accessibility guidance requires meaning beyond color alone.",
+        "product_decision": "Apply one Regular functional material scope to the sticky console toolbar and transient governance dialog only; keep metrics, charts, tables, and history records opaque."
+      }
+    ],
+    "observed_image": [
+      {
+        "id": "image-1",
+        "evidence_class": "observed-image",
+        "source_ref": "references/hig-image-atlas.json#hig-materials-intro",
+        "observation": "A 740×416 construction drawing shows a capsule overlapping a square; bent square edges communicate that the upper functional surface affects but does not replace background content.",
+        "product_decision": "Keep the toolbar visually floating over a quiet content field; use explicit source badges and boundaries instead of applying glass to every metric card.",
+        "media_analysis": {
+          "canvas": "Wide 740×416 landscape teaching illustration with a centered construction diagram.",
+          "composition": "One capsule crosses a square on a visible grid; overlap is the focal relationship and yellow line art remains restrained.",
+          "focal_points": [
+            "capsule and square overlap",
+            "bent background edges beneath the capsule"
+          ],
+          "layers": [
+            "construction grid",
+            "background content square",
+            "foreground functional capsule",
+            "line-art lensing cue"
+          ],
+          "crop_behavior": "The relationship, not any protected artwork, transfers to the product; compact layouts retain a complete toolbar above complete content rather than cropping either layer.",
+          "negative_space": "Open space around the overlap keeps the cause-and-effect relationship readable.",
+          "purpose": "Teach functional-layer separation, geometry, and visible causality."
+        }
+      }
+    ],
+    "observed_video": [
+      {
+        "id": "video-1",
+        "evidence_class": "observed-video",
+        "source_ref": "references/videos.md#wwdc25-219-dynamics-adaptivity-principles",
+        "observation": "Sparse keyframes show input-local contact feedback, content moving beneath one floating control plane, controls adapting to background, and menus preserving their triggering origin.",
+        "product_decision": "Use the compiled presentation runtime for toolbar press and pointer-local light; data refresh and selection remain Vue product state, and destructive sample reset uses an anchored confirmation dialog.",
+        "media_analysis": {
+          "time_range": "WWDC25 session 219, Dynamics 1:29–6:00 and Principles 10:31–18:53; sparse keyframes at 220s, 300s, and 400s.",
+          "initial_state": "A quiet control plane sits above legible content.",
+          "transition": "Pointer or touch contact produces local light and restrained scale while scroll state activates one contextual edge.",
+          "interruption": "Presentation feedback begins from the current rendered state and can be reversed without blocking product input.",
+          "completion": "The chosen workspace or maintenance action is visibly and semantically committed, with focus retained or returned.",
+          "input_feedback": "Feedback originates at the actual control, while labels, focus rings, pressed state, and live status provide redundant cues.",
+          "reduced_motion": "Remove spatial flex and lens travel; keep a short opacity/color acknowledgement and immediate semantic state update."
+        }
+      }
+    ],
+    "derived": [
+      {
+        "id": "derived-1",
+        "evidence_class": "derived",
+        "source_ref": "derived-from:official-1,image-1,video-1",
+        "observation": "A trustworthy economics console needs a coherent desktop toolbar, an opaque data plane, explicit provenance states, and reversible presentation feedback.",
+        "product_decision": "Compile macos-productivity with the existing Sub2API operational lime accent, add a reusable DataValue state model, introduce a data-governance workspace, and prohibit generic numeric formatters from coercing null or non-finite values to zero.",
+        "derived_from": [
+          "official-1",
+          "image-1",
+          "video-1"
+        ]
+      }
+    ]
+  },
+  "accent": {
+    "mode": "accent",
+    "value": "#B9E55A",
+    "source": "existing Sub2API Cost Console operational lime used for selection and primary actions",
+    "light": {
+      "accent": "#B9E55A",
+      "hover": "#AAD353",
+      "pressed": "#9BC04C",
+      "foreground": "#000000",
+      "wash": "rgb(185 229 90 / 0.14)",
+      "focus": "rgb(185 229 90 / 0.46)"
+    },
+    "dark": {
+      "accent": "#B9E55A",
+      "hover": "#BFE769",
+      "pressed": "#C5E976",
+      "foreground": "#000000",
+      "wash": "rgb(185 229 90 / 0.22)",
+      "focus": "rgb(185 229 90 / 0.56)"
+    }
+  },
+  "files": [
+    {
+      "path": "src/apple-ui/apple-fidelity.css",
+      "role": "runtime-style",
+      "sha256": "b433d3d86d8e2ddfaace9cdc4e862fa10a88f806c91dddaf303274a1ca0f4ecd"
+    },
+    {
+      "path": "src/apple-ui/apple-fidelity.mjs",
+      "role": "runtime-behavior",
+      "sha256": "9fcd2ba6ddfeeac4d12bf827a99ef4428103fd279141bb58077e245d8151d7cc"
+    },
+    {
+      "path": "src/apple-ui/apple-fidelity-profile.css",
+      "role": "compiled-profile-style",
+      "sha256": "a2c112a25564113cb2fa96a400332953497bd1ce336371165aa8181cf2d9638d"
+    },
+    {
+      "path": "src/apple-ui/apple-fidelity-profile.json",
+      "role": "compiled-profile-data",
+      "sha256": "508786675d8be65d9210d638613e12c7be80877eb79329960d9c0ef2fad27ad9"
+    }
+  ],
+  "required_axes": [
+    {
+      "id": "platform-anatomy",
+      "bindings": [
+        "[data-aui-profile=\"macos-productivity\"]",
+        "[data-aui-adaptive=\"workspace\"]",
+        "[data-aui-component=\"toolbar\"]"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-platform-anatomy"
+      ]
+    },
+    {
+      "id": "typography",
+      "bindings": [
+        "--aui-font-system",
+        "--aui-type-body",
+        "--aui-type-title-1",
+        "[data-aui-text=\"title\"]"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-typography"
+      ]
+    },
+    {
+      "id": "semantic-color",
+      "bindings": [
+        "--aui-accent",
+        "--aui-label-primary",
+        "--aui-content-plane",
+        "--aui-separator"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-semantic-color"
+      ]
+    },
+    {
+      "id": "geometry",
+      "bindings": [
+        "--aui-shape-control",
+        "--aui-shape-surface",
+        "--aui-shape-floating",
+        "--aui-shape-capsule"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-geometry"
+      ]
+    },
+    {
+      "id": "functional-material",
+      "bindings": [
+        ":where([data-aui-layer=\"functional\"][data-aui-material=\"regular\"])",
+        ":where([data-aui-layer=\"functional\"][data-aui-material=\"clear\"])",
+        "[data-aui-layer=\"content\"]"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-functional-material"
+      ]
+    },
+    {
+      "id": "component-states",
+      "bindings": [
+        "[data-aui-pressable]",
+        "[data-aui-pressable][data-aui-pressed]",
+        "[data-aui-component=\"list\"] > :is([aria-current=\"page\"], [aria-selected=\"true\"], [aria-pressed=\"true\"])",
+        "[data-aui-fidelity=\"apple-fidelity-web/v1\"] :where(button, a, input, select, textarea):focus-visible"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-component-states"
+      ]
+    },
+    {
+      "id": "motion",
+      "bindings": [
+        "--aui-motion-fast",
+        "--aui-motion-standard",
+        "--aui-ease-spring",
+        "@media (prefers-reduced-motion: reduce)"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-motion"
+      ]
+    },
+    {
+      "id": "responsive-continuity",
+      "bindings": [
+        "[data-aui-profile=\"macos-productivity\"][data-aui-size-class=\"compact\"] [data-aui-adaptive=\"workspace\"]",
+        "[data-aui-profile=\"macos-productivity\"][data-aui-size-class=\"regular\"] [data-aui-adaptive=\"workspace\"]",
+        "[data-aui-profile=\"macos-productivity\"][data-aui-size-class=\"expanded\"] [data-aui-adaptive=\"workspace\"]",
+        "ResizeObserver"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "video-1",
+        "derived-1"
+      ],
+      "verification_ids": [
+        "verify-responsive-continuity"
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "scope": "primary-functional",
+      "component": "toolbar",
+      "variant": "regular",
+      "backdrop": "mixed",
+      "reason": "Navigation and actions retain continuity while content scrolls beneath a distinct functional plane.",
+      "opaque_fallback": "Use --aui-content-plane with --aui-separator-opaque and no blur.",
+      "high_contrast_fallback": "Use Canvas, CanvasText, and an explicit one-pixel boundary.",
+      "dimming": "not-required",
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "role": "window",
+      "selector": "[data-aui-component=\"window\"]",
+      "required": true,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "toolbar",
+      "selector": "[data-aui-component=\"toolbar\"]",
+      "required": true,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "sidebar",
+      "selector": "[data-aui-component=\"sidebar\"]",
+      "required": true,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "tabbar",
+      "selector": "[data-aui-component=\"tabbar\"]",
+      "required": false,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "action-group",
+      "selector": "[data-aui-component=\"action-group\"]",
+      "required": false,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "button",
+      "selector": "[data-aui-component=\"button\"]",
+      "required": true,
+      "states": [
+        "default",
+        "hover",
+        "focus-visible",
+        "pressed",
+        "disabled"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "segmented",
+      "selector": "[data-aui-component=\"segmented\"]",
+      "required": false,
+      "states": [
+        "default",
+        "hover",
+        "focus-visible",
+        "pressed",
+        "selected",
+        "disabled"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "search",
+      "selector": "[data-aui-component=\"search\"]",
+      "required": false,
+      "states": [
+        "default",
+        "focus-within",
+        "disabled",
+        "invalid"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "menu",
+      "selector": "[data-aui-component=\"menu\"]",
+      "required": false,
+      "states": [
+        "closed",
+        "open",
+        "focused-item",
+        "disabled-item"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "popover",
+      "selector": "[data-aui-component=\"popover\"]",
+      "required": true,
+      "states": [
+        "closed",
+        "open"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "sheet",
+      "selector": "[data-aui-component=\"sheet\"]",
+      "required": false,
+      "states": [
+        "closed",
+        "open"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "floating-control",
+      "selector": "[data-aui-component=\"floating-control\"]",
+      "required": false,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "media-controls",
+      "selector": "[data-aui-component=\"media-controls\"]",
+      "required": false,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "video-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "list",
+      "selector": "[data-aui-component=\"list\"]",
+      "required": false,
+      "states": [
+        "default",
+        "hover",
+        "focus-visible",
+        "selected",
+        "disabled"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    },
+    {
+      "role": "content-plane",
+      "selector": "[data-aui-component=\"content-plane\"]",
+      "required": true,
+      "states": [
+        "default"
+      ],
+      "evidence_ids": [
+        "official-1",
+        "image-1",
+        "derived-1"
+      ]
+    }
+  ],
+  "evidence_decisions": [
+    {
+      "id": "decision-official-1",
+      "evidence_id": "official-1",
+      "decision": "Apply one Regular functional material scope to the sticky console toolbar and transient governance dialog only; keep metrics, charts, tables, and history records opaque.",
+      "binding_refs": [
+        "required_axes/platform-anatomy",
+        "required_axes/typography",
+        "required_axes/semantic-color",
+        "required_axes/geometry",
+        "required_axes/functional-material",
+        "required_axes/component-states",
+        "required_axes/motion",
+        "required_axes/responsive-continuity",
+        "materials/primary-functional",
+        "components/window",
+        "components/toolbar",
+        "components/sidebar",
+        "components/tabbar",
+        "components/action-group",
+        "components/button",
+        "components/segmented",
+        "components/search",
+        "components/menu",
+        "components/popover",
+        "components/sheet",
+        "components/floating-control",
+        "components/media-controls",
+        "components/list",
+        "components/content-plane"
+      ]
+    },
+    {
+      "id": "decision-image-1",
+      "evidence_id": "image-1",
+      "decision": "Keep the toolbar visually floating over a quiet content field; use explicit source badges and boundaries instead of applying glass to every metric card.",
+      "binding_refs": [
+        "required_axes/platform-anatomy",
+        "required_axes/typography",
+        "required_axes/semantic-color",
+        "required_axes/geometry",
+        "required_axes/responsive-continuity",
+        "components/window",
+        "components/toolbar",
+        "components/sidebar",
+        "components/tabbar",
+        "components/action-group",
+        "components/list",
+        "components/content-plane"
+      ]
+    },
+    {
+      "id": "decision-video-1",
+      "evidence_id": "video-1",
+      "decision": "Use the compiled presentation runtime for toolbar press and pointer-local light; data refresh and selection remain Vue product state, and destructive sample reset uses an anchored confirmation dialog.",
+      "binding_refs": [
+        "required_axes/functional-material",
+        "required_axes/component-states",
+        "required_axes/motion",
+        "required_axes/responsive-continuity",
+        "materials/primary-functional",
+        "components/button",
+        "components/segmented",
+        "components/search",
+        "components/menu",
+        "components/popover",
+        "components/sheet",
+        "components/floating-control",
+        "components/media-controls"
+      ]
+    },
+    {
+      "id": "decision-derived-1",
+      "evidence_id": "derived-1",
+      "decision": "Compile macos-productivity with the existing Sub2API operational lime accent, add a reusable DataValue state model, introduce a data-governance workspace, and prohibit generic numeric formatters from coercing null or non-finite values to zero.",
+      "binding_refs": [
+        "required_axes/platform-anatomy",
+        "required_axes/typography",
+        "required_axes/semantic-color",
+        "required_axes/geometry",
+        "required_axes/functional-material",
+        "required_axes/component-states",
+        "required_axes/motion",
+        "required_axes/responsive-continuity",
+        "materials/primary-functional",
+        "components/window",
+        "components/toolbar",
+        "components/sidebar",
+        "components/tabbar",
+        "components/action-group",
+        "components/button",
+        "components/segmented",
+        "components/search",
+        "components/menu",
+        "components/popover",
+        "components/sheet",
+        "components/floating-control",
+        "components/media-controls",
+        "components/list",
+        "components/content-plane"
+      ]
+    }
+  ],
+  "appearance_adaptations": {
+    "compact": "Single-column anatomy with transient navigation or bottom tab bar.",
+    "regular": "Profile navigation and content occupy stable adjacent regions.",
+    "expanded": "Additional inspector/content context appears without resetting state.",
+    "light": "Semantic light roles preserve hierarchy and tested accent allocation.",
+    "dark": "Dark roles lift content and functional planes without simple inversion.",
+    "reduced-transparency": "Functional material becomes opaque with an explicit boundary.",
+    "reduced-motion": "Elastic scale/translation is removed; short acknowledgement remains.",
+    "increased-contrast": "Subtle depth becomes explicit boundaries and state indicators.",
+    "forced-colors": "System Canvas, CanvasText, and Highlight roles replace authored color.",
+    "no-backdrop": "Regular and Clear resolve to the opaque functional fallback."
+  },
+  "verification_plan": [
+    {
+      "id": "verify-platform-anatomy",
+      "axis": "platform-anatomy",
+      "method": "rendered-browser-observation",
+      "expected": "Capture the selected profile anatomy with its required navigation and content regions."
+    },
+    {
+      "id": "verify-typography",
+      "axis": "typography",
+      "method": "rendered-browser-observation",
+      "expected": "Inspect computed system stack, title/body roles, wrapping, and browser zoom at 200%."
+    },
+    {
+      "id": "verify-semantic-color",
+      "axis": "semantic-color",
+      "method": "rendered-browser-observation",
+      "expected": "Inspect computed semantic roles in light, dark, and increased contrast; confirm selection is not color-only."
+    },
+    {
+      "id": "verify-geometry",
+      "axis": "geometry",
+      "method": "rendered-browser-observation",
+      "expected": "Inspect fixed, capsule, and concentric radii on their declared component roles."
+    },
+    {
+      "id": "verify-functional-material",
+      "axis": "functional-material",
+      "method": "rendered-browser-observation",
+      "expected": "Scroll real content beneath one functional layer; inspect Regular or Clear plus reduced-transparency and no-backdrop fallbacks."
+    },
+    {
+      "id": "verify-component-states",
+      "axis": "component-states",
+      "method": "rendered-browser-observation",
+      "expected": "Replay default, hover/focus, pressed, selected, disabled, and applicable invalid states with semantic assertions."
+    },
+    {
+      "id": "verify-motion",
+      "axis": "motion",
+      "method": "rendered-browser-observation",
+      "expected": "Trace one pointer or keyboard press and one transient/adaptive transition, then repeat with reduced motion."
+    },
+    {
+      "id": "verify-responsive-continuity",
+      "axis": "responsive-continuity",
+      "method": "rendered-browser-observation",
+      "expected": "Capture compact, regular, and expanded compositions while proving product selection and destination state are preserved."
+    }
+  ],
+  "generated_at": "2026-08-11T11:25:17Z"
+}

@@ -1,0 +1,341 @@
+name: Compatible Core Auto Update
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: compatible-core-auto-update
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover an unpublished upstream core
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      version: ${{ steps.upstream.outputs.version }}
+      upstream_commit: ${{ steps.upstream.outputs.upstream_commit }}
+      needs_update: ${{ steps.upstream.outputs.needs_update }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            frontend/CORE_EXTENSION_VERSION
+            frontend/ALGORITHM_VERSION
+            frontend/CORE_CAPABILITIES
+            frontend/scripts/core-release-contract.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - id: upstream
+        name: Compare upstream release/tag with core-stable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag="$(gh api repos/Wei-Shaw/sub2api/releases/latest --jq .tag_name 2>/dev/null || true)"
+          tag_candidates="$(gh api --paginate repos/Wei-Shaw/sub2api/tags?per_page=100 --jq '.[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          tag="$(printf '%s\n%s\n' "$release_tag" "$tag_candidates" | awk 'NF' | sort -V | tail -n 1)"
+          [[ "$tag" == v* ]] || { echo "Unsupported upstream tag: $tag" >&2; exit 1; }
+          version="${tag#v}"
+          extension="$(tr -d '[:space:]' < frontend/CORE_EXTENSION_VERSION)"
+          algorithm="$(tr -d '[:space:]' < frontend/ALGORITHM_VERSION)"
+          refs="$(git ls-remote https://github.com/Wei-Shaw/sub2api.git "refs/tags/$tag" "refs/tags/$tag^{}")"
+          commit="$(awk '$2 ~ /\^\{\}$/ {print $1; exit}' <<< "$refs")"
+          [[ -n "$commit" ]] || commit="$(awk 'NR == 1 {print $1}' <<< "$refs")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "Unable to resolve upstream commit for $tag" >&2; exit 1; }
+          stable_version="0.0.0"
+          stable_commit=""
+          stable_extension=""
+          stable_algorithm=""
+          stable_capabilities_match=false
+          if gh release download core-stable --repo "$GITHUB_REPOSITORY" --pattern core-latest.json --output core-stable.json >/dev/null 2>&1; then
+            stable_version="$(jq -r '.version // "0.0.0"' core-stable.json)"
+            stable_commit="$(jq -r '.upstream_commit // ""' core-stable.json)"
+            stable_extension="$(jq -r '.extension_version // ""' core-stable.json)"
+            stable_algorithm="$(jq -r '.algorithm_version // ""' core-stable.json)"
+            if node frontend/scripts/core-release-contract.mjs capabilities core-stable.json; then
+              stable_capabilities_match=true
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_commit=$commit" >> "$GITHUB_OUTPUT"
+          blocked_title="Compatible core auto-update blocked: $tag"
+          blocked_count="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$blocked_title\" in:title" --json number --jq 'length')"
+          if [[ "$blocked_count" != "0" ]]; then
+            echo "An open review issue already blocks $tag; waiting for manual resolution."
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$stable_version" == "$version" && "$stable_commit" == "$commit" && "$stable_extension" == "$extension" && "$stable_algorithm" == "$algorithm" && "$stable_capabilities_match" == true ]]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$stable_version" == "$version" && -n "$stable_commit" && "$stable_commit" != "$commit" ]]; then
+            echo "Upstream tag $tag no longer matches the commit already published to core-stable" >&2
+            exit 1
+          elif [[ "$stable_version" == "$version" && -n "$stable_extension" && "$(printf '%s\n%s\n' "$stable_extension" "$extension" | sort -V | tail -n 1)" != "$extension" ]]; then
+            echo "Refusing to replace stable extension $stable_extension with older extension $extension" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$(printf '%s\n%s\n' "$stable_version" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+            echo "Refusing to replace stable $stable_version with older upstream $version" >&2
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  update:
+    name: Merge, verify and publish core-stable
+    needs: discover
+    if: needs.discover.outputs.needs_update == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: merge
+        name: Merge upstream with the reviewed conflict policy
+        shell: pwsh
+        run: |
+          git remote add upstream-sync https://github.com/Wei-Shaw/sub2api.git
+          git fetch upstream-sync "refs/tags/${{ needs.discover.outputs.tag }}:refs/tags/automation-${{ needs.discover.outputs.tag }}"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          $pinnedVersion = (Get-Content -Raw frontend/CORE_VERSION).Trim()
+          $pinnedCommit = (Get-Content -Raw frontend/UPSTREAM_SUB2API_COMMIT).Trim()
+          $alreadyIntegrated = $pinnedVersion -eq '${{ needs.discover.outputs.version }}' -and
+            $pinnedCommit -eq '${{ needs.discover.outputs.upstream_commit }}'
+          if ($alreadyIntegrated) {
+            Write-Host "Current tree already contains verified upstream ${{ needs.discover.outputs.tag }} ($pinnedCommit); skipping duplicate merge."
+          } else {
+            $officialTarget = "automation-${{ needs.discover.outputs.tag }}"
+            $pinnedTree = (git show -s --format='%T' $pinnedCommit).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $pinnedTree) {
+              throw "Unable to resolve the pinned upstream tree for $pinnedCommit"
+            }
+            $syntheticBase = $null
+            # Historical releases used both `synthetic upstream vX` and
+            # `synthetic-upstream-vX`; accept either spelling when locating
+            # the tree that corresponds to the pinned upstream source.
+            foreach ($candidate in @(git log --all --format='%H' --regexp-ignore-case --extended-regexp "--grep=synthetic[- ]upstream[- ]v$pinnedVersion")) {
+              $candidateTree = (git show -s --format='%T' $candidate).Trim()
+              git merge-base --is-ancestor $candidate HEAD
+              if ($LASTEXITCODE -eq 0 -and $candidateTree -eq $pinnedTree) {
+                $syntheticBase = $candidate
+                break
+              }
+            }
+            if (-not $syntheticBase) {
+              throw "Unable to find the integrated synthetic upstream v$pinnedVersion base"
+            }
+            $targetTree = (git show -s --format='%T' "$officialTarget^{commit}").Trim()
+            $mergeTarget = (git commit-tree $targetTree -p $syntheticBase -m "synthetic upstream v${{ needs.discover.outputs.version }}").Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $mergeTarget) {
+              throw "Unable to create the synthetic upstream merge target"
+            }
+            Write-Host "Merging the real upstream delta through synthetic base $syntheticBase"
+            git merge --no-ff --no-edit $mergeTarget
+            if ($LASTEXITCODE -ne 0) {
+            $conflicts = @(git diff --name-only --diff-filter=U)
+            $reviewedPaths = @(
+              'backend/internal/service/account_test_service.go',
+              'backend/internal/service/ratelimit_service.go',
+              'backend/internal/service/openai_gateway_upstream_errors.go',
+              'backend/internal/service/openai_ws_http_bridge.go',
+              'backend/internal/handler/openai_gateway_handler.go'
+            )
+            $localOverlayPaths = @(
+              'README.md',
+              'backend/internal/repository/group_usage_rollup_trigger_integration_test.go',
+              'backend/internal/service/cn_provider_balance_check_service_test.go'
+            )
+            $nonSourcePaths = @($localOverlayPaths) + @('backend/cmd/server/VERSION')
+            $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
+            $unreviewed = @($unknown | Where-Object { $_ -notin $reviewedPaths })
+            if ($unreviewed.Count -eq 0) {
+              # These files have content-checked three-way merge rules. Resolve
+              # each independently so a new upstream release can change both
+              # files in the same merge without bypassing the review gate.
+              foreach ($path in $reviewedPaths) {
+                if ($conflicts -contains $path) {
+                  & pwsh -NoLogo -NoProfile -File "$PWD/.github/resolve-core-merge.ps1" -Path $path
+                  if ($LASTEXITCODE -ne 0) {
+                    $files = $conflicts -join ', '
+                    git merge --abort
+                    "blocked=true" >> $env:GITHUB_OUTPUT
+                    "conflict_files=$files" >> $env:GITHUB_OUTPUT
+                    exit 0
+                  }
+                }
+              }
+              $conflicts = @(git diff --name-only --diff-filter=U)
+              $unknown = @($conflicts | Where-Object { $_ -notin $nonSourcePaths })
+            }
+            if ($unknown.Count -gt 0) {
+              $files = $conflicts -join ', '
+              git merge --abort
+              "blocked=true" >> $env:GITHUB_OUTPUT
+              "conflict_files=$files" >> $env:GITHUB_OUTPUT
+              exit 0
+            }
+            foreach ($path in $localOverlayPaths) {
+              if ($conflicts -contains $path) { git checkout --ours -- $path }
+            }
+            if ($conflicts -contains 'backend/cmd/server/VERSION') { git checkout --theirs -- backend/cmd/server/VERSION }
+            git add -A
+            git commit --no-edit
+            }
+          }
+          $commit = git rev-parse "automation-${{ needs.discover.outputs.tag }}^{commit}"
+          if ($commit -ne '${{ needs.discover.outputs.upstream_commit }}') { throw 'Fetched upstream tag moved after discovery' }
+          $utf8NoBom = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Resolve-Path frontend/CORE_VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path backend/cmd/server/VERSION), '${{ needs.discover.outputs.version }}', $utf8NoBom)
+          [IO.File]::WriteAllText((Resolve-Path frontend/UPSTREAM_SUB2API_COMMIT), $commit, $utf8NoBom)
+          "blocked=false" >> $env:GITHUB_OUTPUT
+
+      - name: Stop only for an unknown conflict
+        if: steps.merge.outputs.blocked == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $title = "Compatible core auto-update blocked: ${{ needs.discover.outputs.tag }}"
+          $count = gh issue list --repo '${{ github.repository }}' --state open --search "`"$title`" in:title" --json number --jq length
+          if ($count -eq '0') {
+            gh issue create --repo '${{ github.repository }}' --title $title --body "Unknown merge conflicts require source review: ${{ steps.merge.outputs.conflict_files }}. Existing core-stable was not changed."
+          }
+          throw $title
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify integrated upstream source identity
+        run: node frontend/scripts/verify-core-source.mjs "automation-${{ needs.discover.outputs.tag }}"
+      - run: corepack enable
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: corepack pnpm@9 install --frozen-lockfile
+      - name: Run backend contract
+        working-directory: backend
+        run: |
+          go test -tags=unit ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Full backend unit tests failed after upstream merge' }
+          go test -tags=integration ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Backend integration tests failed after upstream merge' }
+      - name: Lint the merged backend before core publication
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13
+          args: --timeout=30m
+          working-directory: backend
+      - name: Build the web assets and managed core required by the desktop contract
+        working-directory: frontend
+        run: |
+          corepack pnpm@9 build
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded web build failed' }
+          node scripts/prepare-desktop-sidecar.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Managed core build failed' }
+          corepack pnpm@9 build:desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop UI build failed' }
+      - name: Run desktop activation, identity and rollback contract
+        working-directory: frontend/src-tauri
+        run: cargo test --features custom-protocol
+      - name: Run frontend and updater contract
+        working-directory: frontend
+        run: |
+          corepack pnpm@9 test:run
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
+          corepack pnpm@9 lint:check
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed' }
+      - name: Build and authenticate the stable core
+        working-directory: frontend
+        env:
+          CORE_RELEASE_TAG: core-stable
+          CORE_RELEASE_CHANNEL: stable
+        run: node scripts/prepare-core-release.mjs
+      - name: Verify core capability and archive contract
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          node --test scripts/core-release-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Core release tests failed' }
+          $manifest = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          $archive = Join-Path release-assets $manifest.platforms.'windows-x86_64'.archive_name
+          node scripts/core-release-contract.mjs verify release-assets/core-latest.json $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Core release contract failed' }
+      - name: Recheck stable immediately before publishing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force stable-check | Out-Null
+          gh release download core-stable --dir stable-check --pattern core-latest.json 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to read core-stable immediately before publication; refusing blind replacement'
+          }
+          if ($LASTEXITCODE -eq 0) {
+            $stable = Get-Content -Raw stable-check/core-latest.json | ConvertFrom-Json
+            if ([version]$stable.version -gt [version]'${{ needs.discover.outputs.version }}') {
+              throw "core-stable advanced to $($stable.version); refusing to overwrite it with ${{ needs.discover.outputs.version }}"
+            }
+            $targetExtension = (Get-Content -Raw frontend/CORE_EXTENSION_VERSION).Trim()
+            if ([version]$stable.version -eq [version]'${{ needs.discover.outputs.version }}' -and [version]$stable.extension_version -gt [version]$targetExtension) {
+              throw "core-stable extension advanced to $($stable.extension_version); refusing to overwrite it with $targetExtension"
+            }
+            if ($stable.version -eq '${{ needs.discover.outputs.version }}' -and $stable.upstream_commit -ne '${{ needs.discover.outputs.upstream_commit }}') {
+              throw 'Stable upstream source identity changed; refusing replacement'
+            }
+            $target = Get-Content -Raw frontend/release-assets/core-latest.json | ConvertFrom-Json
+            if ($stable.platforms.'windows-x86_64'.archive_name -eq $target.platforms.'windows-x86_64'.archive_name -and
+                $stable.platforms.'windows-x86_64'.sha256 -ne $target.platforms.'windows-x86_64'.sha256) {
+              throw 'Refusing to replace an advertised core archive with different bytes; increment CORE_EXTENSION_VERSION'
+            }
+          }
+      - name: Publish the verified core directly to the client stable channel
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view core-stable 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create core-stable --title 'Sub2API compatible core stable channel' --notes 'Automatically tested compatible core releases.' --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create core-stable channel' }
+          }
+          $manifest = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          $archiveName = $manifest.platforms.'windows-x86_64'.archive_name
+          gh release upload core-stable (Join-Path release-assets $archiveName) --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core payload upload failed' }
+          gh release upload core-stable release-assets/CORE_SHA256SUMS.txt release-assets/core-latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core manifest upload failed' }
+          New-Item -ItemType Directory -Force release-assets/published-core | Out-Null
+          gh release download core-stable --pattern core-latest.json --pattern $archiveName --dir release-assets/published-core
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core download verification failed' }
+          node scripts/core-release-contract.mjs verify release-assets/published-core/core-latest.json (Join-Path release-assets/published-core $archiveName)
+          if ($LASTEXITCODE -ne 0) { throw 'Published stable core contract failed' }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: compatible-core-stable-${{ needs.discover.outputs.version }}
+          if-no-files-found: error
+          path: frontend/release-assets/*

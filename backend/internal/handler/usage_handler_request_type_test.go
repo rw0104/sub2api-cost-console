@@ -21,6 +21,7 @@ type userUsageRepoCapture struct {
 	listFilters  usagestats.UsageLogFilters
 	statsFilters usagestats.UsageLogFilters
 	trendFilters usagestats.UsageLogFilters
+	trend        []usagestats.TrendDataPoint
 	groupFilters usagestats.UsageLogFilters
 	listRows     []service.UsageLog
 	stats        *usagestats.UsageStats
@@ -58,7 +59,7 @@ func (s *userUsageRepoCapture) GetUsageTrendWithFilters(ctx context.Context, sta
 		Stream:      stream,
 		BillingType: billingType,
 	}
-	return []usagestats.TrendDataPoint{}, nil
+	return s.trend, nil
 }
 
 func (s *userUsageRepoCapture) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.ModelStat, error) {
@@ -90,8 +91,26 @@ func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	router.GET("/usage", handler.List)
 	router.GET("/usage/stats", handler.Stats)
 	router.GET("/usage/dashboard/models", handler.DashboardModels)
+	router.GET("/usage/dashboard/trend", handler.DashboardTrend)
 	router.GET("/usage/dashboard/snapshot-v2", handler.DashboardSnapshotV2)
 	return router
+}
+
+func TestUserDashboardTrendAndSnapshotHideAccountCost(t *testing.T) {
+	accountCost := 0.42
+	repo := &userUsageRepoCapture{trend: []usagestats.TrendDataPoint{{
+		Date: "2026-09-25 10:00", Requests: 1, InputTokens: 2, OutputTokens: 3,
+		TotalTokens: 5, Cost: 0.5, ActualCost: 0.4, AccountCost: &accountCost,
+	}}}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	for _, path := range []string{"/usage/dashboard/trend", "/usage/dashboard/snapshot-v2?include_trend=true&include_model_stats=false"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, recorder.Code, path)
+		require.NotContains(t, recorder.Body.String(), "account_cost", path)
+		require.Contains(t, recorder.Body.String(), "actual_cost", path)
+	}
 }
 
 func TestUserUsageListRequestTypePriority(t *testing.T) {

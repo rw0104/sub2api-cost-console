@@ -252,6 +252,25 @@ func ProvideAccountUsageService(
 	return service
 }
 
+// ProvideAccountCostLossService constructs the account impairment ledger used
+// by both the admin API and the economics snapshot service.
+func ProvideAccountCostLossService(repo AccountCostLossRepository) *AccountCostLossService {
+	return NewAccountCostLossService(repo)
+}
+
+// ProvideAccountEconomicsService constructs and starts the factual account
+// economics sampler. AccountRepository is accepted here because it already
+// satisfies the narrower AccountEconomicsAccountReader contract.
+func ProvideAccountEconomicsService(
+	accountRepo AccountRepository,
+	repo AccountEconomicsRepository,
+	losses *AccountCostLossService,
+) *AccountEconomicsService {
+	svc := NewAccountEconomicsService(accountRepo, repo, losses)
+	svc.Start()
+	return svc
+}
+
 func ProvideAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
@@ -263,6 +282,7 @@ func ProvideAccountTestService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
+	rateLimitService *RateLimitService,
 	pluginManager *PluginManager,
 ) *AccountTestService {
 	service := NewAccountTestService(
@@ -278,6 +298,7 @@ func ProvideAccountTestService(
 	service.agentIdentityWS = openAIGatewayService
 	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
+	service.SetRateLimitService(rateLimitService)
 	service.SetPluginManager(pluginManager)
 	return service
 }
@@ -508,6 +529,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	accountCostLoss *AccountCostLossService,
 	ollamaCloudUsage *OllamaCloudUsageService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
@@ -518,6 +540,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetAccountCostLossService(accountCostLoss)
 	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
 	return svc
 }
@@ -792,8 +815,9 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 }
 
 // ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+func ProvideSettingService(scopedKeys ScopedAdminKeyRepository, settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
+	svc.scopedAdminKeyRepo = scopedKeys
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
@@ -913,6 +937,8 @@ var ProviderSet = wire.NewSet(
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
 	ProvideAccountUsageService,
+	ProvideAccountCostLossService,
+	ProvideAccountEconomicsService,
 	ProvideAccountTestService,
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,

@@ -119,12 +119,24 @@ type SimpleModeConfig struct {
 // PluginConfig 控制管理员手动上传的本地进程插件。
 // 默认不包含插件，也不允许安装未签名插件；TrustedPublishers 用于追加第三方发布者。
 type PluginConfig struct {
-	DataDir              string            `mapstructure:"data_dir"`
-	AllowUnsigned        bool              `mapstructure:"allow_unsigned"`
-	TrustedPublishers    map[string]string `mapstructure:"trusted_publishers"`
-	MaxUploadBytes       int64             `mapstructure:"max_upload_bytes"`
-	MaxUncompressedBytes int64             `mapstructure:"max_uncompressed_bytes"`
-	StartTimeoutSeconds  int               `mapstructure:"start_timeout_seconds"`
+	DataDir              string              `mapstructure:"data_dir"`
+	AllowUnsigned        bool                `mapstructure:"allow_unsigned"`
+	TrustedPublishers    map[string]string   `mapstructure:"trusted_publishers"`
+	MaxUploadBytes       int64               `mapstructure:"max_upload_bytes"`
+	MaxUncompressedBytes int64               `mapstructure:"max_uncompressed_bytes"`
+	StartTimeoutSeconds  int                 `mapstructure:"start_timeout_seconds"`
+	V2Sandbox            PluginSandboxConfig `mapstructure:"v2_sandbox"`
+}
+
+// PluginSandboxConfig applies only to v2 hooks. Container mode fails closed if
+// its local Docker image/runtime is unavailable; it never falls back to process.
+type PluginSandboxConfig struct {
+	Mode         string                          `mapstructure:"mode"`
+	Image        string                          `mapstructure:"image"`
+	MemoryMB     int                             `mapstructure:"memory_mb"`
+	CPUMilli     int                             `mapstructure:"cpu_milli"`
+	PidsLimit    int                             `mapstructure:"pids_limit"`
+	EgressBroker PluginSandboxEgressBrokerConfig `mapstructure:"egress_broker"`
 }
 
 type LogConfig struct {
@@ -1688,10 +1700,10 @@ type JWTConfig struct {
 // TotpConfig TOTP 双因素认证配置
 type TotpConfig struct {
 	// EncryptionKey 用于加密 TOTP 密钥的 AES-256 密钥（32 字节 hex 编码）
-	// 如果为空，将自动生成一个随机密钥（仅适用于开发环境）
+	// 未配置时由数据库初始化持久化，构造加密器前统一读取同一个值。
 	EncryptionKey string `mapstructure:"encryption_key"`
-	// EncryptionKeyConfigured 标记加密密钥是否为手动配置（非自动生成）
-	// 只有手动配置了密钥才允许在管理后台启用 TOTP 功能
+	// 加载配置时表示显式设置；数据库初始化成功后也可表示已持久化。
+	// 只有具备可跨重启复用的密钥，才允许保存依赖加密的数据。
 	EncryptionKeyConfigured bool `mapstructure:"-"`
 }
 
@@ -1865,6 +1877,12 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	if err := ValidatePluginPreviewDatabase(cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName); err != nil {
+		return nil, err
+	}
+	if err := ValidatePluginPreviewRedis(cfg.Redis.Host, cfg.Redis.Port); err != nil {
+		return nil, err
+	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
 	}
@@ -1927,6 +1945,14 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
 	cfg.Dashboard.KeyPrefix = strings.TrimSpace(cfg.Dashboard.KeyPrefix)
 	cfg.CORS.AllowedOrigins = normalizeStringSlice(cfg.CORS.AllowedOrigins)
+	if desktopModeEnabled() {
+		cfg.CORS.AllowedOrigins = appendMissingStrings(cfg.CORS.AllowedOrigins,
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"tauri://localhost",
+		)
+		cfg.CORS.AllowCredentials = true
+	}
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
 	cfg.Security.CSP.Policy = strings.TrimSpace(cfg.Security.CSP.Policy)
@@ -1981,7 +2007,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		}
 		cfg.Totp.EncryptionKey = key
 		cfg.Totp.EncryptionKeyConfigured = false
-		slog.Warn("TOTP encryption key auto-generated. Consider setting a fixed key for production.")
+		slog.Info("TOTP encryption key is provisional; database bootstrap will load or persist the durable key before use.")
 	} else {
 		cfg.Totp.EncryptionKeyConfigured = true
 	}
@@ -2018,6 +2044,31 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendMissingStrings(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	result := append([]string(nil), values...)
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func configureConfigSource(setConfigFile, addConfigPath func(string)) {
@@ -2345,9 +2396,9 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.overload_cooldown_minutes", 10)
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
-	// Pricing - 从 model-price-repo main 分支同步模型定价和上下文窗口数据
-	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
-	viper.SetDefault("pricing.hash_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256")
+	// Pricing - 每日同步 LiteLLM 上游维护的完整模型目录；仓库内条目只补齐远程缺少的模型。
+	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
+	viper.SetDefault("pricing.hash_url", "")
 	viper.SetDefault("pricing.data_dir", "./data")
 	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.override_file", "")
@@ -2358,9 +2409,22 @@ func setDefaults() {
 	viper.SetDefault("plugins.data_dir", "")
 	viper.SetDefault("plugins.allow_unsigned", false)
 	viper.SetDefault("plugins.trusted_publishers", map[string]string{})
+	if PluginPreviewEnabled() {
+		viper.SetDefault("plugins.trusted_publishers", PreviewTrustedPublishers())
+	}
 	viper.SetDefault("plugins.max_upload_bytes", int64(128*1024*1024))
 	viper.SetDefault("plugins.max_uncompressed_bytes", int64(256*1024*1024))
 	viper.SetDefault("plugins.start_timeout_seconds", 15)
+	viper.SetDefault("plugins.v2_sandbox.mode", "process")
+	viper.SetDefault("plugins.v2_sandbox.image", "sub2api-plugin-sandbox:1")
+	viper.SetDefault("plugins.v2_sandbox.memory_mb", 256)
+	viper.SetDefault("plugins.v2_sandbox.cpu_milli", 1000)
+	viper.SetDefault("plugins.v2_sandbox.pids_limit", 64)
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.enabled", false)
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.socket_path", "")
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.allowed_hosts", []string{})
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.allowed_schemes", []string{})
+	viper.SetDefault("plugins.v2_sandbox.egress_broker.require_tls", true)
 
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
@@ -2733,6 +2797,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Plugins.StartTimeoutSeconds < 1 || c.Plugins.StartTimeoutSeconds > 120 {
 		return fmt.Errorf("plugins.start_timeout_seconds must be between 1 and 120")
+	}
+	if err := c.Plugins.V2Sandbox.Validate(); err != nil {
+		return err
 	}
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")

@@ -44,7 +44,7 @@ describe('admin system rollback API', () => {
     expect(post).toHaveBeenCalledWith(
       '/admin/system/rollback',
       { version: '0.1.146' },
-      { timeout: 15 * 60 * 1000 }
+      { timeout: 15 * 60 * 1000 },
     )
     expect(result.need_restart).toBe(true)
   })
@@ -57,7 +57,7 @@ describe('admin system rollback API', () => {
     expect(post).toHaveBeenCalledWith(
       '/admin/system/rollback',
       undefined,
-      { timeout: 15 * 60 * 1000 }
+      { timeout: 15 * 60 * 1000 },
     )
   })
 })

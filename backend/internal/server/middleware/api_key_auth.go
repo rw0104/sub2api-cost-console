@@ -164,6 +164,11 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			return
 		}
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
+		var pluginGroupID int64
+		if apiKey.GroupID != nil {
+			pluginGroupID = *apiKey.GroupID
+		}
+		ctx = service.WithPluginPrincipal(ctx, apiKey.User.ID, pluginGroupID)
 		c.Request = c.Request.WithContext(ctx)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
 		// Async image task polling only reads data that already belongs to the

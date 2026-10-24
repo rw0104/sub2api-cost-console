@@ -1,7 +1,7 @@
 <template>
   <div class="relative">
     <!-- Admin: Full version badge with dropdown -->
-    <template v-if="isAdmin">
+    <template v-if="isAdmin && !desktop">
       <button
         @click="toggleDropdown"
         class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
@@ -631,7 +631,11 @@
     </template>
 
     <!-- Non-admin: Simple static version text -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
+    <span
+      v-else-if="version"
+      class="text-xs text-gray-500 dark:text-dark-400"
+      :title="desktop ? '桌面模式请使用右下角“版本与更新”检查上游内核' : undefined"
+    >
       v{{ version }}
     </span>
   </div>
@@ -649,6 +653,7 @@ import {
   type RollbackVersionInfo
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
+import { isDesktopRuntime } from '@/api/url'
 import Icon from '@/components/icons/Icon.vue'
 
 const GITHUB_REPO = 'Wei-Shaw/sub2api'
@@ -663,6 +668,7 @@ const props = defineProps<{
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const desktop = isDesktopRuntime()
 
 const isAdmin = computed(() => authStore.isAdmin)
 
@@ -910,7 +916,7 @@ function handleClickOutside(event: MouseEvent) {
 }
 
 onMounted(() => {
-  if (isAdmin.value) {
+  if (isAdmin.value && !desktop) {
     // Use cached version if available, otherwise fetch
     appStore.fetchVersion(false)
   }

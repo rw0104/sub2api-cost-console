@@ -1,0 +1,266 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  # Serialize publication with the standalone core channel workflow.
+  group: compatible-core-auto-update
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    name: Build signed Windows desktop release
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Verify pinned upstream source identity
+        shell: pwsh
+        run: |
+          $coreVersion = (Get-Content -Raw frontend/CORE_VERSION).Trim()
+          git fetch --no-tags https://github.com/Wei-Shaw/sub2api.git "refs/tags/v${coreVersion}:refs/tags/release-upstream-v${coreVersion}"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to fetch official upstream release tag' }
+          node --test frontend/scripts/verify-core-source.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream source contract test failed' }
+          node frontend/scripts/verify-core-source.mjs "release-upstream-v${coreVersion}"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned upstream source identity does not match the official release' }
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: corepack pnpm@9 install --frozen-lockfile
+
+      - name: Build embedded backend UI
+        working-directory: frontend
+        run: corepack pnpm@9 build
+
+      - name: Build managed Sub2API core
+        working-directory: frontend
+        run: node scripts/prepare-desktop-sidecar.mjs
+
+      - name: Build desktop UI for runtime checks
+        working-directory: frontend
+        run: corepack pnpm@9 build:desktop
+
+      - name: Verify startup recovery and process lifecycle
+        working-directory: frontend/src-tauri
+        run: cargo test --locked --features custom-protocol
+
+      - name: Verify frontend and updater contracts
+        working-directory: frontend
+        run: corepack pnpm@9 test:run
+
+      - name: Check frontend lint
+        working-directory: frontend
+        run: corepack pnpm@9 lint:check
+
+      - name: Collect release metadata
+        id: release-meta
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          $config = Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json
+          $version = [string]$config.version
+          $coreVersion = (Get-Content -Raw CORE_VERSION).Trim()
+          $algorithmVersion = (Get-Content -Raw ALGORITHM_VERSION).Trim()
+          $extensionVersion = (Get-Content -Raw CORE_EXTENSION_VERSION).Trim()
+          $upstreamCommit = (Get-Content -Raw UPSTREAM_SUB2API_COMMIT).Trim()
+          $releaseNotes = (Get-Content -Raw DESKTOP_RELEASE_NOTES.md).Trim()
+          $tag = "v$version"
+          if ("${{ github.event_name }}" -eq "push" -and "${{ github.ref_name }}" -ne $tag) {
+            throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $tag"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "core_version=$coreVersion" >> $env:GITHUB_OUTPUT
+          "algorithm_version=$algorithmVersion" >> $env:GITHUB_OUTPUT
+          "extension_version=$extensionVersion" >> $env:GITHUB_OUTPUT
+          "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
+          "release_notes<<RELEASE_NOTES_EOF" >> $env:GITHUB_OUTPUT
+          $releaseNotes >> $env:GITHUB_OUTPUT
+          "RELEASE_NOTES_EOF" >> $env:GITHUB_OUTPUT
+
+      - name: Validate detailed technical release notes
+        working-directory: frontend
+        run: node scripts/prepare-desktop-release.mjs --validate-notes-only
+
+      - name: Require complete backend CI for the release commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            $runs = @(gh run list --repo '${{ github.repository }}' --workflow backend-ci.yml --commit $env:GITHUB_SHA --limit 30 --json headSha,status,conclusion | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to read backend CI results' }
+            $matching = @($runs | Where-Object { $_.headSha -eq $env:GITHUB_SHA })
+            if (@($matching | Where-Object { $_.conclusion -eq 'success' }).Count -gt 0) { exit 0 }
+            if ($matching.Count -gt 0 -and @($matching | Where-Object { $_.status -ne 'completed' }).Count -eq 0) {
+              throw "Full backend CI failed for release commit $env:GITHUB_SHA; refusing publication"
+            }
+            Start-Sleep -Seconds 30
+          }
+          throw "No successful full backend CI found for release commit $env:GITHUB_SHA"
+
+      - name: Build and verify the matching stable core
+        working-directory: frontend
+        shell: pwsh
+        env:
+          CORE_RELEASE_TAG: core-stable
+          CORE_RELEASE_CHANNEL: stable
+        run: |
+          node --test scripts/core-release-contract.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Core release contract tests failed' }
+          node scripts/prepare-core-release.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Core packaging or binary identity verification failed' }
+          $manifest = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          $archive = Join-Path release-assets $manifest.platforms.'windows-x86_64'.archive_name
+          node scripts/core-release-contract.mjs verify release-assets/core-latest.json $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Core artifact contract failed' }
+
+      - name: Build and verify public plugin developer kit
+        working-directory: frontend
+        run: python scripts/prepare-plugin-devkit.py
+
+      - name: Publish compatible core before its desktop installer
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $target = Get-Content -Raw release-assets/core-latest.json | ConvertFrom-Json
+          gh release download core-stable --repo '${{ github.repository }}' --pattern core-latest.json --output release-assets/core-stable-before.json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read existing stable core; refusing blind replacement' }
+          $stable = Get-Content -Raw release-assets/core-stable-before.json | ConvertFrom-Json
+          if ([version]$stable.version -gt [version]$target.version -or
+              ([version]$stable.version -eq [version]$target.version -and [version]$stable.extension_version -gt [version]$target.extension_version)) {
+            throw 'Refusing to downgrade core-stable'
+          }
+          if ($stable.version -eq $target.version -and $stable.upstream_commit -ne $target.upstream_commit) {
+            throw 'Stable upstream identity changed unexpectedly'
+          }
+          if ($stable.platforms.'windows-x86_64'.archive_name -eq $target.platforms.'windows-x86_64'.archive_name -and
+              $stable.platforms.'windows-x86_64'.sha256 -ne $target.platforms.'windows-x86_64'.sha256) {
+            throw 'Refusing to replace an advertised core archive with different bytes; increment CORE_EXTENSION_VERSION'
+          }
+          $archive = Join-Path release-assets $target.platforms.'windows-x86_64'.archive_name
+          # Upload payload first. Existing clients keep the old manifest until
+          # its corresponding new binary has become downloadable.
+          gh release upload core-stable --repo '${{ github.repository }}' $archive --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core binary upload failed' }
+          gh release upload core-stable --repo '${{ github.repository }}' release-assets/CORE_SHA256SUMS.txt release-assets/core-latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Stable core metadata upload failed' }
+          gh release download core-stable --repo '${{ github.repository }}' --pattern core-latest.json --output release-assets/core-stable-published.json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read published stable core' }
+          New-Item -ItemType Directory -Force release-assets/published-core | Out-Null
+          gh release download core-stable --repo '${{ github.repository }}' --pattern $target.platforms.'windows-x86_64'.archive_name --dir release-assets/published-core
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download the published core payload' }
+          $publishedArchive = Join-Path release-assets/published-core $target.platforms.'windows-x86_64'.archive_name
+          node scripts/core-release-contract.mjs verify release-assets/core-stable-published.json $publishedArchive
+          if ($LASTEXITCODE -ne 0) { throw 'Published core is incompatible with this desktop' }
+
+      - name: Build and publish Tauri installer
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: frontend
+          tagName: v__VERSION__
+          releaseName: Sub2API Cost Console v__VERSION__
+          releaseBody: |
+            Windows 成本运维桌面工具。
+
+            - 桌面版本：v${{ steps.release-meta.outputs.version }}
+            - 上游内核基线：v${{ steps.release-meta.outputs.core_version }}（${{ steps.release-meta.outputs.upstream_commit }}）
+            - 成本扩展：v${{ steps.release-meta.outputs.extension_version }}
+            - 成本算法：v${{ steps.release-meta.outputs.algorithm_version }}
+            - 包含 Tauri 签名更新清单、安装包签名与 SHA-256 校验文件。
+
+            ${{ steps.release-meta.outputs.release_notes }}
+
+            ## 插件开发资料
+
+            - [插件开发指南](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装与分发。
+            - [SDK 与示例开发包](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/sub2api-plugin-devkit-v${{ steps.release-meta.outputs.version }}.zip)：公开 SDK、proto、Schema、示例 UI、打包器与依赖源码。
+            - [开发资料 SHA-256](https://github.com/${{ github.repository }}/releases/download/v${{ steps.release-meta.outputs.version }}/PLUGIN_DEVKIT_SHA256SUMS.txt)。
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          args: --bundles nsis
+
+      - name: Generate release checksums
+        working-directory: frontend
+        run: node scripts/prepare-desktop-release.mjs
+
+      - name: Upload desktop updater metadata and checksums
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.release-meta.outputs.tag }}" `
+            (Resolve-Path release-assets/latest.json) `
+            (Resolve-Path release-assets/INSTALLER_SHA256SUMS.txt) `
+            (Resolve-Path DESKTOP_RELEASE_NOTES.md) `
+            (Resolve-Path ../assets/qq-community-qrcode.jpg) --clobber
+
+      - name: Publish plugin development guide and source kit
+        shell: pwsh
+        working-directory: frontend
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.release-meta.outputs.tag }}" `
+            (Resolve-Path release-assets/plugin-devkit/PLUGIN_DEVELOPMENT.md) `
+            (Resolve-Path "release-assets/plugin-devkit/sub2api-plugin-devkit-v${{ steps.release-meta.outputs.version }}.zip") `
+            (Resolve-Path release-assets/plugin-devkit/PLUGIN_DEVKIT_SHA256SUMS.txt) --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sub2api-cost-console-${{ steps.release-meta.outputs.version }}-windows
+          if-no-files-found: error
+          path: |
+            frontend/src-tauri/target/release/bundle/nsis/*
+            frontend/release-assets/*

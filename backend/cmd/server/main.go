@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -31,11 +32,24 @@ var embeddedVersion string
 
 // Build-time variables (can be set by ldflags)
 var (
-	Version   = ""
-	Commit    = "unknown"
-	Date      = "unknown"
-	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	Version              = ""
+	Commit               = "unknown"
+	Date                 = "unknown"
+	BuildType            = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	CoreExtensionVersion = "official"
+	CoreCapabilities     = ""
 )
+
+func versionInfo(version, commit, date, extensionVersion, capabilities string) string {
+	return fmt.Sprintf(
+		"Sub2API %s (commit: %s, built: %s, extension: %s, capabilities: %s)",
+		version,
+		commit,
+		date,
+		extensionVersion,
+		capabilities,
+	)
+}
 
 func init() {
 	// 如果 Version 已通过 ldflags 注入（例如 -X main.Version=...），则不要覆盖。
@@ -62,7 +76,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
+		log.Println(versionInfo(Version, Commit, Date, CoreExtensionVersion, CoreCapabilities))
 		return
 	}
 
@@ -97,7 +111,16 @@ func main() {
 func runSetupServer() {
 	r := gin.New()
 	r.Use(middleware.Recovery())
-	r.Use(middleware.CORS(config.CORSConfig{}))
+	setupCORS := config.CORSConfig{}
+	if desktopModeEnabled() {
+		setupCORS.AllowedOrigins = []string{
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"tauri://localhost",
+		}
+		setupCORS.AllowCredentials = true
+	}
+	r.Use(middleware.CORS(setupCORS))
 	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: config.DefaultCSPPolicy}, nil))
 
 	// Register setup routes
@@ -128,6 +151,15 @@ func runSetupServer() {
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Failed to start setup server: %v", err)
+	}
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -180,7 +212,11 @@ func runMainServer() {
 	// 等待中断信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	defer signal.Stop(quit)
+	select {
+	case <-quit:
+	case <-desktopShutdownRequests(os.Stdin):
+	}
 
 	log.Println("Shutting down server...")
 

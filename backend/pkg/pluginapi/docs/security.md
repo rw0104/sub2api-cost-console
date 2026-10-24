@@ -15,6 +15,8 @@
 - 插件拥有 Sub2API 服务用户可访问的文件、环境变量和网络权限。
 - 包签名证明发布者身份，不证明实现无漏洞或符合 Provider 条款。
 
+以上普通进程边界适用于 v1 和 v2 的 `process` 模式。v2 另有可选 [容器运行器](sandbox.md)，实际提供低权限、只读文件、无网络与 cgroup 资源限制；设置为 `container` 时初始化失败不会回退。管理接口/页面显示实际 `runtime_isolation`。
+
 ## 部署要求
 
 - 官方 OpenAI Transport 使用宿主内置公钥；只向 `plugins.trusted_publishers` 添加经过审核的第三方公钥。

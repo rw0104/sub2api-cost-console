@@ -22,14 +22,17 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 )
 
 const (
-	pluginConfigMaxBytes  = 4 * 1024 * 1024
-	pluginUIAssetMaxBytes = 32 * 1024 * 1024
-	pluginReconcilePeriod = time.Second
-	pluginHealthTimeout   = 5 * time.Second
-	pluginUITokenPrefix   = "sub2api:plugin-ui:v1:"
+	pluginConfigMaxBytes            = 4 * 1024 * 1024
+	pluginUIAssetMaxBytes           = 32 * 1024 * 1024
+	pluginReconcilePeriod           = time.Second
+	pluginHealthTimeout             = 5 * time.Second
+	pluginReadinessInterval         = 30 * time.Second
+	pluginReadinessFailureThreshold = 3
+	pluginUITokenPrefix             = "sub2api:plugin-ui:v1:"
 )
 
 type pluginRoute struct {
@@ -37,20 +40,26 @@ type pluginRoute struct {
 	runtime        *pluginRuntime
 	rolloutPercent int
 	unavailable    string
+	binding        PluginBinding
+}
+
+type legacyRouteTable struct {
+	routes []*pluginRoute
 }
 
 // PluginManager 管理插件安装、配置、进程生命周期和 OpenAI OAuth 能力绑定。
 type PluginManager struct {
-	repo      PluginRepository
-	encryptor SecretEncryptor
-	cfg       *config.Config
-	hostInfo  PluginHostInfo
-	installer *PluginPackageInstaller
+	repo           PluginRepository
+	encryptor      SecretEncryptor
+	cfg            *config.Config
+	hostInfo       PluginHostInfo
+	installer      *PluginPackageInstaller
+	desktopUpgrade *pluginDesktopUpgrade
 	// kvStore 为运行中的插件提供通用宿主键值存储；为 nil 时不向插件暴露宿主服务。
 	kvStore PluginKVStore
 	// accountDirectory 为声明了对应能力的插件提供账号目录与出站身份解析（敏感能力）；
 	// 通过 SetAccountDirectory 在启动装配阶段注入，为 nil 时插件拿不到该能力。
-	accountDirectory PluginAccountDirectory
+	accountDirectory any
 
 	operationMu        sync.Mutex
 	mu                 sync.Mutex
@@ -60,15 +69,29 @@ type PluginManager struct {
 	reconcileCancel    context.CancelFunc
 	reconcileDone      chan struct{}
 	route              atomic.Pointer[pluginRoute]
+	legacyRoutes       atomic.Pointer[legacyRouteTable]
+	extensions         atomic.Pointer[extensionRouteTable]
+	retiring           sync.WaitGroup
+	retired            map[*pluginRuntime]struct{}
+	controlPlaneStale  atomic.Bool
 }
 
-func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo, kvStore PluginKVStore) *PluginManager {
+func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo, kvStores ...PluginKVStore) *PluginManager {
+	installer := NewPluginPackageInstaller(cfg, hostInfo)
+	if publishers, ok := repo.(PluginPublisherLookup); ok {
+		installer.publishers = publishers
+	}
+	var kvStore PluginKVStore
+	if len(kvStores) > 0 {
+		kvStore = kvStores[0]
+	}
 	return &PluginManager{
 		repo:               repo,
 		encryptor:          encryptor,
 		cfg:                cfg,
 		hostInfo:           hostInfo,
-		installer:          NewPluginPackageInstaller(cfg, hostInfo),
+		installer:          installer,
+		desktopUpgrade:     newPluginDesktopUpgrade(installer.RootDir(), hostInfo),
 		kvStore:            kvStore,
 		runtimes:           make(map[int64]*pluginRuntime),
 		localInstallations: make(map[int64]*PluginInstallation),
@@ -131,12 +154,13 @@ func (m *PluginManager) Stop() {
 	}
 	m.runtimes = make(map[int64]*pluginRuntime)
 	m.route.Store(nil)
+	m.legacyRoutes.Store(nil)
+	m.extensions.Store(nil)
 	m.started = false
 	m.mu.Unlock()
 	m.operationMu.Unlock()
-	for _, runtime := range runtimes {
-		runtime.drain(10 * time.Second)
-	}
+	drainPluginRuntimes(context.Background(), runtimes, pluginDrainTimeout)
+	m.retiring.Wait()
 }
 
 func (m *PluginManager) List(ctx context.Context) ([]*PluginInstallation, error) {
@@ -148,10 +172,17 @@ func (m *PluginManager) List(ctx context.Context) ([]*PluginInstallation, error)
 	defer m.mu.Unlock()
 	route := m.route.Load()
 	for _, installation := range plugins {
+		NormalizePluginInstallationMetadata(installation)
 		installation.Compatibility = EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
+		installation.CapabilityRuntime = m.extensionStatus(installation.ID)
 		if runtime := m.runtimes[installation.ID]; runtime != nil && !runtime.client.Exited() {
 			installation.RuntimeHealthy = true
+			installation.RuntimeVersion = runtime.installation.Version
+			installation.RuntimeIsolation = runtime.isolation
 			installation.RuntimeMessage = "插件进程运行中"
+			if installation.RuntimeVersion != installation.Version {
+				installation.RuntimeMessage = "目标版本尚未在本实例就绪，当前继续运行 " + installation.RuntimeVersion
+			}
 		} else if installation.State == PluginStateEnabled {
 			installation.RuntimeMessage = installation.LastError
 		}
@@ -167,13 +198,20 @@ func (m *PluginManager) Get(ctx context.Context, id int64) (*PluginInstallation,
 	if err != nil {
 		return nil, err
 	}
+	NormalizePluginInstallationMetadata(installation)
 	installation.Compatibility = EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
+	installation.CapabilityRuntime = m.extensionStatus(installation.ID)
 	m.mu.Lock()
 	runtime := m.runtimes[id]
 	m.mu.Unlock()
 	installation.RuntimeHealthy = runtime != nil && !runtime.client.Exited()
 	if installation.RuntimeHealthy {
+		installation.RuntimeVersion = runtime.installation.Version
+		installation.RuntimeIsolation = runtime.isolation
 		installation.RuntimeMessage = "插件进程运行中"
+		if installation.RuntimeVersion != installation.Version {
+			installation.RuntimeMessage = "目标版本尚未在本实例就绪，当前继续运行 " + installation.RuntimeVersion
+		}
 	} else if route := m.route.Load(); route != nil && route.pluginID == id {
 		installation.RuntimeMessage = route.unavailable
 	}
@@ -181,15 +219,19 @@ func (m *PluginManager) Get(ctx context.Context, id int64) (*PluginInstallation,
 }
 
 func (m *PluginManager) Install(ctx context.Context, reader io.Reader, installedBy *int64) (*PluginInstallation, error) {
+	return m.InstallWithApproval(ctx, reader, installedBy, nil)
+}
+
+func (m *PluginManager) InstallWithApproval(ctx context.Context, reader io.Reader, installedBy *int64, approval *PluginPublisherApproval) (*PluginInstallation, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
-	packageInfo, err := m.installer.Install(ctx, reader, installedBy)
+	packageInfo, err := m.installer.InstallWithApproval(ctx, reader, installedBy, approval)
 	if err != nil {
 		return nil, err
 	}
 	var previous *PluginInstallation
 	if existing, getErr := m.repo.GetByKey(ctx, packageInfo.PluginKey); getErr == nil {
-		if existing.State == PluginStateEnabled || hasEnabledOpenAIBinding(existing.Bindings) {
+		if existing.State == PluginStateEnabled || hasEnabledPluginBinding(existing.Bindings) {
 			cleanupErr := m.cleanupInstallationFiles(packageInfo)
 			return nil, errors.Join(errors.New("请先停用当前插件，再上传同 ID 的新版本"), cleanupErr)
 		}
@@ -208,7 +250,16 @@ func (m *PluginManager) Install(ctx context.Context, reader io.Reader, installed
 			RolloutPercent: 100,
 		})
 	}
-	installed, err := m.repo.Install(ctx, packageInfo, bindings)
+	var installed *PluginInstallation
+	if packageInfo.PublisherToTrust != nil {
+		if publishers, ok := m.repo.(PluginPublisherRepository); ok {
+			installed, err = publishers.InstallWithPublisher(ctx, packageInfo, bindings, packageInfo.PublisherToTrust)
+		} else {
+			err = errors.New("发布者信任存储不可用")
+		}
+	} else {
+		installed, err = m.repo.Install(ctx, packageInfo, bindings)
+	}
 	if err != nil {
 		cleanupErr := m.cleanupInstallationFiles(packageInfo)
 		return nil, errors.Join(err, cleanupErr)
@@ -267,124 +318,137 @@ func (m *PluginManager) reconcileLoop(ctx context.Context, done chan struct{}) {
 func (m *PluginManager) reconcileOnce(ctx context.Context) error {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
-
 	installations, err := m.repo.List(ctx)
 	if err != nil {
-		// 无法读取权威绑定状态时不能假设插件未启用，否则会把 OAuth 请求静默回落到旧直连路径。
-		m.publishUnavailableRoute(0, 100, "插件启用状态暂时无法读取")
+		// Repository availability is a control-plane concern. Keep the last
+		// authoritative route and live runtimes serving while the next reconcile
+		// retries; a transient list failure must never drain every plugin.
+		m.controlPlaneStale.Store(true)
+		m.markExtensionsStale("插件启用状态暂时无法读取")
 		return fmt.Errorf("读取插件启用状态: %w", err)
 	}
+	m.controlPlaneStale.Store(false)
+	m.clearExtensionsStale()
+	if err := m.prepareDesktopPlugins(ctx, installations); err != nil {
+		m.publishUnavailableExtensions("桌面升级后的插件停用尚未完成")
+		m.publishUnavailableRoute(0, 100, "桌面升级后的插件停用尚未完成")
+		return err
+	}
 	m.cleanupStaleLocalInstallations(installations)
-	var enabled *PluginInstallation
+	if secrets, ok := m.repo.(PluginSecretRepository); ok {
+		pruneCtx, cancel := context.WithTimeout(ctx, time.Second)
+		pruneErr := secrets.PruneSecretGrants(pruneCtx)
+		cancel()
+		if pruneErr != nil {
+			slog.Warn("plugin_secret_prune_failed", "error", pruneErr)
+		}
+	}
+	desired := make(map[int64]bool)
+	var reconcileErr error
 	for _, installation := range installations {
-		if !hasEnabledOpenAIBinding(installation.Bindings) {
+		if !hasEnabledPluginBinding(installation.Bindings) {
+			if installation.State == PluginStateStarting && m.startingStateExpired(installation) {
+				err := m.repo.UpdateState(ctx, installation.ID, PluginStateDisabled, "插件启动超时，已自动恢复为停用状态", nil, installation.BinarySHA256, PluginStateStarting)
+				if err != nil && !errors.Is(err, ErrPluginStateChanged) {
+					reconcileErr = errors.Join(reconcileErr, err)
+				}
+			}
 			continue
 		}
-		if enabled != nil {
-			err := errors.New("检测到多个 OpenAI OAuth 出站插件同时启用")
-			m.publishUnavailableRoute(enabled.ID, 100, err.Error())
-			return err
+		desired[installation.ID] = true
+		m.mu.Lock()
+		current := m.runtimes[installation.ID]
+		m.mu.Unlock()
+		compatible := EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
+		if !compatible.Compatible {
+			m.publishInstallationUnavailable(installation, compatible.Message)
+			reconcileErr = errors.Join(reconcileErr, errors.New(compatible.Message))
+			continue
 		}
-		enabled = installation
-	}
-	if enabled == nil {
-		for _, installation := range installations {
-			if installation.State != PluginStateStarting || !m.startingStateExpired(installation) {
+		if current != nil && current.client != nil && !current.client.Exited() &&
+			current.installation.BinarySHA256 == installation.BinarySHA256 &&
+			current.installation.ConfigEncrypted == installation.ConfigEncrypted &&
+			m.egressRuntimeCompatible(current, installation) {
+			// checkReadiness schedules an asynchronous probe and owns its timeout.
+			// Keep it tied to the manager lifetime: a per-call cancel here would
+			// abort the RPC as soon as the cached readiness result is returned.
+			healthErr := current.checkReadiness(ctx)
+			if healthErr != nil {
+				m.publishInstallationUnavailable(installation, healthErr.Error())
+				reconcileErr = errors.Join(reconcileErr, healthErr)
 				continue
 			}
-			if err := m.repo.UpdateState(
-				ctx, installation.ID, PluginStateDisabled, "插件启动超时，已自动恢复为停用状态", nil,
-				installation.BinarySHA256, PluginStateStarting,
-			); err != nil && !errors.Is(err, ErrPluginStateChanged) {
-				return fmt.Errorf("恢复超时插件状态: %w", err)
+			m.mu.Lock()
+			m.publishRuntimeLocked(installation, current)
+			m.mu.Unlock()
+			if installation.State == PluginStateError || (installation.State == PluginStateStarting && m.startingStateExpired(installation)) {
+				reconcileErr = errors.Join(reconcileErr, m.repo.MarkRuntimeHealthy(ctx, installation.ID, installation.BinarySHA256, installation.ConfigEncrypted))
 			}
+			continue
 		}
-		runtimes := m.detachAllRuntimes()
-		for _, runtime := range runtimes {
-			runtime.drain(10 * time.Second)
-		}
-		return nil
-	}
-
-	rollout := bindingRollout(enabled.Bindings)
-	current := m.route.Load()
-	if current != nil && current.pluginID == enabled.ID && current.runtime != nil &&
-		!current.runtime.client.Exited() && current.rolloutPercent == rollout &&
-		current.runtime.installation.BinarySHA256 == enabled.BinarySHA256 &&
-		current.runtime.installation.ConfigEncrypted == enabled.ConfigEncrypted {
-		healthCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
-		healthErr := current.runtime.checkHealth(healthCtx)
-		cancel()
-		if healthErr != nil {
-			if stateErr := m.markRuntimeUnavailable(current, healthErr.Error()); stateErr != nil {
-				return errors.Join(healthErr, stateErr)
+		if installation.State == PluginStateStarting && !m.startingStateExpired(installation) {
+			if current == nil {
+				m.publishInstallationUnavailable(installation, "插件正在其他实例中启动")
 			}
-			return healthErr
+			continue
 		}
-		if enabled.State == PluginStateError || (enabled.State == PluginStateStarting && m.startingStateExpired(enabled)) {
-			return m.repo.MarkRuntimeHealthy(ctx, enabled.ID, enabled.BinarySHA256, enabled.ConfigEncrypted)
-		}
-		return nil
-	}
-	if enabled.State == PluginStateStarting && !m.startingStateExpired(enabled) {
 		if current == nil {
-			m.route.Store(&pluginRoute{pluginID: enabled.ID, rolloutPercent: rollout, unavailable: "插件正在其他实例中启动"})
+			// Reserve the authoritative priority/scope before the local process
+			// is ready; a cold replica must not fall through to a lower policy.
+			m.publishInstallationUnavailable(installation, "插件正在本实例启动")
 		}
-		return nil
-	}
-
-	local, err := m.ensureLocalInstallation(ctx, enabled)
-	if err != nil {
-		m.publishUnavailableRoute(enabled.ID, rollout, err.Error())
-		return err
-	}
-	runtime, err := m.prepareRuntime(ctx, local, true)
-	if err != nil {
-		m.publishUnavailableRoute(enabled.ID, rollout, err.Error())
-		return err
-	}
-
-	// 启动进程期间绑定可能已在其他实例上变化，发布前必须重新确认。
-	latest, err := m.repo.GetByID(ctx, enabled.ID)
-	if err != nil {
-		runtime.kill()
-		return err
-	}
-	if !hasEnabledOpenAIBinding(latest.Bindings) || latest.BinarySHA256 != enabled.BinarySHA256 ||
-		latest.ConfigEncrypted != enabled.ConfigEncrypted || bindingRollout(latest.Bindings) != rollout {
-		runtime.kill()
-		return nil
-	}
-	if latest.State == PluginStateStarting && !m.startingStateExpired(latest) {
-		runtime.kill()
-		return nil
-	}
-	if err := m.repo.MarkRuntimeHealthy(ctx, enabled.ID, enabled.BinarySHA256, enabled.ConfigEncrypted); err != nil {
-		runtime.kill()
-		if errors.Is(err, ErrPluginStateChanged) {
-			return nil
+		local, prepareErr := m.ensureLocalInstallation(ctx, installation)
+		var candidate *pluginRuntime
+		if prepareErr == nil {
+			candidate, prepareErr = m.prepareRuntime(ctx, local, true)
 		}
-		return err
+		if prepareErr != nil {
+			if m.canKeepRuntimeDuringReplacement(ctx, current, installation) {
+				reconcileErr = errors.Join(reconcileErr, prepareErr)
+				continue
+			}
+			m.publishInstallationUnavailable(installation, prepareErr.Error())
+			reconcileErr = errors.Join(reconcileErr, prepareErr)
+			continue
+		}
+		latest, latestErr := m.repo.GetByID(ctx, installation.ID)
+		if latestErr != nil {
+			candidate.kill()
+			reconcileErr = errors.Join(reconcileErr, latestErr)
+			continue
+		}
+		if !hasEnabledPluginBinding(latest.Bindings) || latest.BinarySHA256 != installation.BinarySHA256 ||
+			latest.ConfigEncrypted != installation.ConfigEncrypted || !samePluginBindings(latest.Bindings, installation.Bindings) ||
+			(latest.State == PluginStateStarting && !m.startingStateExpired(latest)) {
+			candidate.kill()
+			continue
+		}
+		if err := m.repo.MarkRuntimeHealthy(ctx, installation.ID, installation.BinarySHA256, installation.ConfigEncrypted); err != nil {
+			candidate.kill()
+			if !errors.Is(err, ErrPluginStateChanged) {
+				reconcileErr = errors.Join(reconcileErr, err)
+			}
+			continue
+		}
+		m.mu.Lock()
+		m.publishRuntimeLocked(latest, candidate)
+		m.mu.Unlock()
 	}
-
 	m.mu.Lock()
-	stale := make([]*pluginRuntime, 0, len(m.runtimes))
-	for id, candidate := range m.runtimes {
-		if candidate != runtime {
-			candidate.draining.Store(true)
-			stale = append(stale, candidate)
-		}
-		if id != enabled.ID {
-			delete(m.runtimes, id)
+	var stale []*pluginRuntime
+	for id := range m.runtimes {
+		if !desired[id] {
+			if runtime := m.removeRuntimeLocked(id); runtime != nil {
+				stale = append(stale, runtime)
+			}
 		}
 	}
-	m.runtimes[enabled.ID] = runtime
-	m.route.Store(&pluginRoute{pluginID: enabled.ID, runtime: runtime, rolloutPercent: rollout})
+	// Remove unavailable legacy routes too; these have no process in runtimes.
+	m.pruneLegacyRoutesLocked(desired)
+	m.pruneExtensionRoutesLocked(desired)
 	m.mu.Unlock()
-	for _, candidate := range stale {
-		candidate.drain(10 * time.Second)
-	}
-	return nil
+	drainPluginRuntimes(ctx, stale, pluginDrainTimeout)
+	return reconcileErr
 }
 
 func (m *PluginManager) startingStateExpired(installation *PluginInstallation) bool {
@@ -402,19 +466,6 @@ func (m *PluginManager) startingStateExpired(installation *PluginInstallation) b
 	return time.Since(installation.UpdatedAt) > recoveryDelay
 }
 
-func (m *PluginManager) detachAllRuntimes() []*pluginRuntime {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	runtimes := make([]*pluginRuntime, 0, len(m.runtimes))
-	for id, runtime := range m.runtimes {
-		runtime.draining.Store(true)
-		runtimes = append(runtimes, runtime)
-		delete(m.runtimes, id)
-	}
-	m.route.Store(nil)
-	return runtimes
-}
-
 func (m *PluginManager) publishUnavailableRoute(pluginID int64, rollout int, message string) {
 	m.mu.Lock()
 	stale := make([]*pluginRuntime, 0, len(m.runtimes))
@@ -423,11 +474,12 @@ func (m *PluginManager) publishUnavailableRoute(pluginID int64, rollout int, mes
 		stale = append(stale, runtime)
 		delete(m.runtimes, id)
 	}
-	m.route.Store(&pluginRoute{pluginID: pluginID, rolloutPercent: rollout, unavailable: message})
+	unavailable := &pluginRoute{pluginID: pluginID, rolloutPercent: rollout, unavailable: message,
+		binding: PluginBinding{Capability: PluginCapabilityOpenAIOAuthOutbound, Platform: PlatformOpenAI, AccountType: AccountTypeOAuth, Enabled: true, RolloutPercent: rollout}}
+	m.legacyRoutes.Store(&legacyRouteTable{routes: []*pluginRoute{unavailable}})
+	m.route.Store(unavailable)
 	m.mu.Unlock()
-	for _, runtime := range stale {
-		runtime.drain(10 * time.Second)
-	}
+	drainPluginRuntimes(context.Background(), stale, pluginDrainTimeout)
 }
 
 func (m *PluginManager) ensureLocalInstallation(ctx context.Context, installation *PluginInstallation) (*PluginInstallation, error) {
@@ -438,11 +490,11 @@ func (m *PluginManager) ensureLocalInstallation(ctx context.Context, installatio
 	local := m.localInstallations[installation.ID]
 	m.mu.Unlock()
 	if local != nil && local.BinarySHA256 == installation.BinarySHA256 && local.Version == installation.Version {
-		if err := verifyLocalPluginBinary(local, m.installer.RootDir()); err == nil {
+		if err := verifyLocalPluginBinary(local, m.installer.RootDir(), m.installer.runtimeKey(installation.Manifest)); err == nil {
 			return mergeLocalInstallation(local, installation), nil
 		}
 	}
-	if err := verifyLocalPluginBinary(installation, m.installer.RootDir()); err == nil {
+	if err := verifyLocalPluginBinary(installation, m.installer.RootDir(), m.installer.runtimeKey(installation.Manifest)); err == nil {
 		local = mergeLocalInstallation(installation, installation)
 		m.mu.Lock()
 		m.localInstallations[installation.ID] = local
@@ -486,6 +538,11 @@ func (m *PluginManager) cleanupStaleLocalInstallations(installations []*PluginIn
 	for id, local := range m.localInstallations {
 		current := persisted[id]
 		if current == nil || current.BinarySHA256 != local.BinarySHA256 || current.Version != local.Version {
+			if running := m.runtimes[id]; running != nil && running.installation.BinaryPath == local.BinaryPath {
+				// The current process may still be serving in-flight requests.
+				// Its retirement path removes files only after it has drained.
+				continue
+			}
 			stale = append(stale, local)
 			delete(m.localInstallations, id)
 		}
@@ -518,7 +575,7 @@ func samePluginPackage(local, persisted *PluginInstallation) bool {
 	return localErr == nil && persistedErr == nil && bytes.Equal(localManifest, persistedManifest)
 }
 
-func verifyLocalPluginBinary(installation *PluginInstallation, root string) error {
+func verifyLocalPluginBinary(installation *PluginInstallation, root string, targets ...string) error {
 	if installation == nil {
 		return errors.New("插件安装记录为空")
 	}
@@ -534,7 +591,11 @@ func verifyLocalPluginBinary(installation *PluginInstallation, root string) erro
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return errors.New("插件安装目录不在受管目录内")
 	}
-	runtimeEntry, ok := installation.Manifest.Runtimes[installation.Manifest.RuntimeKey()]
+	target := installation.Manifest.RuntimeKey()
+	if len(targets) > 0 {
+		target = targets[0]
+	}
+	runtimeEntry, ok := installation.Manifest.Runtimes[target]
 	if !ok {
 		return errors.New("插件未声明当前平台运行时")
 	}
@@ -554,25 +615,26 @@ func verifyLocalPluginBinary(installation *PluginInstallation, root string) erro
 	return nil
 }
 
-func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested bool, rolloutPercent int) (*PluginInstallation, error) {
+func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested bool, rolloutPercent int) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
-	if rolloutPercent < 1 || rolloutPercent > 100 {
-		return nil, errors.New("灰度比例必须在 1 到 100 之间")
+	if rolloutPercent < 0 || rolloutPercent > 100 {
+		return nil, errors.New("灰度比例必须在 0 到 100 之间")
 	}
 	installation, err := m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if active := m.route.Load(); active != nil && active.pluginID != id {
-		return nil, errors.New("OpenAI OAuth 出站能力已有启用插件，请先停用当前插件")
+	if installation.Manifest.SchemaVersion == 1 && rolloutPercent == 0 {
+		return nil, errors.New("v1 传输插件灰度比例必须在 1 到 100 之间")
 	}
-	if installation.State == PluginStateEnabled && hasEnabledOpenAIBinding(installation.Bindings) {
+	if installation.State == PluginStateEnabled && hasEnabledPluginBinding(installation.Bindings) {
 		installation.Compatibility = EvaluatePluginCompatibility(installation.Manifest, m.hostInfo)
 		m.mu.Lock()
 		runtime := m.runtimes[id]
 		m.mu.Unlock()
-		installation.RuntimeHealthy = runtime != nil && !runtime.client.Exited()
+		installation.RuntimeHealthy = runtime != nil && !runtime.client.Exited() &&
+			runtime.installation.BinarySHA256 == installation.BinarySHA256 && runtime.installation.Version == installation.Version
 		if installation.RuntimeHealthy {
 			return installation, nil
 		}
@@ -589,6 +651,16 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	if err != nil {
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.enable", installation.Revision)
+	if err != nil {
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
 	originalBindings := append([]PluginBinding(nil), installation.Bindings...)
 	for index := range installation.Bindings {
 		installation.Bindings[index].Enabled = true
@@ -597,13 +669,15 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 	if err := m.repo.BeginEnable(ctx, id, installation.BinarySHA256, installation.State); err != nil {
 		return nil, err
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	runtime, err := m.prepareRuntime(ctx, installation, true)
 	if err != nil {
 		stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		stateErr := m.repo.UpdateState(stateCtx, id, PluginStateError, err.Error(), nil, installation.BinarySHA256, PluginStateStarting)
 		cancel()
-		if hasEnabledOpenAIBinding(originalBindings) {
-			m.route.Store(&pluginRoute{pluginID: id, rolloutPercent: bindingRollout(originalBindings), unavailable: err.Error()})
+		if hasEnabledPluginBinding(originalBindings) {
+			installation.Bindings = originalBindings
+			m.publishInstallationUnavailable(installation, err.Error())
 		}
 		return nil, errors.Join(err, stateErr)
 	}
@@ -618,20 +692,31 @@ func (m *PluginManager) Enable(ctx context.Context, id int64, acceptUntested boo
 		cancel()
 		return nil, errors.Join(err, stateErr)
 	}
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	m.mu.Lock()
 	m.publishRuntimeLocked(installation, runtime)
 	m.mu.Unlock()
-	result, err := m.repo.GetByID(ctx, id)
+	op.TargetRevision = op.ExpectedRevision + 1
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "enabled", nil)
+	result, err = m.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	if result.Revision > op.ExpectedRevision {
+		op.TargetRevision = result.Revision
+		m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "enabled", nil)
+	}
+	result.OperationID = op.ID
 	result.Compatibility = compatibility
 	result.RuntimeHealthy = true
+	result.RuntimeIsolation = runtime.isolation
+	result.RuntimeVersion = runtime.installation.Version
 	result.RuntimeMessage = "插件进程运行中"
 	return result, nil
 }
 
-func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallation, error) {
+func (m *PluginManager) Disable(ctx context.Context, id int64) (result *PluginInstallation, err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	m.mu.Lock()
@@ -640,6 +725,17 @@ func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallat
 		m.mu.Unlock()
 		return nil, err
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.disable", installation.Revision)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
 	for index := range installation.Bindings {
 		installation.Bindings[index].Enabled = false
 	}
@@ -649,13 +745,26 @@ func (m *PluginManager) Disable(ctx context.Context, id int64) (*PluginInstallat
 	}
 	runtime := m.removeRuntimeLocked(id)
 	m.mu.Unlock()
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	if runtime != nil {
-		runtime.drain(10 * time.Second)
+		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
-	return m.Get(ctx, id)
+	op.TargetRevision = op.ExpectedRevision + 1
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "disabled", nil)
+	result, err = m.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if result.Revision > op.ExpectedRevision {
+		op.TargetRevision = result.Revision
+		m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "disabled", nil)
+	}
+	result.OperationID = op.ID
+	return result, nil
 }
 
-func (m *PluginManager) Delete(ctx context.Context, id int64) error {
+func (m *PluginManager) Delete(ctx context.Context, id int64) (err error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	m.mu.Lock()
@@ -664,10 +773,22 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 		m.mu.Unlock()
 		return err
 	}
-	if installation.State == PluginStateEnabled || hasEnabledOpenAIBinding(installation.Bindings) {
+	if installation.State == PluginStateEnabled || hasEnabledPluginBinding(installation.Bindings) {
 		m.mu.Unlock()
 		return errors.New("请先停用插件，再执行卸载")
 	}
+	op, err := m.beginPluginOperation(ctx, id, "lifecycle.delete", installation.Revision)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	operationCommitted := false
+	defer func() {
+		if err != nil && !operationCommitted {
+			m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		}
+	}()
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
 	if err := m.repo.Delete(ctx, id, installation.BinarySHA256); err != nil {
 		m.mu.Unlock()
 		return err
@@ -676,13 +797,19 @@ func (m *PluginManager) Delete(ctx context.Context, id int64) error {
 	local := m.localInstallations[id]
 	delete(m.localInstallations, id)
 	m.mu.Unlock()
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
 	if runtime != nil {
-		runtime.drain(10 * time.Second)
+		drainPluginRuntimes(context.Background(), []*pluginRuntime{runtime}, pluginDrainTimeout)
 	}
 	cleanupErr := m.cleanupInstallationFiles(installation)
 	if local != nil && (local.InstallPath != installation.InstallPath || local.ArtifactPath != installation.ArtifactPath) {
 		cleanupErr = errors.Join(cleanupErr, m.cleanupInstallationFiles(local))
 	}
+	if cleanupErr != nil {
+		return cleanupErr
+	}
+	operationCommitted = true
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "deleted", nil)
 	return cleanupErr
 }
 
@@ -694,75 +821,146 @@ func (m *PluginManager) GetConfig(ctx context.Context, id int64) (json.RawMessag
 	return m.decryptConfig(installation)
 }
 
+// SaveConfig preserves the pre-revision API for internal callers and older
+// plugin UI bridges. The repository still uses the installation revision as
+// the CAS token whenever it supports the additive revision interface.
 func (m *PluginManager) SaveConfig(ctx context.Context, id int64, raw json.RawMessage) (json.RawMessage, error) {
+	saved, _, err := m.SaveConfigWithRevision(ctx, id, raw, 0)
+	return saved, err
+}
+
+// SaveConfigWithRevision performs the common validate -> CAS persist -> apply
+// sequence. expectedRevision is the value read by the editor; zero is only a
+// compatibility value for legacy in-process callers.
+func (m *PluginManager) SaveConfigWithRevision(ctx context.Context, id int64, raw json.RawMessage, expectedRevision int64) (json.RawMessage, PluginMutationResult, error) {
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 	if len(raw) == 0 || len(raw) > pluginConfigMaxBytes || !json.Valid(raw) {
-		return nil, errors.New("插件配置必须是有效且大小受限的 JSON")
+		return nil, PluginMutationResult{}, errors.New("插件配置必须是有效且大小受限的 JSON")
 	}
 	installation, err := m.repo.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
+	}
+	if expectedRevision > 0 && installation.Revision != expectedRevision {
+		return nil, PluginMutationResult{}, ErrPluginStateChanged
 	}
 	previousConfig, err := m.decryptConfig(installation)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	var normalized any
 	if err := json.Unmarshal(raw, &normalized); err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	if normalized == nil {
-		return nil, errors.New("插件配置 JSON 根节点必须是对象")
+		return nil, PluginMutationResult{}, errors.New("插件配置 JSON 根节点必须是对象")
 	}
 	if _, ok := normalized.(map[string]any); !ok {
-		return nil, errors.New("插件配置 JSON 根节点必须是对象")
+		return nil, PluginMutationResult{}, errors.New("插件配置 JSON 根节点必须是对象")
 	}
 	canonical, err := json.Marshal(normalized)
 	if err != nil {
-		return nil, err
+		return nil, PluginMutationResult{}, err
 	}
 	m.mu.Lock()
 	runtime := m.runtimes[id]
 	m.mu.Unlock()
 	temporary := false
+	if runtime != nil && (runtime.installation.BinarySHA256 != installation.BinarySHA256 || runtime.installation.Version != installation.Version) {
+		runtime = nil
+	}
 	if runtime == nil {
 		installation, err = m.ensureLocalInstallation(ctx, installation)
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 		runtime, err = m.newRuntime(ctx, installation)
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 		temporary = true
 		defer runtime.kill()
 	}
 	if runtime != nil {
 		applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		canonical, err = runtime.validateAndApplyNormalizedConfig(applyCtx, canonical)
+		canonical, err = runtime.validateNormalizedConfig(applyCtx, canonical)
 		cancel()
 		if err != nil {
-			return nil, err
+			return nil, PluginMutationResult{}, err
 		}
 	}
 	encrypted, err := m.encryptor.Encrypt(string(canonical))
 	if err != nil {
-		if !temporary {
-			err = errors.Join(err, m.restoreRuntimeConfig(id, runtime, previousConfig))
-		}
-		return nil, fmt.Errorf("加密插件配置: %w", err)
+		return nil, PluginMutationResult{}, fmt.Errorf("加密插件配置: %w", err)
 	}
-	if err := m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256); err != nil {
-		if !temporary {
-			err = errors.Join(err, m.restoreRuntimeConfig(id, runtime, previousConfig))
+	op, err := m.beginPluginOperation(ctx, id, "config.save", installation.Revision)
+	if err != nil {
+		return nil, PluginMutationResult{}, err
+	}
+	mutation := PluginMutationResult{Revision: installation.Revision + 1}
+	mutation.OperationID = op.ID
+	if mutation.Revision <= 0 {
+		mutation.Revision = 0
+	}
+	if hasProtectionCapability(installation.Manifest) {
+		if repo, ok := m.repo.(PluginConfigRevisionRepository); ok {
+			mutation, err = repo.UpdateConfigCASRevision(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted, installation.Revision)
+		} else if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+			err = repo.UpdateConfigCAS(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted)
+		} else {
+			err = errors.New("宿主存储不支持保护配置的原子比较更新")
 		}
-		return nil, err
+	} else if repo, ok := m.repo.(PluginConfigRevisionRepository); ok {
+		mutation, err = repo.UpdateConfigCASRevision(ctx, id, encrypted, installation.BinarySHA256, installation.ConfigEncrypted, installation.Revision)
+	} else {
+		err = m.repo.UpdateConfig(ctx, id, encrypted, installation.BinarySHA256)
+	}
+	if err != nil {
+		// Validation has not applied settings. A failed CAS/encryption/persistence
+		// leaves the live process, its tokens, and in-flight streams untouched.
+		m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", err)
+		return nil, PluginMutationResult{}, err
+	}
+	// Repository adapters return revision metadata only; the operation ID is
+	// owned by the manager and must remain stable in the response envelope.
+	mutation.OperationID = op.ID
+	if mutation.Revision > 0 {
+		mutation.ETag = PluginInstallationETag(id, mutation.Revision)
+	}
+	op.TargetRevision = mutation.Revision
+	m.updatePluginOperation(ctx, op, PluginOperationStageApplying, "", nil)
+	applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	applyErr := runtime.applyNormalizedConfig(applyCtx, canonical)
+	cancel()
+	if applyErr != nil {
+		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer rollbackCancel()
+		var rollbackErr error
+		if repo, ok := m.repo.(PluginConfigRevisionRepository); ok && mutation.Revision > 0 {
+			_, rollbackErr = repo.UpdateConfigCASRevision(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256, encrypted, mutation.Revision)
+		} else if repo, ok := m.repo.(PluginConfigCASRepository); ok {
+			rollbackErr = repo.UpdateConfigCAS(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256, encrypted)
+		} else {
+			rollbackErr = m.repo.UpdateConfig(rollbackCtx, id, installation.ConfigEncrypted, installation.BinarySHA256)
+		}
+		if rollbackErr != nil {
+			m.publishInstallationUnavailable(installation, "插件配置应用与恢复失败")
+		} else if !temporary {
+			rollbackErr = m.restoreRuntimeConfig(id, runtime, previousConfig)
+		}
+		operationErr := errors.Join(applyErr, rollbackErr)
+		m.updatePluginOperation(ctx, op, PluginOperationStageFailed, "", operationErr)
+		return nil, PluginMutationResult{}, operationErr
 	}
 	if !temporary {
 		runtime.installation.ConfigEncrypted = encrypted
+		runtime.installation.Revision = mutation.Revision
+		runtime.installation.ETag = mutation.ETag
 	}
-	return canonical, nil
+	m.updatePluginOperation(ctx, op, PluginOperationStagePublishing, "", nil)
+	m.updatePluginOperation(ctx, op, PluginOperationStageSucceeded, "applied", nil)
+	return canonical, mutation, nil
 }
 
 func (m *PluginManager) restoreRuntimeConfig(id int64, runtime *pluginRuntime, previous json.RawMessage) error {
@@ -771,7 +969,18 @@ func (m *PluginManager) restoreRuntimeConfig(id int64, runtime *pluginRuntime, p
 	}
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if hasProtectionCapability(runtime.installation.Manifest) {
+		if err := restoreStoredProtectionConfig(rollbackCtx, runtime, previous); err != nil {
+			m.publishInstallationUnavailable(runtime.installation, "插件配置回滚失败")
+			return err
+		}
+		return nil
+	}
 	if err := runtime.validateAndApplyConfig(rollbackCtx, previous); err != nil {
+		if runtime.extension != nil {
+			m.publishInstallationUnavailable(runtime.installation, "插件配置回滚失败")
+			return err
+		}
 		route := m.route.Load()
 		if route != nil && route.pluginID == id && route.runtime == runtime {
 			stateErr := m.markRuntimeUnavailable(route, "插件配置回滚失败: "+err.Error())
@@ -797,6 +1006,9 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 	runtime := m.runtimes[id]
 	m.mu.Unlock()
 	temporary := false
+	if runtime != nil && (runtime.installation.BinarySHA256 != installation.BinarySHA256 || runtime.installation.Version != installation.Version) {
+		runtime = nil
+	}
 	if runtime == nil {
 		installation, err = m.ensureLocalInstallation(ctx, installation)
 		if err != nil {
@@ -816,7 +1028,7 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 	if err := runtime.validateAndApplyConfig(testCtx, configJSON); err != nil {
 		return nil, err
 	}
-	return runtime.api.TestConfig(testCtx, &pluginv1.TestConfigRequest{ConfigJson: configJSON})
+	return runtime.testConfig(testCtx, configJSON)
 }
 
 // Status returns the plugin's passive runtime status (its Health response, including
@@ -825,18 +1037,248 @@ func (m *PluginManager) Test(ctx context.Context, id int64) (*pluginv1.TestConfi
 // running simply reports "not running" with no status blob. This makes it safe to
 // serve from a lightweight, ungated, read-only endpoint used for status polling.
 func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthResponse, error) {
-	if _, err := m.repo.GetByID(ctx, id); err != nil {
-		return nil, err
+	installation, err := m.repo.GetByID(ctx, id)
+	if err != nil {
+		// Status is a read-only data-plane view. During a short control-plane
+		// outage, prefer the runtime's last installation snapshot so the UI can
+		// show a stale report instead of turning a repository blip into "offline".
+		m.mu.Lock()
+		runtime := m.runtimes[id]
+		local := m.localInstallations[id]
+		m.mu.Unlock()
+		if runtime != nil && runtime.installation != nil {
+			installation = runtime.installation
+		} else if local != nil {
+			installation = local
+		} else {
+			return nil, err
+		}
+		m.controlPlaneStale.Store(true)
 	}
 	m.mu.Lock()
 	runtime := m.runtimes[id]
 	m.mu.Unlock()
-	if runtime == nil {
-		return &pluginv1.HealthResponse{Healthy: false, Message: "插件未运行"}, nil
+	if runtime == nil || runtime.client == nil || runtime.client.Exited() || runtime.draining.Load() {
+		// A newly installed extension normally has no process until its first
+		// matching request. Return the same safe report shape as a live process so
+		// the UI can render an empty runtime instead of parsing this text as JSON.
+		revision := uint64(0)
+		if raw, decryptErr := m.decryptConfig(installation); decryptErr == nil {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) == nil {
+				_ = json.Unmarshal(fields["revision"], &revision)
+			}
+		}
+		message := messageForUnavailableRuntime(runtime)
+		report := map[string]any{
+			"schema": 1, "config_revision": revision,
+			"generated_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"engines":      0, "requests_total": uint64(0),
+			"sessions": []any{}, "pool": []any{}, "node_verifications": []any{},
+			"message":    message,
+			"error_code": codeForUnavailableRuntime(runtime),
+		}
+		payload := m.statusSnapshotJSON(installation, runtime, false, message, map[string]any{"schema": 1, "core_report": report})
+		return &pluginv1.HealthResponse{
+			Healthy:    false,
+			Message:    "插件未运行；尚无运行会话",
+			StatusJson: payload,
+		}, nil
 	}
 	statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return runtime.status(statusCtx)
+	health, err := runtime.status(statusCtx)
+	if err != nil {
+		return nil, err
+	}
+	statusPayload := map[string]any{}
+	if strings.TrimSpace(health.StatusJson) != "" && json.Valid([]byte(health.StatusJson)) {
+		_ = json.Unmarshal([]byte(health.StatusJson), &statusPayload)
+	}
+	health.StatusJson = m.statusSnapshotJSON(installation, runtime, health.Healthy, health.Message, statusPayload)
+	return health, nil
+}
+
+// statusSnapshotJSON wraps plugin-defined status data in a host-owned envelope.
+// The old core_report/status_json keys are retained at the top level for older
+// plugin UIs while the host fields provide a stable, queryable contract.
+func (m *PluginManager) statusSnapshotJSON(installation *PluginInstallation, runtime *pluginRuntime, healthy bool, message string, payload map[string]any) string {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	revision := uint64(0)
+	if installation != nil {
+		if raw, err := m.decryptConfig(installation); err == nil {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) == nil {
+				_ = json.Unmarshal(fields["revision"], &revision)
+			}
+		}
+	}
+	bindingID := int64(0)
+	capability := ""
+	var scopeInputs []struct {
+		Capability string  `json:"capability"`
+		Platform   string  `json:"platform"`
+		Account    string  `json:"account_type"`
+		Accounts   []int64 `json:"account_ids"`
+		Users      []int64 `json:"user_ids"`
+		Groups     []int64 `json:"group_ids"`
+	}
+	if installation != nil {
+		for _, binding := range installation.Bindings {
+			if !binding.Enabled {
+				continue
+			}
+			if bindingID == 0 {
+				bindingID = binding.ID
+				capability = binding.Capability
+			}
+			scopeInputs = append(scopeInputs, struct {
+				Capability string  `json:"capability"`
+				Platform   string  `json:"platform"`
+				Account    string  `json:"account_type"`
+				Accounts   []int64 `json:"account_ids"`
+				Users      []int64 `json:"user_ids"`
+				Groups     []int64 `json:"group_ids"`
+			}{binding.Capability, binding.Platform, binding.AccountType, binding.AccountIDs, binding.UserIDs, binding.GroupIDs})
+		}
+	}
+	scopeDigest := ""
+	if raw, err := json.Marshal(scopeInputs); err == nil {
+		digest := sha256.Sum256(raw)
+		scopeDigest = hex.EncodeToString(digest[:])[:16]
+	}
+	instanceID := ""
+	liveness := "not_running"
+	readiness := "not_ready"
+	requestsTotal := uint64(0)
+	inFlight := int64(0)
+	errorsTotal := uint64(0)
+	deniedTotal := uint64(0)
+	stale := m.controlPlaneStale.Load()
+	routeDecision := "NOT_SELECTED"
+	timeline := pluginRuntimeTimelineSnapshot{}
+	if runtime != nil {
+		stale = stale || runtime.statusIsStale()
+		timeline = runtime.runtimeTimelineSnapshot()
+		instanceID = runtime.instanceID
+		if runtime.client != nil && !runtime.client.Exited() {
+			liveness = "alive"
+		}
+		if runtime.draining.Load() {
+			liveness = "draining"
+		}
+		if healthy {
+			readiness = "ready"
+		}
+		inFlight = runtime.inFlight.Load()
+	}
+	if installation != nil && installation.Manifest.SchemaVersion == 2 {
+		inFlight = 0
+		for _, capability := range m.extensionStatus(installation.ID) {
+			requestsTotal += capability.Calls
+			inFlight += capability.InFlight
+			errorsTotal += capability.Errors
+			deniedTotal += capability.Denied
+			if capability.Healthy {
+				routeDecision = "SELECTED"
+			}
+		}
+		if table := m.extensions.Load(); table != nil {
+			stale = table.stateUnavailable
+			if stale {
+				routeDecision = "STALE_CONTROL_PLANE"
+			}
+		}
+	} else if route := m.route.Load(); route != nil && route.pluginID == installationID(installation) {
+		if route.runtime != nil && !route.runtime.draining.Load() {
+			routeDecision = "SELECTED"
+		} else {
+			routeDecision = "RUNTIME_UNAVAILABLE"
+		}
+	}
+	lastErrorCode := lastPluginErrorCode(installation)
+	if timeline.LastErrorCode != "" && liveness == "alive" {
+		lastErrorCode = timeline.LastErrorCode
+	}
+	if lastErrorCode == "" && liveness != "alive" {
+		lastErrorCode = codeForUnavailableRuntime(runtime)
+	}
+	var lastErrorAt any
+	if !timeline.LastErrorAt.IsZero() {
+		lastErrorAt = timeline.LastErrorAt.UTC().Format(time.RFC3339Nano)
+	}
+	envelope := map[string]any{
+		"schema":               1,
+		"revision":             revision,
+		"generated_at":         time.Now().UTC().Format(time.RFC3339Nano),
+		"plugin_id":            installationID(installation),
+		"plugin_key":           installationKey(installation),
+		"capability":           capability,
+		"runtime_instance_id":  instanceID,
+		"liveness":             liveness,
+		"readiness":            readiness,
+		"stale":                stale,
+		"binding_id":           bindingID,
+		"binding_scope_digest": scopeDigest,
+		"requests_total":       requestsTotal,
+		"in_flight":            inFlight,
+		"errors_total":         errorsTotal,
+		"denied_total":         deniedTotal,
+		"last_error_code":      lastErrorCode,
+		"last_error_at":        lastErrorAt,
+		"route_decision":       routeDecision,
+		"timeline":             timeline.mapValue(),
+		"error_code":           lastErrorCode,
+		"message":              message,
+		"payload":              payload,
+	}
+	for key, value := range payload {
+		if _, exists := envelope[key]; !exists {
+			envelope[key] = value
+		}
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return `{"schema":1,"stale":true,"last_error_code":"STATUS_ENCODE_FAILED"}`
+	}
+	return string(encoded)
+}
+
+func installationID(installation *PluginInstallation) int64 {
+	if installation == nil {
+		return 0
+	}
+	return installation.ID
+}
+
+func installationKey(installation *PluginInstallation) string {
+	if installation == nil {
+		return ""
+	}
+	return installation.PluginKey
+}
+
+func lastPluginErrorCode(installation *PluginInstallation) string {
+	if installation == nil {
+		return ""
+	}
+	return strings.TrimSpace(installation.LastError)
+}
+
+func messageForUnavailableRuntime(runtime *pluginRuntime) string {
+	if runtime != nil && runtime.draining.Load() {
+		return "插件进程正在切换；请稍后刷新运行状态。"
+	}
+	return "插件尚未启动；发送一次匹配的 OAuth 请求后可查看运行状态。"
+}
+
+func codeForUnavailableRuntime(runtime *pluginRuntime) string {
+	if runtime != nil && runtime.draining.Load() {
+		return "RUNTIME_DRAINING"
+	}
+	return "PLUGIN_NOT_RUNNING"
 }
 
 type pluginUIAssetClaims struct {
@@ -945,10 +1387,13 @@ func (m *PluginManager) ReadUIAsset(ctx context.Context, id int64, relative stri
 }
 
 func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, bool, error) {
+	if response, handled, err := m.roundTripProtection(ctx, request, proxyURL, account); handled {
+		return response, true, err
+	}
 	if !m.ShouldRouteOpenAIOAuth(account) {
 		return nil, false, nil
 	}
-	route := m.route.Load()
+	route := m.selectLegacyRoute(ctx, account)
 	if route == nil {
 		return nil, false, nil
 	}
@@ -984,12 +1429,27 @@ func (m *PluginManager) ShouldRouteOpenAIOAuth(account *Account) bool {
 	if m == nil || account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return false
 	}
-	route := m.route.Load()
-	return route != nil && route.rolloutPercent > 0 && int(stablePluginBucket(account.ID)) < route.rolloutPercent
+	if m.hasProtectionTransport(account) {
+		return true
+	}
+	route := m.selectLegacyRoute(context.Background(), account)
+	return route != nil
 }
 
 func (m *PluginManager) markRuntimeUnavailable(failedRoute *pluginRoute, message string) error {
 	m.mu.Lock()
+	if failedRoute == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	if m.markLegacyRouteUnavailableLocked(failedRoute, message) {
+		if failedRoute.runtime != nil {
+			failedRoute.runtime.kill()
+		}
+		delete(m.runtimes, failedRoute.pluginID)
+		m.mu.Unlock()
+		return nil
+	}
 	current := m.route.Load()
 	if current != failedRoute {
 		m.mu.Unlock()
@@ -999,21 +1459,23 @@ func (m *PluginManager) markRuntimeUnavailable(failedRoute *pluginRoute, message
 		failedRoute.runtime.kill()
 	}
 	delete(m.runtimes, failedRoute.pluginID)
-	m.route.Store(&pluginRoute{
-		pluginID:       failedRoute.pluginID,
-		rolloutPercent: failedRoute.rolloutPercent,
-		unavailable:    message,
-	})
+	unavailable := *failedRoute
+	unavailable.runtime = nil
+	unavailable.unavailable = message
+	m.route.Store(&unavailable)
 	m.mu.Unlock()
 	return nil
 }
 
 func (m *PluginManager) prepareRuntime(ctx context.Context, installation *PluginInstallation, validateConfig bool) (*pluginRuntime, error) {
+	configJSON, err := m.decryptConfig(installation)
+	if err != nil {
+		return nil, err
+	}
 	runtime, err := m.newRuntime(ctx, installation)
 	if err != nil {
 		return nil, err
 	}
-	configJSON, err := m.decryptConfig(installation)
 	if err == nil && validateConfig {
 		applyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err = runtime.validateAndApplyConfig(applyCtx, configJSON)
@@ -1027,29 +1489,151 @@ func (m *PluginManager) prepareRuntime(ctx context.Context, installation *Plugin
 }
 
 func (m *PluginManager) publishRuntimeLocked(installation *PluginInstallation, runtime *pluginRuntime) {
-	if old := m.runtimes[installation.ID]; old != nil {
-		old.kill()
+	runtime.installation.Bindings = append([]PluginBinding(nil), installation.Bindings...)
+	if old := m.runtimes[installation.ID]; old != nil && old != runtime {
+		old.draining.Store(true)
+		if m.retired == nil {
+			m.retired = make(map[*pluginRuntime]struct{})
+		}
+		m.retired[old] = struct{}{}
+		m.retiring.Add(1)
+		go func() {
+			defer m.retiring.Done()
+			drainPluginRuntimes(context.Background(), []*pluginRuntime{old}, pluginDrainTimeout)
+			m.mu.Lock()
+			delete(m.retired, old)
+			inUse := false
+			for _, active := range m.runtimes {
+				if active.installation.InstallPath == old.installation.InstallPath {
+					inUse = true
+					break
+				}
+			}
+			for active := range m.retired {
+				if active.installation.InstallPath == old.installation.InstallPath {
+					inUse = true
+					break
+				}
+			}
+			if !inUse && old.installation.InstallPath != installation.InstallPath {
+				if err := m.cleanupRetiredInstallationFiles(old.installation); err != nil {
+					slog.Warn("plugin_retired_files_cleanup_failed", "plugin_id", installation.ID, "error", err)
+				}
+			}
+			m.mu.Unlock()
+		}()
 	}
 	m.runtimes[installation.ID] = runtime
-	m.route.Store(&pluginRoute{
-		pluginID:       installation.ID,
-		runtime:        runtime,
-		rolloutPercent: bindingRollout(installation.Bindings),
-	})
+	if installation.Manifest.SchemaVersion == 2 {
+		m.publishExtensionRoutesLocked(installation, runtime, "")
+		return
+	}
+	m.publishLegacyRouteLocked(installation, runtime, "")
 }
 
 func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInstallation) (*pluginRuntime, error) {
+	if compatibility := EvaluatePluginCompatibility(installation.Manifest, m.hostInfo); !compatibility.Compatible {
+		return nil, errors.New(compatibility.Message)
+	}
 	socketDir := filepath.Join(m.installer.RootDir(), "runtime")
 	if err := os.MkdirAll(socketDir, 0o700); err != nil {
 		return nil, err
 	}
 	timeout := time.Duration(m.cfg.Plugins.StartTimeoutSeconds) * time.Second
-	return startPluginRuntime(ctx, installation, timeout, socketDir, m.buildHostServices(installation))
+	sandbox := m.cfg.Plugins.V2Sandbox.WithDefaults()
+	instanceID := fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	owner, err := m.createPluginEgressOwner(installation, sandbox, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if owner != nil {
+		serveResult := owner.Start()
+		select {
+		case serveErr := <-serveResult:
+			_ = owner.Close()
+			return nil, fmt.Errorf("启动 scoped egress broker: %w", serveErr)
+		default:
+		}
+	}
+	var process *pluginRuntime
+	if owner != nil {
+		process, err = startPluginRuntimeWithSandboxAndHostOwner(ctx, installation, timeout, socketDir, sandbox, m.buildHostServices(installation), owner, instanceID)
+	} else {
+		process, err = startPluginRuntimeWithSandboxAndHost(ctx, installation, timeout, socketDir, sandbox, m.buildHostServices(installation))
+	}
+	if err != nil {
+		if owner != nil {
+			_ = owner.Close()
+		}
+		return nil, err
+	}
+	if installation.Manifest.SchemaVersion == 2 && hasHostPermissions(installation.Manifest) {
+		host := newPluginHostServices(installation,
+			func(ctx context.Context, capability, alias string) (pluginv2.SecretValue, error) {
+				return m.readPluginSecret(ctx, installation.ID, capability, alias)
+			},
+			func(ctx context.Context, capability string, accountID int64) ([]byte, error) {
+				return m.readPluginAccountMetadata(ctx, installation, capability, accountID)
+			})
+		process.host = host
+		host.setRuntimeMetadata(process.instanceID)
+		connector, ok := process.extension.(pluginv2.HostConnector)
+		if !ok {
+			process.kill()
+			return nil, errors.New("插件客户端未支持 Host API")
+		}
+		attachCtx, cancel := context.WithTimeout(ctx, timeout)
+		err = connector.AttachHost(attachCtx, host)
+		cancel()
+		if err != nil {
+			process.kill()
+			return nil, errors.New("连接插件 Host API 失败")
+		}
+		process.markRuntimeHostAttached()
+	}
+	// Host API attachment precedes readiness: initialization may legitimately
+	// call host services before the plugin can report healthy.
+	readyCtx, cancel := context.WithTimeout(ctx, timeout)
+	err = process.checkHealth(readyCtx)
+	cancel()
+	if err != nil {
+		process.kill()
+		return nil, err
+	}
+	process.markRuntimeReadiness(nil)
+	return process, nil
+}
+
+func (m *PluginManager) readPluginAccountMetadata(ctx context.Context, installation *PluginInstallation, capability string, accountID int64) ([]byte, error) {
+	if installation == nil || accountID <= 0 {
+		return nil, errors.New("账号元数据不可用")
+	}
+	scope := pluginAccountScopeForCapability(installation, capability)
+	if !scope.allowsID(accountID) {
+		return nil, errors.New("账号不在插件作用域内")
+	}
+	m.mu.Lock()
+	directory := m.accountDirectory
+	m.mu.Unlock()
+	scoped, ok := directory.(ScopedPluginAccountDirectory)
+	if !ok {
+		return nil, errors.New("账号目录不支持元数据接口")
+	}
+	infos, err := scoped.ListPluginAccounts(ctx, scope, PlatformOpenAI, AccountTypeOAuth)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range infos {
+		if info.ID == accountID && len(info.MetadataJSON) > 0 {
+			return append([]byte(nil), info.MetadataJSON...), nil
+		}
+	}
+	return nil, errors.New("账号元数据不存在")
 }
 
 // SetAccountDirectory 注入账号目录实现（敏感能力）。仅在启动装配阶段调用一次，
 // 早于 Start，因此运行期读取无需额外同步。
-func (m *PluginManager) SetAccountDirectory(directory PluginAccountDirectory) {
+func (m *PluginManager) SetAccountDirectory(directory any) {
 	m.mu.Lock()
 	m.accountDirectory = directory
 	m.mu.Unlock()
@@ -1057,50 +1641,46 @@ func (m *PluginManager) SetAccountDirectory(directory PluginAccountDirectory) {
 
 // buildHostServices 为单个插件构造绑定其 pluginKey 的宿主服务端点。返回 nil（未配置
 // 键值存储或缺少 pluginKey）时，startPluginRuntime 不会向插件暴露任何宿主服务。
-// 账号目录（会向插件交付账号凭据与全量元数据）只对「清单声明的能力授予了账号范围」的
-// 插件开放，且严格限定在该范围内，从而把暴露面收敛到本就要处理这些账号的插件。
+// 账号目录（会向插件交付账号凭据）只对「清单声明了 OpenAI OAuth 出站能力」的插件开放，
+// 从而把凭据暴露面收敛到本就要处理这些账号的插件。
 func (m *PluginManager) buildHostServices(installation *PluginInstallation) pluginv1.HostServiceServer {
 	if m.kvStore == nil || installation == nil || strings.TrimSpace(installation.PluginKey) == "" {
 		return nil
 	}
-	scope := pluginAccountScopeFromManifest(installation.Manifest)
-	var directory PluginAccountDirectory
-	if !scope.Empty() {
+	var directory any
+	scope := PluginAccountScope{}
+	if pluginDeclaresOpenAIOAuthCapability(installation.Manifest) {
 		m.mu.Lock()
 		directory = m.accountDirectory
 		m.mu.Unlock()
+		entries := make([]pluginAccountScopeEntry, 0, len(installation.Bindings))
+		for _, binding := range installation.Bindings {
+			if binding.Enabled && binding.Capability == PluginCapabilityOpenAIOAuthOutbound {
+				entries = append(entries, pluginAccountScopeEntry{Platform: binding.Platform, AccountType: binding.AccountType, AccountIDs: append([]int64(nil), binding.AccountIDs...), UserIDs: append([]int64(nil), binding.UserIDs...), GroupIDs: append([]int64(nil), binding.GroupIDs...)})
+			}
+		}
+		scope = newPluginAccountScope(entries...)
 	}
 	return newPluginHostServiceServer(installation.PluginKey, m.kvStore, directory, scope)
 }
 
-// pluginCapabilityAccountScopeGrants 把「能力 id」映射到它授予的账号范围条目。这是
-// 唯一放宽账号可见性的通用入口：为需要账号访问的新能力扩权只需在此加一行，无需新增
-// RPC 或按插件定制目录实现。授予的范围以能力 id 为准并被固定，清单无法通过声明不同的
-// platform/account_type 来扩大它。
-var pluginCapabilityAccountScopeGrants = map[string]pluginAccountScopeEntry{
-	PluginCapabilityOpenAIOAuthOutbound: {Platform: PlatformOpenAI, AccountType: AccountTypeOAuth},
-}
-
-// pluginAccountScopeFromManifest 从（安装期已校验的）清单声明能力推导出账号可见范围
-// （各能力授予范围的并集）。
-func pluginAccountScopeFromManifest(manifest PluginManifest) PluginAccountScope {
-	entries := make([]pluginAccountScopeEntry, 0, len(manifest.Capabilities))
+// pluginDeclaresOpenAIOAuthCapability reports whether the (install-validated)
+// manifest declares the OpenAI OAuth outbound transport capability.
+func pluginDeclaresOpenAIOAuthCapability(manifest PluginManifest) bool {
 	for _, capability := range manifest.Capabilities {
-		grant, ok := pluginCapabilityAccountScopeGrants[capability.ID]
-		if !ok {
-			continue
+		if capability.ID == PluginCapabilityOpenAIOAuthOutbound &&
+			capability.Platform == PlatformOpenAI && capability.AccountType == AccountTypeOAuth {
+			return true
 		}
-		entries = append(entries, grant)
 	}
-	return newPluginAccountScope(entries...)
+	return false
 }
 
 func (m *PluginManager) removeRuntimeLocked(id int64) *pluginRuntime {
 	runtime := m.runtimes[id]
 	delete(m.runtimes, id)
-	if route := m.route.Load(); route != nil && route.pluginID == id {
-		m.route.Store(nil)
-	}
+	m.removeLegacyRouteLocked(id)
+	m.removeExtensionRoutesLocked(id)
 	return runtime
 }
 
@@ -1110,10 +1690,10 @@ func (m *PluginManager) decryptConfig(installation *PluginInstallation) (json.Ra
 	}
 	plaintext, err := m.encryptor.Decrypt(installation.ConfigEncrypted)
 	if err != nil {
-		return nil, fmt.Errorf("解密插件配置: %w", err)
+		return nil, unreadablePluginConfig(installation)
 	}
 	if !json.Valid([]byte(plaintext)) {
-		return nil, errors.New("已保存的插件配置不是有效 JSON")
+		return nil, unreadablePluginConfig(installation)
 	}
 	return json.RawMessage(plaintext), nil
 }
@@ -1134,26 +1714,8 @@ func (m *PluginManager) removeManagedPath(target string) error {
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return errors.New("拒绝删除插件根目录之外的路径")
 	}
+	//nolint:gosec // absTarget is constrained below installer.RootDir by the filepath.Rel check above.
 	return os.RemoveAll(absTarget)
-}
-
-func hasEnabledOpenAIBinding(bindings []PluginBinding) bool {
-	for _, binding := range bindings {
-		if binding.Enabled && binding.Capability == PluginCapabilityOpenAIOAuthOutbound &&
-			binding.Platform == PlatformOpenAI && binding.AccountType == AccountTypeOAuth {
-			return true
-		}
-	}
-	return false
-}
-
-func bindingRollout(bindings []PluginBinding) int {
-	for _, binding := range bindings {
-		if binding.Capability == PluginCapabilityOpenAIOAuthOutbound {
-			return binding.RolloutPercent
-		}
-	}
-	return 100
 }
 
 func stablePluginBucket(accountID int64) uint64 {

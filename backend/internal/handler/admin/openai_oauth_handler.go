@@ -21,8 +21,8 @@ type OpenAIOAuthHandler struct {
 	openaiOAuthService *service.OpenAIOAuthService
 	adminService       service.AdminService
 	quotaService       openAIQuotaService
-	referralService    openAIReferralService
 	rateLimitService   openAIAccountStateRecoverer
+	referralService    openAIReferralService
 }
 
 type openAIQuotaService interface {
@@ -85,6 +85,7 @@ func NewOpenAIOAuthHandler(
 	adminService service.AdminService,
 	quotaService *service.OpenAIQuotaService,
 	rateLimitService *service.RateLimitService,
+	referralServices ...openAIReferralService,
 ) *OpenAIOAuthHandler {
 	h := &OpenAIOAuthHandler{
 		openaiOAuthService: openaiOAuthService,
@@ -95,12 +96,18 @@ func NewOpenAIOAuthHandler(
 	// `== nil` capability guards below and panic instead of returning 400.
 	if quotaService != nil {
 		h.quotaService = quotaService
-		h.referralService = quotaService
 	}
 	if rateLimitService != nil {
 		h.rateLimitService = rateLimitService
 	}
+	if len(referralServices) > 0 {
+		h.referralService = referralServices[0]
+	}
 	return h
+}
+
+func (h *OpenAIOAuthHandler) SetReferralService(service openAIReferralService) {
+	h.referralService = service
 }
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
@@ -526,6 +533,8 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	service.NotifyOpenAIAutoResetCredit(accountID)
 
 	refreshResponse := openAIQuotaRefreshResponse{OpenAIQuotaUsage: *usage}
+	// Points and reset-credit details are independent upstream snapshots. A
+	// missing reset expiration must not discard a successfully queried balance.
 	if err := h.quotaService.CacheCreditsSnapshot(c.Request.Context(), accountID, usage); err != nil {
 		slog.Warn("openai_quota_credits_cache_persist_failed", "account_id", accountID, "error", err)
 	} else {

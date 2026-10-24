@@ -1575,8 +1575,9 @@ func TestOpenAIResponsesWebSocket_ChannelMappedTargetSelectsAccountWithoutReques
 
 func TestOpenAIResponsesWebSocket_PassthroughKeepsTurnMappingSnapshot(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
-		firstPayload:  `{"type":"response.create","model":"sol","stream":false}`,
-		secondPayload: `{"type":"response.create","model":"sol","stream":false}`,
+		channelPricing: fixedOpenAIWSTurnPricing(),
+		firstPayload:   `{"type":"response.create","model":"sol","stream":false}`,
+		secondPayload:  `{"type":"response.create","model":"sol","stream":false}`,
 		channelMapping: map[string]string{
 			"sol": "gpt-5.6-sol",
 		},
@@ -1617,6 +1618,7 @@ func TestOpenAIResponsesWebSocket_PassthroughKeepsTurnMappingSnapshot(t *testing
 
 func TestOpenAIResponsesWebSocket_CtxPoolAppliesPerTurnMappingAndPreservesRequestedModel(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		channelPricing:     fixedOpenAIWSTurnPricing(),
 		firstPayload:       `{"type":"response.create","model":"gpt-5.6-sol","stream":false}`,
 		secondPayload:      `{"type":"response.create","model":"gpt-5.6-terra","stream":false}`,
 		ingressMode:        service.OpenAIWSIngressModeCtxPool,
@@ -1944,6 +1946,7 @@ type openAIResponsesWSUsageLogCase struct {
 	userAgent                 *string
 	ingressMode               string
 	channelMapping            map[string]string
+	channelPricing            []service.ChannelModelPricing
 	billingModelSource        string
 	accountModelMapping       map[string]any
 	afterFirstUpstreamRequest func(channelSvc *service.ChannelService) error
@@ -1959,6 +1962,16 @@ type openAIResponsesWSUsageLogCase struct {
 	firstFrameCloseExpected bool
 	// secondTurnCloseExpected：第二个 turn 被拒（连接被 1008 关闭）。
 	secondTurnCloseExpected bool
+}
+
+// Keep routing assertions independent of production catalog price updates.
+func fixedOpenAIWSTurnPricing() []service.ChannelModelPricing {
+	solInput, solOutput := 5e-6, 30e-6
+	terraInput, terraOutput := 2e-6, 12e-6
+	return []service.ChannelModelPricing{
+		{Platform: service.PlatformOpenAI, Models: []string{"gpt-5.6-sol"}, BillingMode: service.BillingModeToken, InputPrice: &solInput, OutputPrice: &solOutput},
+		{Platform: service.PlatformOpenAI, Models: []string{"gpt-5.6-terra"}, BillingMode: service.BillingModeToken, InputPrice: &terraInput, OutputPrice: &terraOutput},
+	}
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -2998,6 +3011,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 				Status:             service.StatusActive,
 				GroupIDs:           []int64{groupID},
 				ModelMapping:       map[string]map[string]string{service.PlatformOpenAI: tc.channelMapping},
+				ModelPricing:       tc.channelPricing,
 				BillingModelSource: tc.billingModelSource,
 			}},
 			groupPlatforms: map[int64]string{groupID: service.PlatformOpenAI},
@@ -3011,6 +3025,11 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	}
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, keyRepo, nil, nil, cfg, nil)
 	t.Cleanup(billingCacheSvc.Stop)
+	billingSvc := service.NewBillingService(cfg, nil)
+	var pricingResolver *service.ModelPricingResolver
+	if len(tc.channelPricing) > 0 {
+		pricingResolver = service.NewModelPricingResolver(channelSvc, billingSvc)
+	}
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo,
 		usageRepo,
@@ -3022,14 +3041,14 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		cfg,
 		nil,
 		nil,
-		service.NewBillingService(cfg, nil),
+		billingSvc,
 		nil,
 		billingCacheSvc,
 		&compositeWSHTTPUpstream{},
 		&service.DeferredService{},
 		nil,
 		nil,
-		nil,
+		pricingResolver,
 		channelSvc,
 		nil,
 		nil,
@@ -3069,6 +3088,10 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	}
 	if tc.group != nil {
 		apiKey.Group = tc.group
+	} else if len(tc.channelPricing) > 0 {
+		// The billing pipeline requires the hydrated group, not only GroupID,
+		// before resolving channel pricing (as populated by auth in production).
+		apiKey.Group = &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1}
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

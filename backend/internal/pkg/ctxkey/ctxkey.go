@@ -23,6 +23,15 @@ const (
 	// RequestID 为服务端生成/透传的请求 ID。
 	RequestID Key = "ctx_request_id"
 
+	// PluginOriginalIngress is the normalized path captured before gateway
+	// request preparation or upstream URL rewriting.
+	PluginOriginalIngress Key = "ctx_plugin_original_ingress"
+
+	// PluginClientFamily and PluginClientVersion identify the inbound client
+	// without carrying user-controlled request bodies or credentials.
+	PluginClientFamily  Key = "ctx_plugin_client_family"
+	PluginClientVersion Key = "ctx_plugin_client_version"
+
 	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
 	ClientRequestID Key = "ctx_client_request_id"
 

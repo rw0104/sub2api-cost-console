@@ -582,6 +582,44 @@ func TestSyncPricingModels_ValidPlatform_EmptyService(t *testing.T) {
 	}
 }
 
+func TestGetPricingStatus_ReturnsCatalogSnapshot(t *testing.T) {
+	svc := service.NewPricingService(nil, nil)
+	router := gin.New()
+	h := &ChannelHandler{pricingService: svc}
+	router.GET("/channels/pricing/status", h.GetPricingStatus)
+
+	req := httptest.NewRequest(http.MethodGet, "/channels/pricing/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Data struct {
+			ModelCount int `json:"model_count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, 0, body.Data.ModelCount)
+}
+
+func TestRefreshPricing_ReportsConfigurationFailure(t *testing.T) {
+	svc := service.NewPricingService(nil, nil)
+	router := gin.New()
+	h := &ChannelHandler{pricingService: svc}
+	router.POST("/channels/pricing/refresh", h.RefreshPricing)
+
+	req := httptest.NewRequest(http.MethodPost, "/channels/pricing/refresh", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	var body struct {
+		Code int `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, http.StatusInternalServerError, body.Code)
+}
+
 func setupModelDefaultPricingRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -1,0 +1,2710 @@
+use crate::managed_child::ManagedChild;
+use crate::managed_core_process::stop_owned_listener;
+use crate::startup_dependencies::{
+    configured_dependencies, ensure_dependencies, StartupProblem, SystemDependencies,
+};
+use reqwest::{Client, Url};
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    fs,
+    io::Write,
+    net::TcpStream,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::Mutex as AsyncMutex,
+    time::{sleep, timeout},
+};
+
+const BACKEND_SIDECAR_NAME: &str = "sub2api-backend";
+const UPSTREAM_RELEASE_API: &str = "https://api.github.com/repos/Wei-Shaw/sub2api/releases/latest";
+const UPSTREAM_REPOSITORY: &str = "Wei-Shaw/sub2api";
+const COMPATIBLE_CORE_REPOSITORY: &str = "rw0104/sub2api-cost-console";
+const UPSTREAM_CHECKSUM_ASSET: &str = "checksums.txt";
+const COMPATIBLE_CORE_MANIFEST_URL: &str =
+    "https://github.com/rw0104/sub2api-cost-console/releases/download/core-stable/core-latest.json";
+const MAX_CORE_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
+const CURATED_MODEL_PRICING: &[u8] =
+    include_bytes!("../../../backend/resources/model-pricing/model_prices_and_context_window.json");
+const BUNDLED_ZONEINFO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zoneinfo.zip"));
+pub const CORE_VERSION: &str = env!("SUB2API_CORE_VERSION");
+pub const ALGORITHM_VERSION: &str = env!("SUB2API_ALGORITHM_VERSION");
+pub const CORE_EXTENSION_VERSION: &str = env!("SUB2API_CORE_EXTENSION_VERSION");
+pub const CORE_CAPABILITIES: &str = env!("SUB2API_CORE_CAPABILITIES");
+pub const UPSTREAM_SUB2API_COMMIT: &str = env!("SUB2API_UPSTREAM_COMMIT");
+pub const BUNDLED_CORE_COMMIT: &str = env!("SUB2API_BUNDLED_CORE_COMMIT");
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendPhase {
+    Starting,
+    WaitingForDependencies,
+    Ready,
+    Stopped,
+    Error,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BackendStatus {
+    pub phase: BackendPhase,
+    pub managed: bool,
+    pub pid: Option<u32>,
+    pub host: String,
+    pub port: u16,
+    pub api_origin: String,
+    pub data_dir: String,
+    pub core_version: String,
+    pub algorithm_version: String,
+    pub extension_version: String,
+    pub capabilities: Vec<String>,
+    pub upstream_commit: String,
+    pub core_sha256: String,
+    pub message: String,
+    pub last_log: String,
+    pub problem: Option<StartupProblem>,
+}
+
+impl BackendStatus {
+    fn initial(data_dir: &Path, versions: &CoreVersions) -> Self {
+        let listen = crate::desktop_listen::active();
+        Self {
+            phase: BackendPhase::Starting,
+            managed: true,
+            pid: None,
+            api_origin: format!("http://{}", listen.connect_address()),
+            host: listen.host,
+            port: listen.port,
+            data_dir: data_dir.display().to_string(),
+            core_version: versions.current_version.clone(),
+            algorithm_version: versions.current_algorithm_version.clone(),
+            extension_version: versions.current_extension_version.clone(),
+            capabilities: versions.capabilities.clone(),
+            upstream_commit: versions.upstream_commit.clone(),
+            core_sha256: versions.sha256.clone(),
+            message: "正在启动本地 Sub2API 内核".into(),
+            last_log: String::new(),
+            problem: None,
+        }
+    }
+}
+
+struct BackendInner {
+    child: Option<ManagedChild>,
+    starting: bool,
+    status: BackendStatus,
+    generation: u64,
+    consecutive_failures: u32,
+    shutting_down: bool,
+}
+
+#[derive(Clone)]
+pub struct BackendSupervisor {
+    inner: Arc<Mutex<BackendInner>>,
+    update_lock: Arc<AsyncMutex<()>>,
+    lifecycle_lock: Arc<Mutex<()>>,
+}
+
+impl BackendSupervisor {
+    pub fn new(data_dir: &Path, versions: &CoreVersions) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BackendInner {
+                child: None,
+                starting: false,
+                status: BackendStatus::initial(data_dir, versions),
+                generation: 0,
+                consecutive_failures: 0,
+                shutting_down: false,
+            })),
+            update_lock: Arc::new(AsyncMutex::new(())),
+            lifecycle_lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    fn snapshot(&self) -> BackendStatus {
+        self.inner
+            .lock()
+            .expect("backend state poisoned")
+            .status
+            .clone()
+    }
+
+    fn update_status(&self, update: impl FnOnce(&mut BackendStatus)) -> BackendStatus {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        update(&mut inner.status);
+        inner.status.clone()
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        let inner = self.inner.lock().expect("backend state poisoned");
+        inner.generation == generation && !inner.shutting_down
+    }
+
+    fn reserve_start(&self, expected: Option<u64>) -> Option<u64> {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if expected.is_some_and(|generation| inner.generation != generation)
+            || inner.child.is_some()
+            || inner.starting
+            || inner.shutting_down
+        {
+            return None;
+        }
+        inner.generation += 1;
+        inner.starting = true;
+        inner.status.phase = BackendPhase::Starting;
+        inner.status.problem = None;
+        inner.status.last_log.clear();
+        inner.status.message = "正在检查本地数据服务".into();
+        Some(inner.generation)
+    }
+
+    fn record_log(&self, generation: u64, line: String) {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if inner.generation == generation && !inner.shutting_down {
+            inner.status.last_log = line;
+        }
+    }
+
+    fn record_exit(&self, generation: u64, code: Option<i32>) -> Option<(u64, bool)> {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        if inner.generation != generation || inner.shutting_down {
+            return None;
+        }
+        inner.child = None;
+        inner.starting = false;
+        inner.status.pid = None;
+        // Invalidate the health check immediately, before any retry delay.
+        inner.generation += 1;
+        inner.consecutive_failures += 1;
+        let restart = inner.consecutive_failures <= 5;
+        inner.status.phase = if restart {
+            BackendPhase::Starting
+        } else {
+            BackendPhase::Error
+        };
+        inner.status.message = if restart {
+            format!("内核已退出（{code:?}），正在重新检查数据服务")
+        } else {
+            "内核多次启动失败，请查看技术详情后重试".into()
+        };
+        Some((inner.generation, restart))
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CoreVersionRecord {
+    pub version: String,
+    pub algorithm_version: String,
+    #[serde(default)]
+    pub extension_version: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    pub sha256: String,
+    #[serde(default)]
+    pub upstream_commit: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreCompatibilityAction {
+    None,
+    InstallBundled,
+    WaitForCompatibleUpdate,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct CoreState {
+    active: Option<CoreVersionRecord>,
+    previous: Option<CoreVersionRecord>,
+    pending: Option<CoreVersionRecord>,
+    pending_validation: bool,
+    last_error: Option<String>,
+}
+
+fn defer_pending_activation_failure(state: &mut CoreState, error: &str) -> String {
+    let warning =
+        format!("内核更新暂未切换：{error}。桌面已继续启动，请关闭占用内核的进程后稍后重试");
+    state.last_error = Some(warning.clone());
+    warning
+}
+
+#[derive(Clone, Debug)]
+pub struct CoreVersions {
+    current_version: String,
+    current_algorithm_version: String,
+    current_extension_version: String,
+    capabilities: Vec<String>,
+    upstream_commit: String,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoreIdentityCheck {
+    pub current: CoreVersionRecord,
+    pub bundled: CoreVersionRecord,
+    pub action: CoreCompatibilityAction,
+    pub bundled_differs: bool,
+    pub missing_capabilities: Vec<String>,
+    pub integrity_valid: bool,
+    pub pending: Option<CoreVersionRecord>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CoreArtifact {
+    pub url: String,
+    pub archive_name: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CoreUpdateManifest {
+    pub schema: u32,
+    pub version: String,
+    pub algorithm_version: String,
+    #[serde(default)]
+    pub extension_version: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub upstream_commit: String,
+    pub published_at: String,
+    pub notes: String,
+    pub release_url: String,
+    pub platforms: HashMap<String, CoreArtifact>,
+}
+
+fn validate_compatible_core_manifest(
+    manifest: &CoreUpdateManifest,
+    required_capabilities: &[String],
+) -> Result<(), String> {
+    if manifest.schema != 2 {
+        return Err(format!("不支持的兼容内核清单版本: {}", manifest.schema));
+    }
+    Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核上游版本无效: {error}"))?;
+    Version::parse(&manifest.extension_version)
+        .map_err(|error| format!("兼容内核扩展版本无效: {error}"))?;
+    let missing = required_capabilities
+        .iter()
+        .filter(|required| !manifest.capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "兼容内核清单缺少桌面所需能力: {}",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn compatible_update_available(
+    current: &CoreVersionRecord,
+    manifest: &CoreUpdateManifest,
+) -> Result<bool, String> {
+    let current_upstream = Version::parse(current.version.trim_start_matches('v'))
+        .map_err(|error| format!("当前内核版本无效: {error}"))?;
+    let remote_upstream = Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核版本无效: {error}"))?;
+    if remote_upstream != current_upstream {
+        return Ok(remote_upstream > current_upstream);
+    }
+    let remote_extension = Version::parse(&manifest.extension_version)
+        .map_err(|error| format!("兼容内核扩展版本无效: {error}"))?;
+    let current_extension = Version::parse(&current.extension_version).ok();
+    Ok(current_extension.is_none_or(|version| remote_extension > version))
+}
+
+fn core_record_matches_manifest(record: &CoreVersionRecord, manifest: &CoreUpdateManifest) -> bool {
+    record.version.trim_start_matches('v') == manifest.version.trim_start_matches('v')
+        && record.algorithm_version == manifest.algorithm_version
+        && record.extension_version == manifest.extension_version
+        && same_core_commit(&record.upstream_commit, &manifest.upstream_commit)
+        && manifest
+            .capabilities
+            .iter()
+            .all(|required| record.capabilities.iter().any(|value| value == required))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    published_at: String,
+    #[serde(default)]
+    body: String,
+    html_url: String,
+    assets: Vec<GitHubReleaseAsset>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoreUpdateCheck {
+    pub available: bool,
+    pub staged: bool,
+    pub compatibility_pending: bool,
+    pub upstream_latest_version: Option<String>,
+    pub current_version: String,
+    pub current_algorithm_version: String,
+    pub current_extension_version: String,
+    pub current_capabilities: Vec<String>,
+    pub upstream_commit: String,
+    pub update: Option<CoreUpdateManifest>,
+    pub previous_version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoreInstallResult {
+    pub version: String,
+    pub algorithm_version: String,
+    pub extension_version: String,
+    pub capabilities: Vec<String>,
+    pub upstream_commit: String,
+    pub restart_required: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CoreUpdateProgress {
+    stage: String,
+    downloaded: u64,
+    total: Option<u64>,
+    message: String,
+}
+
+fn backend_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("backend"))
+        .map_err(|error| format!("无法定位应用数据目录: {error}"))
+}
+
+fn core_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("core"))
+        .map_err(|error| format!("无法定位内核目录: {error}"))
+}
+
+fn active_core_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(core_dir(app)?.join("active").join("sub2api-backend.exe"))
+}
+
+fn previous_core_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(core_dir(app)?.join("previous").join("sub2api-backend.exe"))
+}
+
+fn pending_core_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(core_dir(app)?.join("pending").join("sub2api-backend.exe"))
+}
+
+fn core_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(core_dir(app)?.join("state.json"))
+}
+
+fn bundled_core_path() -> Result<PathBuf, String> {
+    let executable =
+        std::env::current_exe().map_err(|error| format!("无法定位桌面程序: {error}"))?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| "桌面程序路径没有父目录".to_string())?;
+    Ok(directory.join(format!("{BACKEND_SIDECAR_NAME}.exe")))
+}
+
+fn load_core_state(app: &AppHandle) -> CoreState {
+    let Ok(path) = core_state_path(app) else {
+        return CoreState::default();
+    };
+    let decode = |candidate: &Path| {
+        fs::read(candidate)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    };
+    decode(&path)
+        .or_else(|| decode(&path.with_extension("json.bak")))
+        .unwrap_or_default()
+}
+
+fn save_core_state(app: &AppHandle, state: &CoreState) -> Result<(), String> {
+    let path = core_state_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "内核状态路径无效".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| format!("无法创建内核状态目录: {error}"))?;
+    let bytes =
+        serde_json::to_vec_pretty(state).map_err(|error| format!("无法序列化内核状态: {error}"))?;
+    let temporary = path.with_extension("json.tmp");
+    let backup = path.with_extension("json.bak");
+    fs::write(&temporary, bytes).map_err(|error| format!("无法写入内核状态: {error}"))?;
+    if path.exists() {
+        fs::copy(&path, &backup).map_err(|error| format!("无法备份内核状态: {error}"))?;
+        fs::remove_file(&path).map_err(|error| format!("无法替换内核状态: {error}"))?;
+    }
+    fs::rename(&temporary, &path).map_err(|error| format!("无法提交内核状态: {error}"))?;
+    let _ = fs::remove_file(backup);
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| format!("无法读取内核文件: {error}"))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn same_core_commit(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    !left.is_empty()
+        && !right.is_empty()
+        && (left.eq_ignore_ascii_case(right)
+            || left
+                .to_ascii_lowercase()
+                .starts_with(&right.to_ascii_lowercase())
+            || right
+                .to_ascii_lowercase()
+                .starts_with(&left.to_ascii_lowercase()))
+}
+
+fn same_core_identity(left: &CoreVersionRecord, right: &CoreVersionRecord) -> bool {
+    left.version.trim_start_matches('v') == right.version.trim_start_matches('v')
+        && same_core_commit(&left.upstream_commit, &right.upstream_commit)
+        && !left.sha256.trim().is_empty()
+        && left.sha256.trim().eq_ignore_ascii_case(right.sha256.trim())
+}
+
+fn required_capabilities() -> Vec<String> {
+    CORE_CAPABILITIES
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn supports_required_capabilities(record: &CoreVersionRecord) -> bool {
+    required_capabilities()
+        .iter()
+        .all(|required| record.capabilities.iter().any(|value| value == required))
+}
+
+fn effective_algorithm_version(record: &CoreVersionRecord) -> String {
+    if supports_required_capabilities(record) {
+        record.algorithm_version.clone()
+    } else {
+        "unavailable".to_string()
+    }
+}
+
+fn required_core_action(
+    current: &CoreVersionRecord,
+    bundled: &CoreVersionRecord,
+    integrity_valid: bool,
+    required_capabilities: &[String],
+) -> CoreCompatibilityAction {
+    let current_version = Version::parse(current.version.trim_start_matches('v'));
+    let bundled_version = Version::parse(bundled.version.trim_start_matches('v'));
+    let current_extension = Version::parse(&current.extension_version);
+    let bundled_extension = Version::parse(&bundled.extension_version);
+    let capabilities_valid = required_capabilities
+        .iter()
+        .all(|required| current.capabilities.iter().any(|value| value == required));
+
+    match (&current_version, &bundled_version) {
+        (Ok(current_version), Ok(bundled_version)) if bundled_version > current_version => {
+            CoreCompatibilityAction::InstallBundled
+        }
+        (Ok(current_version), Ok(bundled_version)) if bundled_version == current_version => {
+            let bundled_extension_is_newer = match (&current_extension, &bundled_extension) {
+                (Ok(current), Ok(bundled)) => bundled > current,
+                (Err(_), Ok(_)) => true,
+                _ => false,
+            };
+            let same_extension = match (&current_extension, &bundled_extension) {
+                (Ok(current), Ok(bundled)) => current == bundled,
+                (Err(_), Err(_)) => true,
+                _ => false,
+            };
+            let bundled_payload_changed = same_extension && !same_core_identity(current, bundled);
+            if bundled_extension_is_newer
+                || !integrity_valid
+                || !capabilities_valid
+                || bundled_payload_changed
+            {
+                CoreCompatibilityAction::InstallBundled
+            } else {
+                CoreCompatibilityAction::None
+            }
+        }
+        (Ok(_), Ok(_)) if integrity_valid && capabilities_valid => CoreCompatibilityAction::None,
+        _ => CoreCompatibilityAction::WaitForCompatibleUpdate,
+    }
+}
+
+fn bundled_core_record() -> Result<CoreVersionRecord, String> {
+    let path = bundled_core_path()?;
+    if !path.is_file() {
+        return Err(format!("安装包缺少 Sub2API 内置内核: {}", path.display()));
+    }
+    Ok(CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
+        sha256: sha256_file(&path)?,
+        upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
+    })
+}
+
+fn active_core_record(app: &AppHandle) -> Result<CoreVersionRecord, String> {
+    let active_path = active_core_path(app)?;
+    if !active_path.is_file() {
+        return bundled_core_record();
+    }
+    let mut record = load_core_state(app).active.unwrap_or(CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: String::new(),
+        capabilities: Vec::new(),
+        sha256: String::new(),
+        upstream_commit: "unknown".to_string(),
+    });
+    record.sha256 = sha256_file(&active_path)?;
+    Ok(record)
+}
+
+fn current_core_versions(app: &AppHandle) -> CoreVersions {
+    if let Ok(active) = active_core_record(app) {
+        return CoreVersions {
+            current_version: active.version.clone(),
+            current_algorithm_version: effective_algorithm_version(&active),
+            current_extension_version: active.extension_version.clone(),
+            capabilities: active.capabilities.clone(),
+            upstream_commit: if active.upstream_commit.trim().is_empty() {
+                "unknown".to_string()
+            } else {
+                active.upstream_commit
+            },
+            sha256: active.sha256,
+        };
+    }
+    CoreVersions {
+        current_version: CORE_VERSION.to_string(),
+        current_algorithm_version: ALGORITHM_VERSION.to_string(),
+        current_extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
+        upstream_commit: BUNDLED_CORE_COMMIT.to_string(),
+        sha256: String::new(),
+    }
+}
+
+fn replace_active_core_files(
+    active_path: &Path,
+    previous_path: &Path,
+    pending_path: &Path,
+) -> Result<(), String> {
+    if !active_path.is_file() {
+        return Err(format!("当前内核文件不存在: {}", active_path.display()));
+    }
+    if !pending_path.is_file() {
+        return Err(format!("待激活内核文件不存在: {}", pending_path.display()));
+    }
+    if let Some(parent) = previous_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建回滚目录: {error}"))?;
+    }
+    fs::copy(active_path, previous_path).map_err(|error| format!("无法保留上一版内核: {error}"))?;
+    fs::remove_file(active_path).map_err(|error| format!("无法替换活动内核: {error}"))?;
+
+    let replacement = fs::rename(pending_path, active_path).or_else(|_| {
+        fs::copy(pending_path, active_path)?;
+        fs::remove_file(pending_path)
+    });
+    if let Err(error) = replacement {
+        let rollback = fs::copy(previous_path, active_path);
+        return match rollback {
+            Ok(_) => Err(format!("无法激活新内核，已恢复原内核: {error}")),
+            Err(rollback_error) => Err(format!(
+                "无法激活新内核且恢复原内核失败: {error}; {rollback_error}"
+            )),
+        };
+    }
+    Ok(())
+}
+
+pub fn activate_pending_core(app: &AppHandle) -> Result<(), String> {
+    let mut state = load_core_state(app);
+    let Some(pending) = state.pending.clone() else {
+        return Ok(());
+    };
+    let pending_path = pending_core_path(app)?;
+    if !pending_path.is_file() {
+        let active_path = active_core_path(app)?;
+        if active_path.is_file()
+            && !pending.sha256.is_empty()
+            && sha256_file(&active_path)?.eq_ignore_ascii_case(&pending.sha256)
+        {
+            let previous = state.active.clone().unwrap_or(CoreVersionRecord {
+                version: CORE_VERSION.to_string(),
+                algorithm_version: ALGORITHM_VERSION.to_string(),
+                extension_version: CORE_EXTENSION_VERSION.to_string(),
+                capabilities: required_capabilities(),
+                sha256: String::new(),
+                upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
+            });
+            state.previous = Some(previous);
+            state.active = Some(pending);
+            state.pending = None;
+            state.pending_validation = true;
+            state.last_error = None;
+            return save_core_state(app, &state);
+        }
+        state.pending = None;
+        state.last_error = Some("待安装内核文件不存在，已取消本次更新".into());
+        save_core_state(app, &state)?;
+        return Ok(());
+    }
+
+    let active_path = active_core_path(app)?;
+    let previous_path = previous_core_path(app)?;
+    if port_is_open() {
+        stop_owned_listener(crate::desktop_listen::active().port, &active_path)?;
+        wait_for_backend_port_release_blocking()?;
+    }
+    if let Some(parent) = active_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建活动内核目录: {error}"))?;
+    }
+    if let Some(parent) = previous_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建回滚目录: {error}"))?;
+    }
+
+    let current_record = state.active.clone().unwrap_or(CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: CORE_EXTENSION_VERSION.to_string(),
+        capabilities: required_capabilities(),
+        sha256: String::new(),
+        upstream_commit: UPSTREAM_SUB2API_COMMIT.to_string(),
+    });
+    let current_path = if active_path.is_file() {
+        active_path.clone()
+    } else {
+        bundled_core_path()?
+    };
+    if !current_path.is_file() {
+        return Err(format!("当前内核文件不存在: {}", current_path.display()));
+    }
+
+    if !active_path.is_file() {
+        fs::copy(&current_path, &active_path)
+            .map_err(|error| format!("无法暂存当前内置内核: {error}"))?;
+    }
+    replace_active_core_files(&active_path, &previous_path, &pending_path)?;
+
+    state.previous = Some(current_record);
+    state.active = Some(pending);
+    state.pending = None;
+    state.pending_validation = true;
+    state.last_error = None;
+    save_core_state(app, &state)
+}
+
+pub fn initialize_backend(app: &AppHandle) -> Result<BackendSupervisor, String> {
+    let data_dir = backend_data_dir(app)?;
+    if let Some(app_data_dir) = data_dir.parent() {
+        // config.yaml is written when the setup wizard finishes.
+        crate::desktop_listen::initialize(app_data_dir, data_dir.join("config.yaml").is_file());
+    }
+    let activation_warning = activate_pending_core(app).err().map(|error| {
+        let mut state = load_core_state(app);
+        let warning = defer_pending_activation_failure(&mut state, &error);
+        let _ = save_core_state(app, &state);
+        warning
+    });
+    let versions = current_core_versions(app);
+    let supervisor = BackendSupervisor::new(&data_dir, &versions);
+    if let Some(warning) = activation_warning {
+        supervisor.update_status(|status| {
+            status.message = "内核更新等待安全恢复，桌面仍可继续启动".into();
+            status.last_log = warning;
+        });
+    }
+    Ok(supervisor)
+}
+
+fn port_is_open() -> bool {
+    let address = crate::desktop_listen::active().connect_address();
+    TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+}
+
+fn emit_backend_status(app: &AppHandle, supervisor: &BackendSupervisor) {
+    let _ = app.emit("desktop-backend-status", supervisor.snapshot());
+}
+
+fn ensure_curated_model_pricing(data_dir: &Path) -> Result<(), String> {
+    let pricing_dir = data_dir.join("resources").join("model-pricing");
+    fs::create_dir_all(&pricing_dir).map_err(|error| format!("无法创建模型价格目录: {error}"))?;
+    fs::write(
+        pricing_dir.join("model_prices_and_context_window.json"),
+        CURATED_MODEL_PRICING,
+    )
+    .map_err(|error| format!("无法写入内置模型价格目录: {error}"))
+}
+
+fn ensure_backend_zoneinfo(data_dir: &Path) -> Result<PathBuf, String> {
+    let timezone_dir = data_dir.join("resources").join("timezone");
+    fs::create_dir_all(&timezone_dir).map_err(|error| format!("无法创建内核时区目录: {error}"))?;
+    let zoneinfo_path = timezone_dir.join("zoneinfo.zip");
+    let current_matches = fs::read(&zoneinfo_path)
+        .map(|bytes| bytes == BUNDLED_ZONEINFO)
+        .unwrap_or(false);
+    if current_matches {
+        return Ok(zoneinfo_path);
+    }
+
+    let temporary_path = timezone_dir.join("zoneinfo.zip.tmp");
+    fs::write(&temporary_path, BUNDLED_ZONEINFO)
+        .map_err(|error| format!("无法写入内核时区数据库: {error}"))?;
+    if zoneinfo_path.exists() {
+        fs::remove_file(&zoneinfo_path)
+            .map_err(|error| format!("无法替换旧的内核时区数据库: {error}"))?;
+    }
+    fs::rename(&temporary_path, &zoneinfo_path)
+        .map_err(|error| format!("无法提交内核时区数据库: {error}"))?;
+    Ok(zoneinfo_path)
+}
+
+pub fn start_backend(app: AppHandle, supervisor: BackendSupervisor) -> Result<(), String> {
+    start_backend_if_current(app, supervisor, None)
+}
+
+fn start_backend_if_current(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    expected: Option<u64>,
+) -> Result<(), String> {
+    let generation = {
+        let _guard = supervisor
+            .lifecycle_lock
+            .lock()
+            .expect("backend lifecycle poisoned");
+        let Some(generation) = supervisor.reserve_start(expected) else {
+            return Ok(());
+        };
+        generation
+    };
+    emit_backend_status(&app, &supervisor);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = prepare_backend_start(&app, &supervisor, generation).await {
+            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+            if inner.generation != generation || inner.shutting_down {
+                return;
+            }
+            inner.starting = false;
+            inner.status.phase = BackendPhase::Error;
+            inner.status.message = error;
+            drop(inner);
+            emit_backend_status(&app, &supervisor);
+        }
+    });
+    Ok(())
+}
+
+async fn prepare_backend_start(
+    app: &AppHandle,
+    supervisor: &BackendSupervisor,
+    generation: u64,
+) -> Result<(), String> {
+    let data_dir = backend_data_dir(app)?;
+    loop {
+        if !supervisor.is_current(generation) {
+            return Ok(());
+        }
+        let dependencies = configured_dependencies(&data_dir);
+        let result = match dependencies {
+            Ok(dependencies) => ensure_dependencies(&dependencies, &SystemDependencies).await,
+            Err(error) => Err(error),
+        };
+        let retry = {
+            let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+            if inner.generation != generation || inner.shutting_down {
+                return Ok(());
+            }
+            match result {
+                Ok(()) => {
+                    inner.status.problem = None;
+                    Some(false)
+                }
+                Err(problem) => {
+                    let retryable = problem.retryable;
+                    inner.status.phase = if retryable {
+                        BackendPhase::WaitingForDependencies
+                    } else {
+                        BackendPhase::Error
+                    };
+                    inner.status.message = problem.message.clone();
+                    inner.status.problem = Some(problem);
+                    if !retryable {
+                        inner.starting = false;
+                    }
+                    retryable.then_some(true)
+                }
+            }
+        };
+        emit_backend_status(app, supervisor);
+        match retry {
+            Some(false) => break,
+            None => return Ok(()),
+            Some(true) => {}
+        }
+        sleep(Duration::from_secs(3)).await;
+    }
+    spawn_backend_process(app.clone(), supervisor.clone(), generation)
+}
+
+fn spawn_backend_process(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    generation: u64,
+) -> Result<(), String> {
+    let _lifecycle = supervisor
+        .lifecycle_lock
+        .lock()
+        .expect("backend lifecycle poisoned");
+    if !supervisor.is_current(generation) {
+        return Ok(());
+    }
+
+    let data_dir = backend_data_dir(&app)?;
+    fs::create_dir_all(&data_dir).map_err(|error| format!("无法创建后端数据目录: {error}"))?;
+    ensure_curated_model_pricing(&data_dir)?;
+    let zoneinfo_path = ensure_backend_zoneinfo(&data_dir)?;
+    let active_path = active_core_path(&app)?;
+    let executable = if active_path.is_file() {
+        active_path
+    } else {
+        bundled_core_path()?
+    };
+    if !executable.is_file() {
+        let message = format!("安装包缺少 Sub2API 内核: {}", executable.display());
+        supervisor.update_status(|status| {
+            status.phase = BackendPhase::Error;
+            status.message = message.clone();
+        });
+        emit_backend_status(&app, &supervisor);
+        return Err(message);
+    }
+
+    if port_is_open() {
+        // An owned orphan can be reclaimed; an unrelated listener is never killed.
+        if stop_owned_listener(crate::desktop_listen::active().port, &executable).unwrap_or(false) {
+            wait_for_backend_port_release_blocking()?;
+        } else if crate::desktop_profile::PREVIEW {
+            return Err("测试版端口 19765 已被其他进程占用；不会接管或连接已有服务。".into());
+        } else {
+            supervisor.update_status(|status| {
+                status.phase = BackendPhase::Starting;
+                status.managed = false;
+                status.pid = None;
+                status.message = "正在验证本机现有服务".into();
+            });
+            emit_backend_status(&app, &supervisor);
+            let probe_supervisor = supervisor.clone();
+            tauri::async_runtime::spawn(async move {
+                probe_backend(app, probe_supervisor, generation).await;
+            });
+            return Ok(());
+        }
+    }
+
+    let listen = crate::desktop_listen::active();
+    let mut command = app.shell().command(&executable);
+    if crate::desktop_profile::PREVIEW {
+        command = command
+            .env_clear()
+            .envs(std::env::vars_os().filter(|(name, _)| {
+                crate::desktop_profile::allowed_preview_environment(&name.to_string_lossy())
+            }));
+        command = command.env("SUB2API_PLUGIN_PREVIEW", "1");
+    }
+    command = command
+        .current_dir(&data_dir)
+        .env("DATA_DIR", &data_dir)
+        .env("SERVER_HOST", &listen.host)
+        .env("SERVER_PORT", listen.port.to_string())
+        .env("ZONEINFO", &zoneinfo_path)
+        .env("SUB2API_DESKTOP", "1")
+        .env("SUB2API_DESKTOP_CONTROL", "stdin-v1")
+        .env(
+            "SUB2API_DESKTOP_VERSION",
+            app.package_info().version.to_string(),
+        )
+        .env(
+            "SUB2API_DESKTOP_RETURN_URL",
+            "http://tauri.localhost/index.html#/admin/cost-center?desktop=1",
+        );
+    for (name, value) in crate::desktop_proxy::backend_proxy_environment() {
+        command = command.env(name, value);
+    }
+    let (mut events, child) = command
+        .spawn()
+        .map_err(|error| format!("无法启动 Sub2API 内核: {error}"))?;
+
+    let child = ManagedChild::new(child)?;
+    let pid = child.pid();
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.starting = false;
+        inner.child = Some(child);
+        inner.status.phase = BackendPhase::Starting;
+        inner.status.managed = true;
+        inner.status.pid = Some(pid);
+        inner.status.message = "Sub2API 内核已启动，正在等待服务就绪".into();
+    }
+    emit_backend_status(&app, &supervisor);
+
+    let event_app = app.clone();
+    let event_supervisor = supervisor.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = events.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
+                    let line = String::from_utf8_lossy(&bytes).trim().to_string();
+                    if !line.is_empty() {
+                        event_supervisor.record_log(generation, line);
+                    }
+                }
+                CommandEvent::Error(error) => {
+                    event_supervisor.record_log(generation, error);
+                }
+                CommandEvent::Terminated(payload) => {
+                    let retry_generation = event_supervisor.record_exit(generation, payload.code);
+                    emit_backend_status(&event_app, &event_supervisor);
+                    if let Some((retry_generation, restart)) = retry_generation {
+                        if !restart {
+                            recover_unhealthy_backend(
+                                event_app.clone(),
+                                event_supervisor.clone(),
+                                retry_generation,
+                                "内核连续启动失败",
+                            )
+                            .await;
+                            break;
+                        }
+                        sleep(Duration::from_millis(700)).await;
+                        let _ = start_backend_if_current(
+                            event_app.clone(),
+                            event_supervisor.clone(),
+                            Some(retry_generation),
+                        );
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let probe_app = app.clone();
+    let probe_supervisor = supervisor.clone();
+    tauri::async_runtime::spawn(async move {
+        probe_backend(probe_app, probe_supervisor, generation).await;
+    });
+    Ok(())
+}
+
+async fn probe_backend(app: AppHandle, supervisor: BackendSupervisor, generation: u64) {
+    let client = match Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .user_agent("Sub2API-Cost-Console")
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            supervisor.update_status(|status| {
+                status.phase = BackendPhase::Error;
+                status.message = format!("无法创建本地健康检查: {error}");
+            });
+            emit_backend_status(&app, &supervisor);
+            return;
+        }
+    };
+
+    for _ in 0..60 {
+        let still_current = supervisor.is_current(generation);
+        if !still_current {
+            return;
+        }
+        let setup = client
+            .get(format!(
+                "http://{}/setup/status",
+                crate::desktop_listen::active().connect_address()
+            ))
+            .send()
+            .await;
+        let healthy = match setup {
+            Ok(response) if response.status().is_success() => response
+                .json::<serde_json::Value>()
+                .await
+                .is_ok_and(|body| is_setup_health_response(&body)),
+            _ => false,
+        };
+        if healthy {
+            let _lifecycle = supervisor
+                .lifecycle_lock
+                .lock()
+                .expect("backend lifecycle poisoned");
+            let managed;
+            {
+                let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+                if inner.generation != generation || inner.shutting_down {
+                    return;
+                }
+                inner.consecutive_failures = 0;
+                inner.starting = false;
+                managed = inner.status.managed;
+                inner.status.phase = BackendPhase::Ready;
+                inner.status.problem = None;
+                inner.status.last_log.clear();
+                inner.status.message = "Sub2API 内核已就绪".into();
+            }
+            let mut core_state = load_core_state(&app);
+            if managed && core_state.pending_validation {
+                core_state.pending_validation = false;
+                core_state.last_error = None;
+                let _ = save_core_state(&app, &core_state);
+                let _ = app.emit(
+                    "core-update-validated",
+                    current_core_versions(&app).current_version,
+                );
+            }
+            emit_backend_status(&app, &supervisor);
+            return;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    recover_unhealthy_backend(app, supervisor, generation, "内核启动超时").await;
+}
+
+async fn recover_unhealthy_backend(
+    app: AppHandle,
+    supervisor: BackendSupervisor,
+    generation: u64,
+    reason: &str,
+) {
+    // Serialize recovery with manual restart and binary replacement. A stale
+    // health task may neither change current status nor roll back a newer core.
+    let _update = supervisor.update_lock.lock().await;
+    if !supervisor.is_current(generation) {
+        return;
+    }
+    let managed = supervisor.snapshot().managed;
+    if !managed {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        if inner.generation != generation {
+            return;
+        }
+        inner.starting = false;
+        inner.generation += 1;
+        inner.status.phase = BackendPhase::Error;
+        inner.status.message = format!(
+            "端口 {} 上的服务没有通过 Sub2API 健康检查，请检查端口占用。",
+            crate::desktop_listen::active().port
+        );
+        drop(inner);
+        emit_backend_status(&app, &supervisor);
+        return;
+    }
+    if let Ok(data_dir) = backend_data_dir(&app) {
+        if let Ok(dependencies) = configured_dependencies(&data_dir) {
+            if ensure_dependencies(&dependencies, &SystemDependencies)
+                .await
+                .is_err()
+            {
+                if stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+                    let _ = start_backend(app.clone(), supervisor.clone());
+                }
+                // Missing data services are not evidence of an incompatible core.
+                return;
+            }
+        }
+    }
+    if !supervisor.is_current(generation) {
+        return;
+    }
+    let pending_validation = load_core_state(&app).pending_validation;
+    if pending_validation {
+        let failure = "新内核未通过启动健康检查，已自动回滚".to_string();
+        if !stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+            return;
+        }
+        sleep(Duration::from_millis(400)).await;
+        if let Err(error) = restore_previous_core(&app, &failure) {
+            supervisor.update_status(|status| {
+                status.phase = BackendPhase::Error;
+                status.message = format!("{failure}，但恢复失败: {error}");
+            });
+        } else {
+            let versions = current_core_versions(&app);
+            supervisor.update_status(|status| {
+                status.core_version = versions.current_version;
+                status.algorithm_version = versions.current_algorithm_version;
+                status.extension_version = versions.current_extension_version;
+                status.capabilities = versions.capabilities;
+                status.upstream_commit = versions.upstream_commit;
+                status.core_sha256 = versions.sha256;
+                status.phase = BackendPhase::Starting;
+                status.message = failure.clone();
+            });
+            let _ = app.emit("core-update-rollback", failure);
+            let _ = start_backend(app.clone(), supervisor.clone());
+        }
+    } else {
+        if !stop_backend_generation(&supervisor, false, Some(generation)).unwrap_or(false) {
+            return;
+        }
+        supervisor.update_status(|status| {
+            status.phase = BackendPhase::Error;
+            status.message = format!("{reason}；请查看技术详情后重新检测并启动");
+        });
+    }
+    emit_backend_status(&app, &supervisor);
+}
+
+fn is_setup_health_response(body: &serde_json::Value) -> bool {
+    body.get("needs_setup")
+        .is_some_and(serde_json::Value::is_boolean)
+        || (body.get("code").and_then(serde_json::Value::as_i64) == Some(0)
+            && body
+                .pointer("/data/needs_setup")
+                .is_some_and(serde_json::Value::is_boolean))
+}
+
+fn stop_backend_internal(
+    supervisor: &BackendSupervisor,
+    shutting_down: bool,
+) -> Result<(), String> {
+    stop_backend_generation(supervisor, shutting_down, None).map(|_| ())
+}
+
+fn stop_backend_generation(
+    supervisor: &BackendSupervisor,
+    shutting_down: bool,
+    expected: Option<u64>,
+) -> Result<bool, String> {
+    let _lifecycle = supervisor
+        .lifecycle_lock
+        .lock()
+        .expect("backend lifecycle poisoned");
+    let child = {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        if expected.is_some_and(|generation| inner.generation != generation) {
+            return Ok(false);
+        }
+        inner.generation += 1;
+        inner.starting = false;
+        inner.shutting_down = shutting_down;
+        inner.status.phase = BackendPhase::Stopped;
+        inner.status.pid = None;
+        inner.status.message = if shutting_down {
+            "桌面端正在退出".into()
+        } else {
+            "内核已停止".into()
+        };
+        inner.child.take()
+    };
+    if let Some(child) = child {
+        child.stop()?;
+    }
+    Ok(true)
+}
+
+/// Stop the managed sidecar and wait until its listening socket is released.
+/// Tauri's `relaunch` can otherwise race child shutdown on Windows.
+#[tauri::command]
+pub async fn desktop_backend_prepare_relaunch(
+    app: AppHandle,
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<(), String> {
+    let _update = supervisor.update_lock.lock().await;
+    let managed = supervisor.snapshot().managed;
+    stop_backend_internal(&supervisor, false)?;
+    // An external API service is not owned by this desktop installer.
+    if !managed {
+        return Ok(());
+    }
+    if wait_for_backend_port_release().await.is_ok() {
+        return Ok(());
+    }
+    let active_path = active_core_path(&app)?;
+    stop_owned_listener(crate::desktop_listen::active().port, &active_path)?;
+    wait_for_backend_port_release()
+        .await
+        .map_err(|_| "本地内核仍在退出，无法安全重启桌面端；请稍后重试".into())
+}
+
+fn wait_for_backend_port_release_blocking() -> Result<(), String> {
+    for _ in 0..50 {
+        if !port_is_open() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err("本地内核仍在退出，无法安全切换；请稍后重试".into())
+}
+
+async fn wait_for_backend_port_release() -> Result<(), String> {
+    for _ in 0..50 {
+        if !port_is_open() {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    Err("本地内核仍在退出，无法安全切换；请稍后重试".into())
+}
+
+pub fn shutdown_backend(app: &AppHandle) {
+    if let Some(supervisor) = app.try_state::<BackendSupervisor>() {
+        let _ = stop_backend_internal(&supervisor, true);
+    }
+}
+
+fn restore_previous_core(app: &AppHandle, reason: &str) -> Result<(), String> {
+    let mut state = load_core_state(app);
+    let previous = state
+        .previous
+        .clone()
+        .ok_or_else(|| "没有可回滚的上一版内核".to_string())?;
+    let previous_path = previous_core_path(app)?;
+    let active_path = active_core_path(app)?;
+    if !previous_path.is_file() {
+        return Err("上一版内核文件不存在".into());
+    }
+    if let Some(parent) = active_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建活动内核目录: {error}"))?;
+    }
+    fs::copy(&previous_path, &active_path)
+        .map_err(|error| format!("无法恢复上一版内核: {error}"))?;
+    state.active = Some(previous);
+    state.previous = None;
+    state.pending = None;
+    state.pending_validation = false;
+    state.last_error = Some(reason.to_string());
+    save_core_state(app, &state)
+}
+
+fn validate_https_url(value: &str) -> Result<Url, String> {
+    let url = Url::parse(value).map_err(|error| format!("更新地址无效: {error}"))?;
+    if url.scheme() != "https" {
+        return Err("更新地址必须使用 HTTPS".into());
+    }
+    Ok(url)
+}
+
+fn validate_upstream_asset_url(value: &str, tag: &str, filename: &str) -> Result<Url, String> {
+    let url = validate_https_url(value)?;
+    let expected_path = format!("/{UPSTREAM_REPOSITORY}/releases/download/{tag}/{filename}");
+    if url.host_str() != Some("github.com") || url.path() != expected_path {
+        return Err(format!(
+            "上游资产地址不属于固定仓库 {UPSTREAM_REPOSITORY}: {value}"
+        ));
+    }
+    Ok(url)
+}
+
+fn validate_compatible_core_asset_url(value: &str, filename: &str) -> Result<Url, String> {
+    let url = validate_https_url(value)?;
+    let prefix = format!("/{COMPATIBLE_CORE_REPOSITORY}/releases/download/");
+    let suffix = format!("/{filename}");
+    let release_tag = url
+        .path()
+        .strip_prefix(&prefix)
+        .and_then(|path| path.strip_suffix(&suffix))
+        .filter(|tag| !tag.is_empty() && !tag.contains('/'));
+    if url.host_str() != Some("github.com")
+        || release_tag.is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(format!(
+            "兼容内核资产地址不属于固定仓库 {COMPATIBLE_CORE_REPOSITORY}: {value}"
+        ));
+    }
+    Ok(url)
+}
+
+fn checksum_for_asset(checksums: &str, filename: &str) -> Result<String, String> {
+    for line in checksums.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(checksum) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        if name.trim_start_matches('*') == filename {
+            let normalized = checksum.trim().to_ascii_lowercase();
+            if normalized.len() == 64 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Ok(normalized);
+            }
+            return Err(format!("{filename} 的上游 SHA-256 格式无效"));
+        }
+    }
+    Err(format!("上游 checksums.txt 未包含 {filename}"))
+}
+
+fn build_upstream_manifest(
+    release: GitHubRelease,
+    checksums: &str,
+) -> Result<CoreUpdateManifest, String> {
+    let version = release.tag_name.trim_start_matches('v').trim().to_string();
+    Version::parse(&version).map_err(|error| format!("上游内核版本号无效: {error}"))?;
+    if version.is_empty() || release.tag_name != format!("v{version}") {
+        return Err(format!(
+            "上游 Release 标签格式不受支持: {}",
+            release.tag_name
+        ));
+    }
+
+    let archive_name = format!("sub2api_{version}_windows_amd64.zip");
+    let archive = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == archive_name)
+        .ok_or_else(|| format!("上游 Release 缺少 Windows x64 资产 {archive_name}"))?;
+    validate_upstream_asset_url(
+        &archive.browser_download_url,
+        &release.tag_name,
+        &archive_name,
+    )?;
+    if archive.size == 0 || archive.size > MAX_CORE_ARCHIVE_BYTES {
+        return Err(format!("上游内核压缩包大小异常: {} 字节", archive.size));
+    }
+
+    let sha256 = checksum_for_asset(checksums, &archive_name)?;
+    let mut platforms = HashMap::new();
+    platforms.insert(
+        "windows-x86_64".to_string(),
+        CoreArtifact {
+            url: archive.browser_download_url.clone(),
+            archive_name,
+            sha256,
+            size: archive.size,
+        },
+    );
+
+    Ok(CoreUpdateManifest {
+        schema: 1,
+        version,
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: String::new(),
+        capabilities: Vec::new(),
+        upstream_commit: String::new(),
+        published_at: release.published_at,
+        notes: release.body,
+        release_url: release.html_url,
+        platforms,
+    })
+}
+
+fn update_client() -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(10 * 60))
+        .user_agent("Sub2API-Cost-Console-Updater")
+        .build()
+        .map_err(|error| format!("无法创建更新客户端: {error}"))
+}
+
+async fn fetch_upstream_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
+    let release = client
+        .get(UPSTREAM_RELEASE_API)
+        .header("Cache-Control", "no-cache")
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|error| format!("无法扫描 Wei-Shaw/sub2api 上游 Release: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Wei-Shaw/sub2api Release API 返回错误: {error}"))?
+        .json::<GitHubRelease>()
+        .await
+        .map_err(|error| format!("无法解析 Wei-Shaw/sub2api Release: {error}"))?;
+
+    let checksums_asset = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == UPSTREAM_CHECKSUM_ASSET)
+        .ok_or_else(|| "上游 Release 缺少 checksums.txt，已拒绝更新".to_string())?;
+    let checksums_url = validate_upstream_asset_url(
+        &checksums_asset.browser_download_url,
+        &release.tag_name,
+        UPSTREAM_CHECKSUM_ASSET,
+    )?;
+    let checksums = client
+        .get(checksums_url)
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+        .map_err(|error| format!("无法获取上游 checksums.txt: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("上游 checksums.txt 返回错误: {error}"))?
+        .text()
+        .await
+        .map_err(|error| format!("无法读取上游 checksums.txt: {error}"))?;
+
+    build_upstream_manifest(release, &checksums)
+}
+
+async fn fetch_compatible_core_manifest(client: &Client) -> Result<CoreUpdateManifest, String> {
+    let manifest = client
+        .get(COMPATIBLE_CORE_MANIFEST_URL)
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+        .map_err(|error| format!("无法获取兼容内核清单: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("兼容内核清单返回错误: {error}"))?
+        .json::<CoreUpdateManifest>()
+        .await
+        .map_err(|error| format!("无法解析兼容内核清单: {error}"))?;
+    validate_compatible_core_manifest(&manifest, &required_capabilities())?;
+    for artifact in manifest.platforms.values() {
+        if artifact.size == 0 || artifact.size > MAX_CORE_ARCHIVE_BYTES {
+            return Err(format!("兼容内核压缩包大小异常: {} 字节", artifact.size));
+        }
+        let checksum = artifact.sha256.trim();
+        if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("{} 的 SHA-256 格式无效", artifact.archive_name));
+        }
+        validate_compatible_core_asset_url(&artifact.url, &artifact.archive_name)?;
+    }
+    Ok(manifest)
+}
+
+fn platform_key() -> Result<&'static str, String> {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return Ok("windows-x86_64");
+    }
+    #[allow(unreachable_code)]
+    Err("当前平台暂不支持独立内核更新".into())
+}
+
+async fn extract_upstream_core(archive_path: PathBuf, target_path: PathBuf) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let archive_file = fs::File::open(&archive_path)
+            .map_err(|error| format!("无法打开上游内核压缩包: {error}"))?;
+        let mut archive = zip::ZipArchive::new(archive_file)
+            .map_err(|error| format!("上游内核压缩包格式无效: {error}"))?;
+        let mut entry = archive
+            .by_name("sub2api.exe")
+            .map_err(|_| "上游 Windows 压缩包中缺少 sub2api.exe".to_string())?;
+        if entry.is_dir() || entry.size() == 0 || entry.size() > MAX_CORE_ARCHIVE_BYTES {
+            return Err(format!("上游 sub2api.exe 大小异常: {} 字节", entry.size()));
+        }
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("无法创建待更新内核目录: {error}"))?;
+        }
+        let mut output = fs::File::create(&target_path)
+            .map_err(|error| format!("无法创建待验证内核: {error}"))?;
+        let copied = std::io::copy(&mut entry, &mut output)
+            .map_err(|error| format!("无法解压上游内核: {error}"))?;
+        output
+            .flush()
+            .map_err(|error| format!("无法写入待验证内核: {error}"))?;
+        if copied != entry.size() {
+            return Err(format!(
+                "上游内核解压大小不一致：期望 {}，实际 {copied}",
+                entry.size()
+            ));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("内核解压任务失败: {error}"))?
+}
+
+fn parse_verified_core_build(output: &str, expected_version: &str) -> Result<String, String> {
+    let version_marker = format!("Sub2API {expected_version} ");
+    if !output.contains(&version_marker) {
+        return Err(format!(
+            "下载的内核版本与上游 Release 不一致，期望 {expected_version}"
+        ));
+    }
+    let commit = output
+        .split("commit:")
+        .nth(1)
+        .and_then(|value| value.split([',', ')']).next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "下载的内核未报告真实上游提交号".to_string())?;
+    if commit.len() < 7 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("下载的内核报告了无效的上游提交号".into());
+    }
+    Ok(commit.to_string())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VerifiedCompatibleCoreBuild {
+    upstream_commit: String,
+    extension_version: String,
+    capabilities: Vec<String>,
+}
+
+fn parse_verified_compatible_core_build(
+    output: &str,
+    expected_version: &str,
+    required_capabilities: &[String],
+) -> Result<VerifiedCompatibleCoreBuild, String> {
+    let upstream_commit = parse_verified_core_build(output, expected_version)?;
+    let extension_version = output
+        .split("extension:")
+        .nth(1)
+        .and_then(|value| value.split([',', ')']).next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "候选内核未声明成本扩展版本".to_string())?;
+    Version::parse(extension_version)
+        .map_err(|error| format!("候选内核成本扩展版本无效: {error}"))?;
+    let capabilities = output
+        .split("capabilities:")
+        .nth(1)
+        .and_then(|value| value.split(')').next())
+        .map(|value| {
+            value
+                .split('|')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| "候选内核未声明扩展能力".to_string())?;
+    let missing = required_capabilities
+        .iter()
+        .filter(|required| !capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!("候选内核缺少桌面所需能力: {}", missing.join(", ")));
+    }
+    Ok(VerifiedCompatibleCoreBuild {
+        upstream_commit,
+        extension_version: extension_version.to_string(),
+        capabilities,
+    })
+}
+
+async fn verify_compatible_core_build(
+    path: &Path,
+    expected_version: &str,
+    required_capabilities: &[String],
+) -> Result<VerifiedCompatibleCoreBuild, String> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.as_std_mut().creation_flags(0x0800_0000);
+    let output = timeout(Duration::from_secs(15), command.output())
+        .await
+        .map_err(|_| "验证兼容内核版本超时".to_string())?
+        .map_err(|error| format!("无法执行待验证兼容内核: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("待验证兼容内核退出码异常: {}", output.status));
+    }
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_verified_compatible_core_build(&combined, expected_version, required_capabilities)
+}
+
+fn emit_core_progress(
+    app: &AppHandle,
+    stage: &str,
+    downloaded: u64,
+    total: Option<u64>,
+    message: &str,
+) {
+    let _ = app.emit(
+        "core-update-progress",
+        CoreUpdateProgress {
+            stage: stage.into(),
+            downloaded,
+            total,
+            message: message.into(),
+        },
+    );
+}
+
+#[tauri::command]
+pub fn desktop_backend_status(supervisor: tauri::State<'_, BackendSupervisor>) -> BackendStatus {
+    supervisor.snapshot()
+}
+
+#[tauri::command]
+pub fn inspect_core_identity(app: AppHandle) -> Result<CoreIdentityCheck, String> {
+    let current = active_core_record(&app)?;
+    let bundled = bundled_core_record()?;
+    let state = load_core_state(&app);
+    let active_path = active_core_path(&app)?;
+    let integrity_valid = if active_path.is_file() {
+        state
+            .active
+            .as_ref()
+            .map(|record| {
+                !record.sha256.trim().is_empty()
+                    && record.sha256.eq_ignore_ascii_case(&current.sha256)
+            })
+            .unwrap_or(false)
+    } else {
+        true
+    };
+    let required = required_capabilities();
+    let missing_capabilities = required
+        .iter()
+        .filter(|required| !current.capabilities.iter().any(|value| value == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    let action = required_core_action(&current, &bundled, integrity_valid, &required);
+    Ok(CoreIdentityCheck {
+        action,
+        bundled_differs: !same_core_identity(&current, &bundled),
+        missing_capabilities,
+        integrity_valid,
+        current,
+        bundled,
+        pending: state.pending,
+        last_error: state.last_error,
+    })
+}
+
+#[tauri::command]
+pub async fn desktop_backend_start(
+    app: AppHandle,
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<BackendStatus, String> {
+    let _update = supervisor.update_lock.lock().await;
+    // A manual retry is a real restart, even if a hung child never bound a port.
+    stop_backend_internal(&supervisor, false)?;
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.shutting_down = false;
+        inner.consecutive_failures = 0;
+    }
+    start_backend(app.clone(), supervisor.inner().clone())?;
+    Ok(supervisor.snapshot())
+}
+
+#[tauri::command]
+pub async fn desktop_backend_stop(
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<BackendStatus, String> {
+    let _update = supervisor.update_lock.lock().await;
+    stop_backend_internal(&supervisor, false)?;
+    Ok(supervisor.snapshot())
+}
+
+#[tauri::command]
+pub async fn check_core_update(app: AppHandle) -> Result<CoreUpdateCheck, String> {
+    if crate::desktop_profile::PREVIEW {
+        return Err("插件测试版不连接正式内核更新通道。请使用新的测试安装包升级。".into());
+    }
+    let client = update_client()?;
+    let manifest = fetch_compatible_core_manifest(&client).await?;
+    let upstream_latest_version = fetch_upstream_manifest(&client)
+        .await
+        .ok()
+        .map(|upstream| upstream.version);
+    let compatible_version = Version::parse(manifest.version.trim_start_matches('v'))
+        .map_err(|error| format!("兼容内核版本无效: {error}"))?;
+    let compatibility_pending = upstream_latest_version
+        .as_deref()
+        .and_then(|value| Version::parse(value.trim_start_matches('v')).ok())
+        .is_some_and(|upstream| upstream > compatible_version);
+    let current = active_core_record(&app)?;
+    let state = load_core_state(&app);
+    let staged = state
+        .pending
+        .as_ref()
+        .is_some_and(|pending| core_record_matches_manifest(pending, &manifest));
+    let available = compatible_update_available(&current, &manifest)? && !staged;
+    let previous_version = state.previous.map(|record| record.version);
+    Ok(CoreUpdateCheck {
+        available,
+        staged,
+        compatibility_pending,
+        upstream_latest_version,
+        current_version: current.version.clone(),
+        current_algorithm_version: effective_algorithm_version(&current),
+        current_extension_version: current.extension_version.clone(),
+        current_capabilities: current.capabilities.clone(),
+        upstream_commit: current.upstream_commit,
+        update: Some(manifest),
+        previous_version,
+    })
+}
+
+#[tauri::command]
+pub async fn install_core_update(
+    app: AppHandle,
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<CoreInstallResult, String> {
+    if crate::desktop_profile::PREVIEW {
+        return Err("插件测试版禁止从正式更新通道安装内核。".into());
+    }
+    let _guard = supervisor.update_lock.lock().await;
+    let client = update_client()?;
+    emit_core_progress(&app, "checking", 0, None, "正在扫描扩展兼容内核更新");
+    let manifest = fetch_compatible_core_manifest(&client).await?;
+    let current = active_core_record(&app)?;
+    if !compatible_update_available(&current, &manifest)? {
+        return Err("当前兼容内核已是最新版本".into());
+    }
+
+    let artifact = manifest
+        .platforms
+        .get(platform_key()?)
+        .ok_or_else(|| "更新清单不包含当前 Windows 架构".to_string())?
+        .clone();
+    let artifact_url = validate_compatible_core_asset_url(&artifact.url, &artifact.archive_name)?;
+
+    let mut response = client
+        .get(artifact_url)
+        .send()
+        .await
+        .map_err(|error| format!("无法下载内核: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("内核下载返回错误: {error}"))?;
+    let total = response.content_length().or(Some(artifact.size));
+    if total.is_some_and(|value| value > MAX_CORE_ARCHIVE_BYTES) {
+        return Err("内核更新文件超过 300 MB 安全上限".into());
+    }
+    let pending_path = pending_core_path(&app)?;
+    if let Some(parent) = pending_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("无法创建待更新目录: {error}"))?;
+    }
+    let temporary_archive = pending_path.with_extension("zip.download");
+    let temporary_core = pending_path.with_extension("exe.download");
+    let _ = tokio::fs::remove_file(&temporary_archive).await;
+    let _ = tokio::fs::remove_file(&temporary_core).await;
+    let mut file = tokio::fs::File::create(&temporary_archive)
+        .await
+        .map_err(|error| format!("无法创建内核压缩包下载文件: {error}"))?;
+    let mut downloaded = 0_u64;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("内核下载中断: {error}"))?
+    {
+        downloaded += chunk.len() as u64;
+        if downloaded > MAX_CORE_ARCHIVE_BYTES {
+            return Err("内核更新文件超过 300 MB 安全上限".into());
+        }
+        hasher.update(&chunk);
+        file.write_all(&chunk)
+            .await
+            .map_err(|error| format!("无法写入内核下载文件: {error}"))?;
+        emit_core_progress(
+            &app,
+            "downloading",
+            downloaded,
+            total,
+            "正在下载扩展兼容 Windows 内核包",
+        );
+    }
+    file.flush()
+        .await
+        .map_err(|error| format!("无法刷新内核下载文件: {error}"))?;
+    drop(file);
+
+    let archive_sha256 = hex::encode(hasher.finalize());
+    if !archive_sha256.eq_ignore_ascii_case(artifact.sha256.trim()) {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        return Err(format!(
+            "兼容内核压缩包 SHA-256 校验失败：期望 {}，实际 {}",
+            artifact.sha256, archive_sha256
+        ));
+    }
+
+    emit_core_progress(
+        &app,
+        "extracting",
+        downloaded,
+        total,
+        "兼容内核 SHA-256 已通过，正在提取 sub2api.exe",
+    );
+    if let Err(error) =
+        extract_upstream_core(temporary_archive.clone(), temporary_core.clone()).await
+    {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(error);
+    }
+    let verified = match verify_compatible_core_build(
+        &temporary_core,
+        &manifest.version,
+        &required_capabilities(),
+    )
+    .await
+    {
+        Ok(verified) => verified,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&temporary_archive).await;
+            let _ = tokio::fs::remove_file(&temporary_core).await;
+            return Err(error);
+        }
+    };
+    if !same_core_commit(&verified.upstream_commit, &manifest.upstream_commit) {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(format!(
+            "兼容内核上游提交校验失败：清单声明 {}，文件报告 {}",
+            manifest.upstream_commit, verified.upstream_commit
+        ));
+    }
+    if verified.extension_version != manifest.extension_version {
+        let _ = tokio::fs::remove_file(&temporary_archive).await;
+        let _ = tokio::fs::remove_file(&temporary_core).await;
+        return Err(format!(
+            "兼容内核扩展版本校验失败：清单声明 {}，文件报告 {}",
+            manifest.extension_version, verified.extension_version
+        ));
+    }
+    let core_sha256 = sha256_file(&temporary_core)?;
+    emit_core_progress(
+        &app,
+        "verified",
+        downloaded,
+        total,
+        "兼容内核 SHA-256、上游提交与扩展能力验证通过",
+    );
+    let _ = tokio::fs::remove_file(&temporary_archive).await;
+
+    if pending_path.exists() {
+        tokio::fs::remove_file(&pending_path)
+            .await
+            .map_err(|error| format!("无法清理旧的待更新内核: {error}"))?;
+    }
+    tokio::fs::rename(&temporary_core, &pending_path)
+        .await
+        .map_err(|error| format!("无法暂存内核更新: {error}"))?;
+    let mut state = load_core_state(&app);
+    state.pending = Some(CoreVersionRecord {
+        version: manifest.version.clone(),
+        algorithm_version: manifest.algorithm_version.clone(),
+        extension_version: verified.extension_version.clone(),
+        capabilities: verified.capabilities.clone(),
+        sha256: core_sha256,
+        upstream_commit: verified.upstream_commit.clone(),
+    });
+    state.last_error = None;
+    save_core_state(&app, &state)?;
+    emit_core_progress(
+        &app,
+        "ready",
+        downloaded,
+        total,
+        "内核更新已就绪，等待安全重启",
+    );
+    Ok(CoreInstallResult {
+        version: manifest.version,
+        algorithm_version: manifest.algorithm_version,
+        extension_version: verified.extension_version,
+        capabilities: verified.capabilities,
+        upstream_commit: verified.upstream_commit,
+        restart_required: true,
+    })
+}
+
+#[tauri::command]
+pub async fn restore_bundled_core(
+    app: AppHandle,
+    supervisor: tauri::State<'_, BackendSupervisor>,
+) -> Result<CoreInstallResult, String> {
+    let _guard = supervisor.update_lock.lock().await;
+    let current = active_core_record(&app)?;
+    let bundled_path = bundled_core_path()?;
+    let verified =
+        verify_compatible_core_build(&bundled_path, CORE_VERSION, &required_capabilities()).await?;
+    if !same_core_commit(&verified.upstream_commit, BUNDLED_CORE_COMMIT) {
+        return Err(format!(
+            "内置内核提交校验失败：安装包声明 {BUNDLED_CORE_COMMIT}，文件报告 {}",
+            verified.upstream_commit
+        ));
+    }
+    if verified.extension_version != CORE_EXTENSION_VERSION {
+        return Err(format!(
+            "内置内核扩展版本校验失败：安装包声明 {CORE_EXTENSION_VERSION}，文件报告 {}",
+            verified.extension_version
+        ));
+    }
+    let bundled = CoreVersionRecord {
+        version: CORE_VERSION.to_string(),
+        algorithm_version: ALGORITHM_VERSION.to_string(),
+        extension_version: verified.extension_version,
+        capabilities: verified.capabilities,
+        sha256: sha256_file(&bundled_path)?,
+        upstream_commit: verified.upstream_commit,
+    };
+    if same_core_identity(&current, &bundled) {
+        return Err("当前已经在运行桌面内置内核".into());
+    }
+
+    emit_core_progress(
+        &app,
+        "verifying",
+        0,
+        None,
+        "内置内核版本、提交与 SHA-256 已校验，正在准备安全切换",
+    );
+    let pending_path = pending_core_path(&app)?;
+    if let Some(parent) = pending_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("无法创建内核暂存目录: {error}"))?;
+    }
+    let pending_temporary = pending_path.with_extension("exe.bundled");
+    let _ = tokio::fs::remove_file(&pending_temporary).await;
+    tokio::fs::copy(&bundled_path, &pending_temporary)
+        .await
+        .map_err(|error| format!("无法暂存桌面内置内核: {error}"))?;
+    if sha256_file(&pending_temporary)? != bundled.sha256 {
+        let _ = tokio::fs::remove_file(&pending_temporary).await;
+        return Err("桌面内置内核暂存后 SHA-256 校验失败".into());
+    }
+    if pending_path.exists() {
+        tokio::fs::remove_file(&pending_path)
+            .await
+            .map_err(|error| format!("无法清理旧的待切换内核: {error}"))?;
+    }
+    tokio::fs::rename(&pending_temporary, &pending_path)
+        .await
+        .map_err(|error| format!("无法提交内置内核暂存文件: {error}"))?;
+
+    let original_state = load_core_state(&app);
+    let mut staged_state = original_state.clone();
+    staged_state.pending = Some(bundled.clone());
+    staged_state.last_error = None;
+    save_core_state(&app, &staged_state)?;
+
+    emit_core_progress(&app, "stopping", 0, None, "正在安全停止当前内核");
+    stop_backend_internal(&supervisor, false)?;
+    if wait_for_backend_port_release().await.is_err() {
+        let active_path = active_core_path(&app)?;
+        if let Err(error) = stop_owned_listener(crate::desktop_listen::active().port, &active_path)
+        {
+            return Err(abort_bundled_restore_and_restart(
+                &app,
+                supervisor.inner(),
+                &original_state,
+                &pending_path,
+                error,
+            )
+            .await);
+        }
+        if let Err(error) = wait_for_backend_port_release().await {
+            return Err(abort_bundled_restore_and_restart(
+                &app,
+                supervisor.inner(),
+                &original_state,
+                &pending_path,
+                error,
+            )
+            .await);
+        }
+    }
+
+    if let Err(error) = activate_pending_core(&app) {
+        return Err(abort_bundled_restore_and_restart(
+            &app,
+            supervisor.inner(),
+            &original_state,
+            &pending_path,
+            error,
+        )
+        .await);
+    }
+
+    let versions = current_core_versions(&app);
+    supervisor.update_status(|status| {
+        status.core_version = versions.current_version.clone();
+        status.algorithm_version = versions.current_algorithm_version.clone();
+        status.extension_version = versions.current_extension_version.clone();
+        status.capabilities = versions.capabilities.clone();
+        status.upstream_commit = versions.upstream_commit.clone();
+        status.core_sha256 = versions.sha256.clone();
+        status.message = "桌面内置内核已激活，正在执行健康检查".into();
+    });
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.shutting_down = false;
+        inner.consecutive_failures = 0;
+    }
+    if let Err(error) = start_backend(app.clone(), supervisor.inner().clone()) {
+        let failure = format!("桌面内置内核启动失败，已自动回滚: {error}");
+        restore_previous_core(&app, &failure)?;
+        let rollback_versions = current_core_versions(&app);
+        supervisor.update_status(|status| {
+            status.core_version = rollback_versions.current_version.clone();
+            status.algorithm_version = rollback_versions.current_algorithm_version.clone();
+            status.extension_version = rollback_versions.current_extension_version.clone();
+            status.capabilities = rollback_versions.capabilities.clone();
+            status.upstream_commit = rollback_versions.upstream_commit.clone();
+            status.core_sha256 = rollback_versions.sha256.clone();
+        });
+        start_backend(app.clone(), supervisor.inner().clone())?;
+        return Err(failure);
+    }
+
+    emit_core_progress(
+        &app,
+        "ready",
+        1,
+        Some(1),
+        "桌面内置内核已启用，健康检查失败时将自动回滚",
+    );
+    Ok(CoreInstallResult {
+        version: bundled.version,
+        algorithm_version: bundled.algorithm_version,
+        extension_version: bundled.extension_version,
+        capabilities: bundled.capabilities,
+        upstream_commit: bundled.upstream_commit,
+        restart_required: false,
+    })
+}
+
+async fn abort_bundled_restore_and_restart(
+    app: &AppHandle,
+    supervisor: &BackendSupervisor,
+    original_state: &CoreState,
+    pending_path: &Path,
+    primary_error: String,
+) -> String {
+    let mut errors = vec![primary_error];
+    if let Err(error) = save_core_state(app, original_state) {
+        errors.push(format!("恢复原内核状态失败: {error}"));
+    }
+    if let Err(error) = tokio::fs::remove_file(pending_path).await {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            errors.push(format!("清理待切换内核失败: {error}"));
+        }
+    }
+    {
+        let mut inner = supervisor.inner.lock().expect("backend state poisoned");
+        inner.shutting_down = false;
+        inner.consecutive_failures = 0;
+    }
+    if let Err(error) = wait_for_backend_port_release().await {
+        errors.push(format!("等待原内核端口释放失败: {error}"));
+    }
+    if let Err(error) = start_backend(app.clone(), supervisor.clone()) {
+        errors.push(format!("重新启动原内核失败: {error}"));
+    }
+    errors.join("；")
+}
+
+#[tauri::command]
+pub fn prepare_core_rollback(app: AppHandle) -> Result<CoreInstallResult, String> {
+    let mut state = load_core_state(&app);
+    let previous = state
+        .previous
+        .clone()
+        .ok_or_else(|| "没有保留可回滚的上一版内核".to_string())?;
+    let source = previous_core_path(&app)?;
+    let pending = pending_core_path(&app)?;
+    if !source.is_file() {
+        return Err("上一版内核文件不存在".into());
+    }
+    if let Some(parent) = pending.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建回滚暂存目录: {error}"))?;
+    }
+    fs::copy(&source, &pending).map_err(|error| format!("无法暂存上一版内核: {error}"))?;
+    state.pending = Some(previous.clone());
+    state.last_error = None;
+    save_core_state(&app, &state)?;
+    Ok(CoreInstallResult {
+        version: previous.version,
+        algorithm_version: previous.algorithm_version,
+        extension_version: previous.extension_version,
+        capabilities: previous.capabilities,
+        upstream_commit: previous.upstream_commit,
+        restart_required: true,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn supervisor_fixture() -> BackendSupervisor {
+        BackendSupervisor::new(
+            Path::new("fixture"),
+            &CoreVersions {
+                current_version: "0.2.2".into(),
+                current_algorithm_version: "1.6.0".into(),
+                current_extension_version: "1.1.1".into(),
+                capabilities: vec![],
+                upstream_commit: "fixture".into(),
+                sha256: "fixture".into(),
+            },
+        )
+    }
+
+    #[test]
+    fn concurrent_start_requests_reserve_only_one_sidecar_attempt() {
+        let supervisor = supervisor_fixture();
+        let barrier = Arc::new(std::sync::Barrier::new(16));
+        let workers: Vec<_> = (0..16)
+            .map(|_| {
+                let supervisor = supervisor.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    supervisor.reserve_start(None)
+                })
+            })
+            .collect();
+        assert_eq!(
+            workers
+                .into_iter()
+                .filter_map(|worker| worker.join().unwrap())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn exited_generation_cannot_update_logs_health_or_restart_after_manual_retry() {
+        let supervisor = supervisor_fixture();
+        let first = supervisor.reserve_start(None).unwrap();
+        let automatic_retry = supervisor.record_exit(first, Some(1)).unwrap();
+        assert!(!supervisor.is_current(first));
+        stop_backend_internal(&supervisor, false).unwrap();
+        let next = supervisor.reserve_start(None).unwrap();
+        supervisor.record_log(first, "old database failure".into());
+        assert!(supervisor.snapshot().last_log.is_empty());
+        assert!(supervisor.record_exit(first, Some(1)).is_none());
+        assert!(supervisor.reserve_start(Some(automatic_retry.0)).is_none());
+        assert!(!stop_backend_generation(&supervisor, false, Some(first)).unwrap());
+        assert!(supervisor.is_current(next));
+    }
+
+    #[test]
+    fn stopping_dependency_wait_allows_a_fresh_start_without_quitting_the_app() {
+        let supervisor = supervisor_fixture();
+        let first = supervisor.reserve_start(None).unwrap();
+        supervisor.update_status(|status| status.phase = BackendPhase::WaitingForDependencies);
+        stop_backend_internal(&supervisor, false).unwrap();
+        assert!(!supervisor.is_current(first));
+        assert!(supervisor.reserve_start(None).is_some());
+        assert_eq!(supervisor.snapshot().phase, BackendPhase::Starting);
+    }
+
+    #[test]
+    fn an_unrelated_http_success_is_not_a_healthy_sub2api_server() {
+        assert!(!is_setup_health_response(
+            &serde_json::json!({"status": "ok"})
+        ));
+        assert!(!is_setup_health_response(
+            &serde_json::json!({"code": 401, "data": {"needs_setup": false}})
+        ));
+        assert!(is_setup_health_response(
+            &serde_json::json!({"code": 0, "data": {"needs_setup": false}})
+        ));
+        assert!(is_setup_health_response(
+            &serde_json::json!({"needs_setup": true})
+        ));
+    }
+
+    fn core_record(version: &str, commit: &str, sha256: &str) -> CoreVersionRecord {
+        CoreVersionRecord {
+            version: version.into(),
+            algorithm_version: "1.3.1".into(),
+            extension_version: String::new(),
+            capabilities: Vec::new(),
+            sha256: sha256.into(),
+            upstream_commit: commit.into(),
+        }
+    }
+
+    #[test]
+    fn compatible_active_core_replaces_a_different_bundled_payload() {
+        let current = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(
+                &current,
+                &bundled,
+                true,
+                &["account_cost_loss_ledger.v1".into()]
+            ),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
+    fn newer_active_extension_is_not_downgraded_for_a_different_payload() {
+        let current = CoreVersionRecord {
+            extension_version: "1.1.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.8", "same-upstream", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.8", "same-upstream", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
+    fn compatible_but_older_active_core_is_replaced_by_newer_bundled_core() {
+        let current = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.1".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.1.176", "upstream176", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
+    fn legacy_1_5_core_is_replaced_when_desktop_requires_economics_sampling() {
+        let current = CoreVersionRecord {
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "active-sha")
+        };
+        let bundled = CoreVersionRecord {
+            algorithm_version: "1.6.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: vec![
+                "account_cost_loss_ledger.v1".into(),
+                "account_economics_sampling.v1".into(),
+            ],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
+    fn publisher_installation_requires_replacing_the_0_2_39_core() {
+        let current = CoreVersionRecord {
+            extension_version: "1.2.0".into(),
+            capabilities: required_capabilities()
+                .into_iter()
+                .filter(|capability| capability != "plugin_publisher_trust.v1")
+                .collect(),
+            ..core_record("0.2.5", "same-upstream", "old-core")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.3.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.5", "same-upstream", "new-core")
+        };
+        assert!(bundled
+            .capabilities
+            .iter()
+            .any(|capability| capability == "plugin_publisher_trust.v1"));
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required_capabilities()),
+            CoreCompatibilityAction::InstallBundled
+        );
+    }
+
+    #[test]
+    fn stable_plugin_release_replaces_same_upstream_core_without_plugin_capabilities() {
+        let current = CoreVersionRecord {
+            extension_version: "1.1.2".into(),
+            capabilities: vec![
+                "account_cost_loss_ledger.v1".into(),
+                "account_economics_sampling.v1".into(),
+            ],
+            ..core_record("0.2.5", "same-upstream", "old-core")
+        };
+        let bundled = CoreVersionRecord {
+            extension_version: "1.2.0".into(),
+            capabilities: required_capabilities(),
+            ..core_record("0.2.5", "same-upstream", "plugin-core")
+        };
+        let required = required_capabilities();
+        assert!(required.iter().any(|value| value == "plugin_extensions.v2"));
+        assert!(required
+            .iter()
+            .any(|value| value == "openai.oauth.protection_transport.v1"));
+        assert_eq!(
+            required_core_action(&current, &bundled, true, &required),
+            CoreCompatibilityAction::InstallBundled
+        );
+        assert_eq!(
+            required_core_action(&bundled, &bundled, true, &required),
+            CoreCompatibilityAction::None
+        );
+    }
+
+    #[test]
+    fn newer_upstream_core_is_never_downgraded_to_gain_a_missing_extension() {
+        let current = core_record("0.1.174", "upstream174", "official-sha");
+        let bundled = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "upstream173", "bundled-sha")
+        };
+
+        assert_eq!(
+            required_core_action(
+                &current,
+                &bundled,
+                true,
+                &["account_cost_loss_ledger.v1".into()]
+            ),
+            CoreCompatibilityAction::WaitForCompatibleUpdate
+        );
+    }
+
+    #[test]
+    fn bundled_core_identity_is_anchored_to_the_upstream_commit() {
+        assert!(same_core_commit(
+            BUNDLED_CORE_COMMIT,
+            UPSTREAM_SUB2API_COMMIT
+        ));
+    }
+
+    #[test]
+    fn core_identity_requires_matching_version_commit_and_sha() {
+        let bundled = core_record("0.1.171", "desktop123", "aaa");
+        assert!(same_core_identity(&bundled, &bundled));
+        assert!(same_core_identity(
+            &core_record("0.1.171", "174c522a064c", "aaa"),
+            &core_record("0.1.171", "174c522a064c7920a34771960857c690499d126c", "aaa")
+        ));
+        assert!(!same_core_identity(
+            &bundled,
+            &core_record("0.1.171", "official456", "aaa")
+        ));
+        assert!(!same_core_identity(
+            &bundled,
+            &core_record("0.1.171", "desktop123", "bbb")
+        ));
+    }
+
+    #[test]
+    fn replacing_active_core_preserves_previous_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "sub2api-core-replace-test-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let active = root.join("active.exe");
+        let previous = root.join("previous.exe");
+        let pending = root.join("pending.exe");
+        fs::create_dir_all(&root).expect("temporary core directory should exist");
+        fs::write(&active, b"official-core").expect("active fixture should be written");
+        fs::write(&pending, b"bundled-core").expect("pending fixture should be written");
+
+        replace_active_core_files(&active, &previous, &pending)
+            .expect("bundled core should replace the active core");
+
+        assert_eq!(fs::read(&active).unwrap(), b"bundled-core");
+        assert_eq!(fs::read(&previous).unwrap(), b"official-core");
+        assert!(!pending.exists());
+        fs::remove_dir_all(root).expect("temporary core directory should be removable");
+    }
+
+    #[test]
+    fn pending_activation_failure_is_deferred_without_discarding_the_update() {
+        let pending = core_record("0.1.172", "155c4949", "pending-sha");
+        let mut state = CoreState {
+            pending: Some(pending.clone()),
+            ..CoreState::default()
+        };
+
+        let warning =
+            defer_pending_activation_failure(&mut state, "无法替换活动内核: 拒绝访问 (os error 5)");
+
+        assert_eq!(state.pending.unwrap().sha256, pending.sha256);
+        assert!(state.last_error.unwrap().contains("拒绝访问"));
+        assert!(warning.contains("稍后重试"));
+    }
+
+    #[test]
+    fn rejects_non_https_update_urls() {
+        assert!(validate_https_url("http://example.com/core.exe").is_err());
+        assert!(validate_https_url("https://example.com/core.exe").is_ok());
+    }
+
+    #[test]
+    fn accepts_only_fixed_upstream_release_assets() {
+        let accepted = validate_upstream_asset_url(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.171/sub2api_0.1.171_windows_amd64.zip",
+            "v0.1.171",
+            "sub2api_0.1.171_windows_amd64.zip",
+        );
+        assert!(accepted.is_ok());
+        assert!(validate_upstream_asset_url(
+            "https://github.com/example/sub2api/releases/download/v0.1.171/sub2api_0.1.171_windows_amd64.zip",
+            "v0.1.171",
+            "sub2api_0.1.171_windows_amd64.zip",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn compatible_updater_accepts_only_cost_console_release_assets() {
+        let archive = "sub2api-core_0.1.173_1.0.0_windows_x86_64.zip";
+        assert!(validate_compatible_core_asset_url(
+            &format!("https://github.com/rw0104/sub2api-cost-console/releases/download/v0.2.17/{archive}"),
+            archive,
+        )
+        .is_ok());
+        assert!(validate_compatible_core_asset_url(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.173/sub2api_0.1.173_windows_amd64.zip",
+            archive,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn builds_windows_manifest_from_upstream_release_and_checksum() {
+        let archive_name = "sub2api_0.1.171_windows_amd64.zip";
+        let archive_url = format!(
+            "https://github.com/Wei-Shaw/sub2api/releases/download/v0.1.171/{archive_name}"
+        );
+        let manifest = build_upstream_manifest(
+            GitHubRelease {
+                tag_name: "v0.1.171".into(),
+                published_at: "2026-08-04T13:41:32Z".into(),
+                body: "release notes".into(),
+                html_url: "https://github.com/Wei-Shaw/sub2api/releases/tag/v0.1.171".into(),
+                assets: vec![GitHubReleaseAsset {
+                    name: archive_name.into(),
+                    browser_download_url: archive_url,
+                    size: 36_048_475,
+                }],
+            },
+            &format!("{}  {archive_name}", "a".repeat(64)),
+        )
+        .expect("manifest should be valid");
+
+        assert_eq!(manifest.version, "0.1.171");
+        assert_eq!(manifest.algorithm_version, ALGORITHM_VERSION);
+        assert_eq!(manifest.platforms["windows-x86_64"].sha256, "a".repeat(64));
+    }
+
+    #[test]
+    fn compatible_update_manifest_must_declare_every_required_capability() {
+        let manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.173".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "29009f0b2ea1".into(),
+            published_at: "2026-08-09T16:09:17Z".into(),
+            notes: "compatible core".into(),
+            release_url: "https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.2.17"
+                .into(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(validate_compatible_core_manifest(
+            &manifest,
+            &["account_cost_loss_ledger.v1".into()]
+        )
+        .is_ok());
+        assert!(validate_compatible_core_manifest(
+            &CoreUpdateManifest {
+                capabilities: Vec::new(),
+                ..manifest
+            },
+            &["account_cost_loss_ledger.v1".into()]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn compatible_update_compares_upstream_and_extension_versions_independently() {
+        let current = CoreVersionRecord {
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.173", "29009f0b2ea1", "active")
+        };
+        let mut manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.173".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.1.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "29009f0b2ea1".into(),
+            published_at: String::new(),
+            notes: String::new(),
+            release_url: String::new(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(compatible_update_available(&current, &manifest).unwrap());
+        manifest.version = "0.1.172".into();
+        manifest.extension_version = "9.0.0".into();
+        assert!(!compatible_update_available(&current, &manifest).unwrap());
+    }
+
+    #[test]
+    fn staged_compatible_core_matches_its_manifest_without_using_payload_hash() {
+        let staged = CoreVersionRecord {
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            ..core_record("0.1.174", "abcdef123456", "downloaded-sha")
+        };
+        let manifest = CoreUpdateManifest {
+            schema: 2,
+            version: "0.1.174".into(),
+            algorithm_version: "1.5.0".into(),
+            extension_version: "1.0.0".into(),
+            capabilities: vec!["account_cost_loss_ledger.v1".into()],
+            upstream_commit: "abcdef1234567890".into(),
+            published_at: String::new(),
+            notes: String::new(),
+            release_url: String::new(),
+            platforms: HashMap::new(),
+        };
+
+        assert!(core_record_matches_manifest(&staged, &manifest));
+    }
+
+    #[test]
+    fn core_cannot_claim_the_desktop_algorithm_without_every_required_capability() {
+        let mut official = core_record("0.1.173", "29009f0b2ea1", "official");
+        official.algorithm_version = "1.6.0".into();
+
+        assert_eq!(effective_algorithm_version(&official), "unavailable");
+        let required = required_capabilities();
+        assert!(!required.is_empty());
+        official.capabilities = required.clone();
+        assert_eq!(effective_algorithm_version(&official), "1.6.0");
+
+        for missing in &required {
+            official.capabilities = required
+                .iter()
+                .filter(|capability| *capability != missing)
+                .cloned()
+                .collect();
+            assert_eq!(
+                effective_algorithm_version(&official),
+                "unavailable",
+                "a core missing {missing} must not claim the desktop algorithm"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_version_and_real_commit_from_downloaded_core() {
+        let commit = parse_verified_core_build(
+            "Sub2API 0.1.171 (commit: f0e7a9c7a23a7d02fb159b62fa809621eb0475a6, built: 2026-08-04T13:31:28Z)",
+            "0.1.171",
+        )
+        .expect("version output should be accepted");
+        assert_eq!(commit, "f0e7a9c7a23a7d02fb159b62fa809621eb0475a6");
+        assert!(parse_verified_core_build("Sub2API 0.1.170 (commit: abcdef0)", "0.1.171").is_err());
+    }
+
+    #[test]
+    fn compatible_core_verification_requires_declared_extension_capabilities() {
+        let verified = parse_verified_compatible_core_build(
+            "Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00, extension: 1.0.0, capabilities: account_cost_loss_ledger.v1)",
+            "0.1.173",
+            &["account_cost_loss_ledger.v1".into()],
+        )
+        .expect("compatible core metadata should be accepted");
+
+        assert_eq!(verified.upstream_commit, "29009f0b2ea1");
+        assert_eq!(verified.extension_version, "1.0.0");
+        assert_eq!(verified.capabilities, vec!["account_cost_loss_ledger.v1"]);
+        assert!(parse_verified_compatible_core_build(
+            "Sub2API 0.1.173 (commit: 29009f0b2ea1, built: 2026-08-09T16:09:17+08:00)",
+            "0.1.173",
+            &["account_cost_loss_ledger.v1".into()],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn bundled_versions_are_semver() {
+        assert!(Version::parse(env!("CARGO_PKG_VERSION")).is_ok());
+        assert!(Version::parse(CORE_VERSION).is_ok());
+        assert!(Version::parse(ALGORITHM_VERSION).is_ok());
+    }
+
+    #[test]
+    fn desktop_runtime_stages_complete_iana_timezone_database() {
+        let root = std::env::temp_dir().join(format!(
+            "sub2api-zoneinfo-test-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let zoneinfo_path = ensure_backend_zoneinfo(&root).expect("zoneinfo should be staged");
+        let file = fs::File::open(&zoneinfo_path).expect("zoneinfo archive should exist");
+        let mut archive = zip::ZipArchive::new(file).expect("zoneinfo should be a zip archive");
+
+        assert!(archive.by_name("Asia/Shanghai").is_ok());
+        assert!(archive.by_name("America/Los_Angeles").is_ok());
+
+        drop(archive);
+        fs::remove_dir_all(root).expect("temporary zoneinfo directory should be removable");
+    }
+}

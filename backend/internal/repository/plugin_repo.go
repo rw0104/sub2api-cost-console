@@ -64,6 +64,14 @@ func (r *pluginRepository) GetByKey(ctx context.Context, key string) (*service.P
 }
 
 func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding) (*service.PluginInstallation, error) {
+	return r.installWithPublisher(ctx, plugin, bindings, nil)
+}
+
+func (r *pluginRepository) InstallWithPublisher(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
+	return r.installWithPublisher(ctx, plugin, bindings, publisher)
+}
+
+func (r *pluginRepository) installWithPublisher(ctx context.Context, plugin *service.PluginInstallation, bindings []service.PluginBinding, publisher *service.PluginPublisher) (*service.PluginInstallation, error) {
 	manifestJSON, err := json.Marshal(plugin.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件清单: %w", err)
@@ -73,6 +81,11 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if publisher != nil {
+		if err := trustPluginPublisher(ctx, tx, publisher, plugin.InstalledBy); err != nil {
+			return nil, err
+		}
+	}
 	row := tx.QueryRowContext(ctx, `
 			INSERT INTO sub2api_plugin_installations (
 				plugin_key, name, version, description, author, manifest, artifact_data,
@@ -96,6 +109,7 @@ func (r *pluginRepository) Install(ctx context.Context, plugin *service.PluginIn
 			installed_by = EXCLUDED.installed_by,
 			installed_at = NOW(),
 			enabled_at = NULL,
+			revision = sub2api_plugin_installations.revision + 1,
 			updated_at = NOW()
 		WHERE sub2api_plugin_installations.state IN ('disabled', 'error', 'incompatible')
 		  AND NOT EXISTS (
@@ -150,7 +164,7 @@ func (r *pluginRepository) Delete(ctx context.Context, id int64, expectedBinaryS
 func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = 'starting', last_error = '', updated_at = NOW()
+		SET state = 'starting', last_error = '', revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $2 AND state = $3 AND state <> 'starting'
 	`, id, binarySHA256, expectedState)
 	if err != nil {
@@ -169,7 +183,7 @@ func (r *pluginRepository) BeginEnable(ctx context.Context, id int64, binarySHA2
 func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, binarySHA256, configEncrypted string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations p
-		SET state = 'enabled', last_error = '', enabled_at = COALESCE(enabled_at, NOW()), updated_at = NOW()
+		SET state = 'enabled', last_error = '', enabled_at = COALESCE(enabled_at, NOW()), revision = revision + 1, updated_at = NOW()
 		WHERE p.id = $1 AND p.binary_sha256 = $2 AND p.config_encrypted = $3
 		  AND EXISTS (SELECT 1 FROM sub2api_plugin_bindings b WHERE b.plugin_id = p.id AND b.enabled = TRUE)
 	`, id, binarySHA256, configEncrypted)
@@ -189,7 +203,7 @@ func (r *pluginRepository) MarkRuntimeHealthy(ctx context.Context, id int64, bin
 func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, lastError string, enabledAt *time.Time, expectedBinarySHA256, expectedState string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
+		SET state = $2, last_error = $3, enabled_at = $4, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $5 AND state = $6
 	`, id, state, lastError, enabledAt, expectedBinarySHA256, expectedState)
 	if err != nil {
@@ -208,7 +222,7 @@ func (r *pluginRepository) UpdateState(ctx context.Context, id int64, state, las
 func (r *pluginRepository) UpdateConfig(ctx context.Context, id int64, encrypted, expectedBinarySHA256 string) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET config_encrypted = $2, updated_at = NOW()
+		SET config_encrypted = $2, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND binary_sha256 = $3
 	`, id, encrypted, expectedBinarySHA256)
 	if err != nil {
@@ -241,7 +255,7 @@ func (r *pluginRepository) UpdateBindingsAndState(
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE sub2api_plugin_installations
-		SET state = $2, last_error = $3, enabled_at = $4, updated_at = NOW()
+		SET state = $2, last_error = $3, enabled_at = $4, revision = revision + 1, updated_at = NOW()
 		WHERE id = $1 AND ($5 = '' OR state = $5) AND binary_sha256 = $6
 	`, pluginID, state, lastError, enabledAt, expectedState, expectedBinarySHA256)
 	if err != nil {
@@ -265,19 +279,36 @@ type pluginBindingExecutor interface {
 }
 
 func replacePluginBindings(ctx context.Context, executor pluginBindingExecutor, pluginID int64, bindings []service.PluginBinding) error {
+	if _, err := executor.ExecContext(ctx, `DELETE FROM sub2api_plugin_routes WHERE plugin_id = $1`, pluginID); err != nil {
+		return err
+	}
 	if _, err := executor.ExecContext(ctx, `DELETE FROM sub2api_plugin_bindings WHERE plugin_id = $1`, pluginID); err != nil {
 		return err
 	}
 	for _, binding := range bindings {
 		if _, err := executor.ExecContext(ctx, `
 			INSERT INTO sub2api_plugin_bindings (
-				plugin_id, capability, platform, account_type, enabled, rollout_percent, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-		`, pluginID, binding.Capability, binding.Platform, binding.AccountType, binding.Enabled, binding.RolloutPercent); err != nil {
+				plugin_id, capability, platform, account_type, enabled, rollout_percent, priority,
+				account_ids,user_ids,group_ids,max_concurrency,timeout_ms,fallback_policy,created_at,updated_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,NOW(),NOW())
+		`, pluginID, binding.Capability, binding.Platform, binding.AccountType, binding.Enabled, binding.RolloutPercent,
+			binding.Priority, pluginBindingIDsJSON(binding.AccountIDs), pluginBindingIDsJSON(binding.UserIDs), pluginBindingIDsJSON(binding.GroupIDs),
+			binding.EffectiveConcurrency(), binding.TimeoutMS, binding.EffectiveFallbackPolicy()); err != nil {
 			return err
 		}
 	}
-	return nil
+	_, err := executor.ExecContext(ctx, `
+		INSERT INTO sub2api_plugin_routes (
+			id, plugin_id, capability, platform, account_type, enabled, rollout_percent, priority,
+			account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy,
+			created_at, updated_at
+		)
+		SELECT id, plugin_id, capability, platform, account_type, enabled, rollout_percent, priority,
+			account_ids, user_ids, group_ids, max_concurrency, timeout_ms,
+			COALESCE(NULLIF(fallback_policy, ''), 'fail_closed'), created_at, updated_at
+		FROM sub2api_plugin_bindings WHERE plugin_id = $1
+	`, pluginID)
+	return err
 }
 
 const pluginSelectSQL = `
@@ -285,6 +316,7 @@ const pluginSelectSQL = `
 	       artifact_path, install_path, binary_path, binary_sha256,
 	       signature_status, state, config_encrypted, last_error,
 	       installed_by, installed_at, enabled_at, updated_at
+	       , revision
 	FROM sub2api_plugin_installations`
 
 type pluginScanner interface {
@@ -299,32 +331,94 @@ func scanPlugin(scanner pluginScanner) (*service.PluginInstallation, error) {
 		&plugin.Author, &manifestJSON, &plugin.ArtifactPath, &plugin.InstallPath,
 		&plugin.BinaryPath, &plugin.BinarySHA256, &plugin.SignatureStatus, &plugin.State,
 		&plugin.ConfigEncrypted, &plugin.LastError, &plugin.InstalledBy, &plugin.InstalledAt,
-		&plugin.EnabledAt, &plugin.UpdatedAt,
+		&plugin.EnabledAt, &plugin.UpdatedAt, &plugin.Revision,
 	); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(manifestJSON, &plugin.Manifest); err != nil {
 		return nil, fmt.Errorf("解析插件清单: %w", err)
 	}
+	service.NormalizePluginInstallationMetadata(plugin)
 	return plugin, nil
 }
 
 func (r *pluginRepository) listBindings(ctx context.Context, pluginID int64) ([]service.PluginBinding, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	return listPluginBindings(ctx, r.db, pluginID)
+}
+
+type pluginBindingQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func pluginBindingIDsJSON(ids []int64) []byte {
+	if ids == nil {
+		return []byte("[]")
+	}
+	raw, _ := json.Marshal(ids)
+	return raw
+}
+
+func listPluginBindings(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
+	bindings, err := listPluginRoutes(ctx, q, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	if len(bindings) > 0 {
+		return bindings, nil
+	}
+	return listLegacyPluginBindings(ctx, q, pluginID)
+}
+
+func listPluginRoutes(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT id, plugin_id, capability, platform, account_type, enabled,
-		       rollout_percent, created_at, updated_at
+		       rollout_percent, created_at, updated_at, priority, account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy
+		FROM sub2api_plugin_routes WHERE plugin_id = $1 ORDER BY id
+	`, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanPluginBindingRows(rows)
+}
+
+func listLegacyPluginBindings(ctx context.Context, q pluginBindingQuerier, pluginID int64) ([]service.PluginBinding, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT id, plugin_id, capability, platform, account_type, enabled,
+		       rollout_percent, created_at, updated_at, priority, account_ids, user_ids, group_ids, max_concurrency, timeout_ms, fallback_policy
 		FROM sub2api_plugin_bindings WHERE plugin_id = $1 ORDER BY id
 	`, pluginID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	return scanPluginBindingRows(rows)
+}
+
+type pluginBindingRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}
+
+func scanPluginBindingRows(rows pluginBindingRows) ([]service.PluginBinding, error) {
 	bindings := make([]service.PluginBinding, 0)
 	for rows.Next() {
 		var binding service.PluginBinding
+		var accounts, users, groups []byte
 		if err := rows.Scan(&binding.ID, &binding.PluginID, &binding.Capability, &binding.Platform,
 			&binding.AccountType, &binding.Enabled, &binding.RolloutPercent,
-			&binding.CreatedAt, &binding.UpdatedAt); err != nil {
+			&binding.CreatedAt, &binding.UpdatedAt, &binding.Priority, &accounts, &users, &groups, &binding.MaxConcurrency, &binding.TimeoutMS, &binding.FallbackPolicy); err != nil {
+			return nil, err
+		}
+		binding.FallbackPolicy = binding.EffectiveFallbackPolicy()
+		if err := json.Unmarshal(accounts, &binding.AccountIDs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(users, &binding.UserIDs); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(groups, &binding.GroupIDs); err != nil {
 			return nil, err
 		}
 		bindings = append(bindings, binding)

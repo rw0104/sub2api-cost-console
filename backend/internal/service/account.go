@@ -4,7 +4,6 @@ package service
 import (
 	"encoding/json"
 	"errors"
-	"hash/fnv"
 	"log/slog"
 	"net/url"
 	"reflect"
@@ -76,6 +75,7 @@ type Account struct {
 	modelMappingCacheRawLen         int
 	modelMappingCacheRawSig         uint64
 	modelMappingCacheRuntimeVersion uint64
+	modelMappingCacheShared         bool
 
 	// header_overrides 热路径缓存（非持久化字段，同 model_mapping 缓存先例）
 	headerOverrideCache               map[string]string
@@ -206,7 +206,7 @@ func (a *Account) IsSchedulable() bool {
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
 		return false
 	}
-	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+	if a.SupportsAccountQuota() && a.IsQuotaExceeded() {
 		return false
 	}
 	return true
@@ -635,6 +635,9 @@ func (a *Account) GetModelMapping() map[string]string {
 		a.modelMappingCacheRawPtr == rawPtr &&
 		a.modelMappingCacheRawLen == rawLen &&
 		a.modelMappingCacheRuntimeVersion == runtimeVersion {
+		if a.modelMappingCacheShared {
+			return a.modelMappingCache
+		}
 		rawSig = modelMappingSignature(rawMapping)
 		rawSigReady = true
 		if a.modelMappingCacheRawSig == rawSig {
@@ -654,7 +657,19 @@ func (a *Account) GetModelMapping() map[string]string {
 	a.modelMappingCacheRawLen = rawLen
 	a.modelMappingCacheRawSig = rawSig
 	a.modelMappingCacheRuntimeVersion = runtimeVersion
+	a.modelMappingCacheShared = false
 	return mapping
+}
+
+// PrepareSharedSnapshot precomputes the model mapping before publishing an
+// account snapshot to other goroutines. Shared snapshots reuse the immutable
+// mapping cache without recalculating its signature on every read.
+func (a *Account) PrepareSharedSnapshot() {
+	if a == nil {
+		return
+	}
+	a.GetModelMapping()
+	a.modelMappingCacheShared = true
 }
 
 func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
@@ -717,28 +732,51 @@ func mapPtr(m map[string]any) uintptr {
 	return reflect.ValueOf(m).Pointer()
 }
 
+const (
+	modelMappingSignatureFNVOffset = 14695981039346656037
+	modelMappingSignatureFNVPrime  = 1099511628211
+)
+
 func modelMappingSignature(rawMapping map[string]any) uint64 {
 	if len(rawMapping) == 0 {
 		return 0
 	}
-	keys := make([]string, 0, len(rawMapping))
-	for k := range rawMapping {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	h := fnv.New64a()
-	for _, k := range keys {
-		_, _ = h.Write([]byte(k))
-		_, _ = h.Write([]byte{0})
-		if v, ok := rawMapping[k].(string); ok {
-			_, _ = h.Write([]byte(v))
+	var sum uint64
+	for k, v := range rawMapping {
+		h := uint64(modelMappingSignatureFNVOffset)
+		h = fnv1aString(h, k)
+		h = fnv1aByte(h, 0)
+		if s, ok := v.(string); ok {
+			h = fnv1aString(h, s)
 		} else {
-			_, _ = h.Write([]byte{1})
+			h = fnv1aByte(h, 1)
 		}
-		_, _ = h.Write([]byte{0xff})
+		sum += fmix64(h)
 	}
-	return h.Sum64()
+	return sum
+}
+
+func fnv1aString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= modelMappingSignatureFNVPrime
+	}
+	return h
+}
+
+func fnv1aByte(h uint64, b byte) uint64 {
+	h ^= uint64(b)
+	h *= modelMappingSignatureFNVPrime
+	return h
+}
+
+func fmix64(h uint64) uint64 {
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+	return h
 }
 
 // antigravityDefaultPassthroughModels 是 Antigravity 显式 model_mapping 运行时补齐的默认透传条目：
@@ -901,6 +939,94 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 	return matchWildcardMappingResult(mapping, requestedModel)
 }
 
+// IsK12Account reports whether the account belongs to a ChatGPT for Teachers
+// (K-12) workspace. Imports from different clients store this plan marker in
+// either credentials or extra metadata.
+func (a *Account) IsK12Account() bool {
+	if a == nil {
+		return false
+	}
+	values := make([]any, 0, 4)
+	if a.Credentials != nil {
+		values = append(values, a.Credentials["plan_type"], a.Credentials["subscription_tier"])
+	}
+	if a.Extra != nil {
+		values = append(values, a.Extra["plan_type"], a.Extra["subscription_tier"])
+	}
+	for _, value := range values {
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(raw))
+		normalized = strings.NewReplacer("-", "_", " ", "_").Replace(normalized)
+		switch normalized {
+		case "k12", "k_12", "chatgpt_k12", "chatgpt_for_teachers", "teachers", "teacher":
+			return true
+		}
+	}
+	return false
+}
+
+// GetK12AllowedModels returns the optional per-account K-12 model allowlist.
+// It supports JSON arrays, comma/newline-separated strings and model wildcards.
+// An empty list preserves existing scheduling for a gradual rollout.
+func (a *Account) GetK12AllowedModels() []string {
+	if a == nil || !a.IsK12Account() {
+		return nil
+	}
+	var raw any
+	if a.Extra != nil {
+		raw = a.Extra["k12_allowed_models"]
+	}
+	if raw == nil && a.Credentials != nil {
+		raw = a.Credentials["k12_allowed_models"]
+	}
+
+	var values []string
+	switch value := raw.(type) {
+	case string:
+		values = strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
+	case []string:
+		values = value
+	case []any:
+		values = make([]string, 0, len(value))
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				values = append(values, text)
+			}
+		}
+	}
+
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		model := strings.TrimSpace(value)
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		result = append(result, model)
+	}
+	return result
+}
+
+func (a *Account) isK12ModelAllowed(requestedModel string) bool {
+	allowedModels := a.GetK12AllowedModels()
+	if len(allowedModels) == 0 {
+		return true
+	}
+	for _, allowedModel := range allowedModels {
+		if allowedModel == requestedModel || matchWildcard(allowedModel, requestedModel) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
 // 如果未配置 mapping，返回 true（允许所有模型）。
 //
@@ -917,7 +1043,13 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	return supportsOpenAIRequestModel(a, requestedModel, false)
 }
 
+// isModelMappingSupported 是模型可用性判定的公共出口：IsModelSupported 与调度器
+// 直接调用的 supportsOpenAIRequestModel 都落到这里。K12 白名单必须在此判定，
+// 否则 OpenAI 调度与 WS 路径会绕过它。
 func (a *Account) isModelMappingSupported(requestedModel string) bool {
+	if !a.isK12ModelAllowed(requestedModel) {
+		return false
+	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被
@@ -1381,6 +1513,22 @@ func (a *Account) IsBedrockAPIKey() bool {
 // IsAPIKeyOrBedrock 返回账号类型是否支持配额和池模式等特性
 func (a *Account) IsAPIKeyOrBedrock() bool {
 	return a.Type == AccountTypeAPIKey || a.Type == AccountTypeBedrock
+}
+
+// AccountTypeSupportsQuota reports whether the account type supports account
+// quota limits and usage accumulation. Vertex service accounts are included;
+// pool-mode behavior remains governed by IsAPIKeyOrBedrock.
+func AccountTypeSupportsQuota(accountType string) bool {
+	switch strings.ToLower(accountType) {
+	case AccountTypeAPIKey, AccountTypeBedrock, AccountTypeServiceAccount:
+		return true
+	}
+	return false
+}
+
+// SupportsAccountQuota reports whether this account supports account quota.
+func (a *Account) SupportsAccountQuota() bool {
+	return AccountTypeSupportsQuota(a.Type)
 }
 
 func (a *Account) IsOpenAI() bool {

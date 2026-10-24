@@ -26,7 +26,7 @@ func TestSafeDateFormat(t *testing.T) {
 		// 非法值回退到默认
 		{"空字符串", "", "YYYY-MM-DD"},
 		{"未知粒度 year", "year", "YYYY-MM-DD"},
-		{"未知粒度 minute", "minute", "YYYY-MM-DD"},
+		{"分钟粒度", "minute", "YYYY-MM-DD HH24:MI"},
 
 		// 恶意字符串
 		{"SQL 注入尝试", "'; DROP TABLE users; --", "YYYY-MM-DD"},

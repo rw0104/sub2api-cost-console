@@ -341,6 +341,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		upstreamCtx, cancelUpstream = context.WithCancel(upstreamCtx)
 	}
 	defer cancelUpstream()
+	// 取转换后的最终 Responses 请求体作为保护传输的比较基线。
+	upstreamCtx = s.withProtectionOriginal(upstreamCtx, account, responsesBody)
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
 	releaseUpstreamCtx()
 	if err != nil {

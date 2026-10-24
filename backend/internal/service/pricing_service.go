@@ -391,6 +391,20 @@ func (s *PricingService) checkAndUpdatePricing() error {
 		return s.downloadPricingData()
 	}
 
+	// 数据源变更时不能继续沿用旧缓存。source marker 不存在也视为需要刷新，
+	// 这样从旧版升级到新版后会立即切换到新的完整目录。
+	configuredSource := strings.TrimSpace(s.cfg.Pricing.RemoteURL)
+	if configuredSource != "" {
+		cachedSource, _ := os.ReadFile(s.getSourceFilePath())
+		if strings.TrimSpace(string(cachedSource)) != configuredSource {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Catalog source changed, refreshing cache")
+			if err := s.downloadPricingData(); err != nil {
+				logger.LegacyPrintf("service.pricing", "[Pricing] Source refresh failed, using existing file: %v", err)
+			}
+			return nil
+		}
+	}
+
 	// 如果配置了哈希URL，通过远程哈希检查是否有更新
 	if s.cfg.Pricing.HashURL != "" {
 		remoteHash, err := s.fetchRemoteHash()
@@ -420,7 +434,7 @@ func (s *PricingService) checkAndUpdatePricing() error {
 	}
 
 	fileAge := time.Since(info.ModTime())
-	maxAge := time.Duration(s.cfg.Pricing.UpdateIntervalHours) * time.Hour
+	maxAge := time.Duration(configuredPricingUpdateInterval(s.cfg)) * time.Hour
 
 	if fileAge > maxAge {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Local file is %v old, updating...", fileAge.Round(time.Hour))
@@ -463,7 +477,7 @@ func (s *PricingService) syncWithRemote() error {
 	}
 
 	fileAge := time.Since(info.ModTime())
-	maxAge := time.Duration(s.cfg.Pricing.UpdateIntervalHours) * time.Hour
+	maxAge := time.Duration(configuredPricingUpdateInterval(s.cfg)) * time.Hour
 
 	if fileAge > maxAge {
 		logger.LegacyPrintf("service.pricing", "[Pricing] File is %v old, downloading...", fileAge.Round(time.Hour))
@@ -628,6 +642,9 @@ func (s *PricingService) downloadPricingData() error {
 	pricingFile := s.getPricingFilePath()
 	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save file: %v", err)
+	}
+	if err := os.WriteFile(s.getSourceFilePath(), []byte(remoteURL+"\n"), 0644); err != nil {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save source marker: %v", err)
 	}
 
 	// 使用远程哈希作为同步锚点，防止重复下载
@@ -1105,16 +1122,16 @@ func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelP
 		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge parse skipped: %v", err)
 		return data
 	}
-	merged := 0
+	added := 0
 	for modelName, pricing := range fallbackData {
 		if _, ok := data[modelName]; ok {
 			continue
 		}
 		data[modelName] = pricing
-		merged++
+		added++
 	}
-	if merged > 0 {
-		logger.LegacyPrintf("service.pricing", "[Pricing] Merged %d fallback-only models", merged)
+	if added > 0 {
+		logger.LegacyPrintf("service.pricing", "[Pricing] Added %d models from the offline fallback catalog", added)
 	}
 	return data
 }
@@ -1730,16 +1747,54 @@ func (s *PricingService) generateOpenAIModelVariants(model string, datePattern *
 func (s *PricingService) GetStatus() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	var cachedSource []byte
+	if s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.DataDir) != "" {
+		cachedSource, _ = os.ReadFile(s.getSourceFilePath())
+	}
+	fallbackAvailable := false
+	if s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.FallbackFile) != "" {
+		_, err := os.Stat(s.cfg.Pricing.FallbackFile)
+		fallbackAvailable = err == nil
+	}
 
 	return map[string]any{
-		"model_count":  len(s.pricingData),
-		"last_updated": s.lastUpdated,
-		"local_hash":   s.localHash[:min(8, len(s.localHash))],
+		"model_count":           len(s.pricingData),
+		"last_updated":          s.lastUpdated,
+		"local_hash":            s.localHash[:min(8, len(s.localHash))],
+		"catalog_source":        strings.TrimSpace(string(cachedSource)),
+		"configured_source":     configuredPricingSource(s.cfg),
+		"fallback_available":    fallbackAvailable,
+		"update_interval_hours": configuredPricingUpdateInterval(s.cfg),
 	}
+}
+
+func configuredPricingSource(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Pricing.RemoteURL)
+}
+
+func configuredPricingUpdateInterval(cfg *config.Config) int {
+	if cfg == nil || cfg.Pricing.UpdateIntervalHours <= 0 {
+		return 24
+	}
+	return cfg.Pricing.UpdateIntervalHours
 }
 
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
+	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.RemoteURL) == "" {
+		return fmt.Errorf("pricing remote source is not configured")
+	}
+	// Validate configuration before checking the transport so callers get the
+	// actionable URL error even when the service has not been fully wired yet.
+	if _, err := s.validatePricingURL(s.cfg.Pricing.RemoteURL); err != nil {
+		return err
+	}
+	if s.remoteClient == nil {
+		return fmt.Errorf("pricing remote client is not initialized")
+	}
 	return s.downloadPricingData()
 }
 
@@ -1751,6 +1806,10 @@ func (s *PricingService) getPricingFilePath() string {
 // getHashFilePath 获取哈希文件路径
 func (s *PricingService) getHashFilePath() string {
 	return filepath.Join(s.cfg.Pricing.DataDir, "model_pricing.sha256")
+}
+
+func (s *PricingService) getSourceFilePath() string {
+	return filepath.Join(s.cfg.Pricing.DataDir, "model_pricing.source")
 }
 
 // ListModelNamesByProvider returns all model names in the catalog whose

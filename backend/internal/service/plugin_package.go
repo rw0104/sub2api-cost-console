@@ -4,9 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -29,9 +28,10 @@ const (
 )
 
 type PluginPackageInstaller struct {
-	cfg      *config.Config
-	hostInfo PluginHostInfo
-	rootDir  string
+	cfg        *config.Config
+	hostInfo   PluginHostInfo
+	rootDir    string
+	publishers PluginPublisherLookup
 }
 
 func NewPluginPackageInstaller(cfg *config.Config, hostInfo PluginHostInfo) *PluginPackageInstaller {
@@ -57,7 +57,18 @@ func (i *PluginPackageInstaller) RootDir() string {
 	return i.rootDir
 }
 
+func (i *PluginPackageInstaller) runtimeKey(manifest PluginManifest) string {
+	if manifest.SchemaVersion == 2 && i.cfg != nil && i.cfg.Plugins.V2Sandbox.WithDefaults().Mode == "container" {
+		return "linux-" + runtime.GOARCH
+	}
+	return manifest.RuntimeKey()
+}
+
 func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, installedBy *int64) (*PluginInstallation, error) {
+	return i.InstallWithApproval(ctx, reader, installedBy, nil)
+}
+
+func (i *PluginPackageInstaller) InstallWithApproval(ctx context.Context, reader io.Reader, installedBy *int64, approval *PluginPublisherApproval) (*PluginInstallation, error) {
 	if i == nil || i.cfg == nil {
 		return nil, errors.New("插件安装器未配置")
 	}
@@ -108,14 +119,16 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 		return nil, fmt.Errorf("插件包不是有效的 ZIP: %w", err)
 	}
 	archiveClosed := false
-	closeArchive := func() {
+	var archiveCloseErr error
+	closeArchive := func() error {
 		if !archiveClosed {
 			archiveClosed = true
-			_ = archive.Close()
+			archiveCloseErr = archive.Close()
 		}
+		return archiveCloseErr
 	}
-	defer closeArchive()
-	manifest, _, signatureStatus, err := i.inspectArchive(&archive.Reader)
+	defer func() { _ = closeArchive() }()
+	manifest, signatureStatus, publisher, err := i.inspectInstallArchive(ctx, &archive.Reader, artifactSHA, approval)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +158,10 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 		return nil, err
 	}
 	// Windows 不允许重命名仍被打开的文件，提交前先释放 ZIP 读取器。
-	closeArchive()
+	if err := closeArchive(); err != nil {
+		_ = os.RemoveAll(extractPath)
+		return nil, fmt.Errorf("关闭插件包读取器: %w", err)
+	}
 	if err := os.Rename(extractPath, installPath); err != nil {
 		return nil, fmt.Errorf("提交插件安装目录: %w", err)
 	}
@@ -163,126 +179,95 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 		_ = os.RemoveAll(installPath)
 		return nil, fmt.Errorf("读取已保存插件包: %w", err)
 	}
-	runtimeEntry := manifest.Runtimes[manifest.RuntimeKey()]
+	runtimeEntry := manifest.Runtimes[i.runtimeKey(manifest)]
 	return &PluginInstallation{
-		PluginKey:       manifest.ID,
-		Name:            manifest.Name,
-		Version:         manifest.Version,
-		Description:     manifest.Description,
-		Author:          manifest.Author,
-		Manifest:        manifest,
-		ArtifactData:    artifactData,
-		ArtifactPath:    artifactPath,
-		InstallPath:     installPath,
-		BinaryPath:      filepath.Join(installPath, filepath.FromSlash(runtimeEntry.Path)),
-		BinarySHA256:    manifest.Files[runtimeEntry.Path],
-		SignatureStatus: signatureStatus,
-		State:           initialState,
-		InstalledBy:     installedBy,
-		Compatibility:   compatibility,
+		PublisherToTrust: publisher,
+		PluginKey:        manifest.ID,
+		Name:             manifest.Name,
+		Version:          manifest.Version,
+		Description:      manifest.Description,
+		Author:           manifest.Author,
+		Manifest:         manifest,
+		ArtifactData:     artifactData,
+		ArtifactPath:     artifactPath,
+		InstallPath:      installPath,
+		BinaryPath:       filepath.Join(installPath, filepath.FromSlash(runtimeEntry.Path)),
+		BinarySHA256:     manifest.Files[runtimeEntry.Path],
+		SignatureStatus:  signatureStatus,
+		State:            initialState,
+		InstalledBy:      installedBy,
+		Compatibility:    compatibility,
 	}, nil
 }
 
-func (i *PluginPackageInstaller) inspectArchive(archive *zip.Reader) (PluginManifest, []byte, string, error) {
+func (i *PluginPackageInstaller) inspectArchiveMetadata(archive *zip.Reader) (PluginManifest, []byte, map[string]*zip.File, error) {
 	if len(archive.File) == 0 || len(archive.File) > pluginArchiveMaxFiles {
-		return PluginManifest{}, nil, "", errors.New("插件包文件数量无效")
+		return PluginManifest{}, nil, nil, errors.New("插件包文件数量无效")
 	}
 	entries := make(map[string]*zip.File, len(archive.File))
 	var total uint64
 	for _, file := range archive.File {
 		if file.FileInfo().IsDir() {
 			if _, err := normalizePluginArchivePath(strings.TrimSuffix(file.Name, "/")); err != nil {
-				return PluginManifest{}, nil, "", err
+				return PluginManifest{}, nil, nil, err
 			}
 			continue
 		}
 		name, err := normalizePluginArchivePath(file.Name)
 		if err != nil {
-			return PluginManifest{}, nil, "", err
+			return PluginManifest{}, nil, nil, err
 		}
 		if _, exists := entries[name]; exists {
-			return PluginManifest{}, nil, "", fmt.Errorf("插件包包含重复路径: %s", name)
+			return PluginManifest{}, nil, nil, fmt.Errorf("插件包包含重复路径: %s", name)
 		}
 		if file.Mode()&os.ModeSymlink != 0 {
-			return PluginManifest{}, nil, "", fmt.Errorf("插件包不允许符号链接: %s", name)
+			return PluginManifest{}, nil, nil, fmt.Errorf("插件包不允许符号链接: %s", name)
 		}
 		total += file.UncompressedSize64
 		if total > uint64(i.cfg.Plugins.MaxUncompressedBytes) {
-			return PluginManifest{}, nil, "", errors.New("插件包解压后体积超过限制")
+			return PluginManifest{}, nil, nil, errors.New("插件包解压后体积超过限制")
 		}
 		entries[name] = file
 	}
 	manifestFile := entries[pluginManifestFilename]
 	if manifestFile == nil {
-		return PluginManifest{}, nil, "", errors.New("插件包缺少 manifest.json")
+		return PluginManifest{}, nil, nil, errors.New("插件包缺少 manifest.json")
 	}
 	manifestRaw, err := readPluginZipFile(manifestFile, 2*1024*1024)
 	if err != nil {
-		return PluginManifest{}, nil, "", fmt.Errorf("读取插件清单: %w", err)
+		return PluginManifest{}, nil, nil, fmt.Errorf("读取插件清单: %w", err)
 	}
 	var manifest PluginManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifestRaw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return PluginManifest{}, nil, "", fmt.Errorf("解析插件清单: %w", err)
+		return PluginManifest{}, nil, nil, fmt.Errorf("解析插件清单: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return PluginManifest{}, nil, "", errors.New("插件清单只能包含一个 JSON 对象")
+		return PluginManifest{}, nil, nil, errors.New("插件清单只能包含一个 JSON 对象")
 	}
-	if err := manifest.Validate(); err != nil {
-		return PluginManifest{}, nil, "", err
+	if manifest.SchemaVersion == 2 {
+		if err := i.cfg.Plugins.V2Sandbox.Validate(); err != nil {
+			return PluginManifest{}, nil, nil, err
+		}
+	}
+	if err := manifest.ValidateForRuntime(i.runtimeKey(manifest)); err != nil {
+		return PluginManifest{}, nil, nil, err
 	}
 	for path := range entries {
 		if path == pluginManifestFilename || path == pluginSignatureFilename {
 			continue
 		}
 		if _, declared := manifest.Files[path]; !declared {
-			return PluginManifest{}, nil, "", fmt.Errorf("插件包包含未声明文件: %s", path)
+			return PluginManifest{}, nil, nil, fmt.Errorf("插件包包含未声明文件: %s", path)
 		}
 	}
 	for path := range manifest.Files {
 		if entries[path] == nil {
-			return PluginManifest{}, nil, "", fmt.Errorf("插件包缺少已声明文件: %s", path)
+			return PluginManifest{}, nil, nil, fmt.Errorf("插件包缺少已声明文件: %s", path)
 		}
 	}
-	signatureStatus, err := i.verifySignature(entries[pluginSignatureFilename], manifestRaw, manifest.ID)
-	if err != nil {
-		return PluginManifest{}, nil, "", err
-	}
-	return manifest, manifestRaw, signatureStatus, nil
-}
-
-func (i *PluginPackageInstaller) verifySignature(file *zip.File, manifestRaw []byte, pluginID string) (string, error) {
-	if file == nil {
-		if i.cfg.Plugins.AllowUnsigned {
-			return PluginSignatureUnsigned, nil
-		}
-		return "", errors.New("生产配置不允许安装未签名插件")
-	}
-	raw, err := readPluginZipFile(file, 64*1024)
-	if err != nil {
-		return "", fmt.Errorf("读取插件签名: %w", err)
-	}
-	var signature PluginSignature
-	if err := json.Unmarshal(raw, &signature); err != nil {
-		return "", fmt.Errorf("解析插件签名: %w", err)
-	}
-	if signature.Algorithm != "ed25519" || strings.TrimSpace(signature.KeyID) == "" {
-		return "", errors.New("插件签名算法或密钥 ID 无效")
-	}
-	encodedKey := trustedPluginPublisherKey(i.cfg, signature.KeyID, pluginID)
-	if encodedKey == "" {
-		return "", fmt.Errorf("插件发布者密钥不受信任: %s", signature.KeyID)
-	}
-	publicKey, err := base64.StdEncoding.DecodeString(encodedKey)
-	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		return "", fmt.Errorf("受信任发布者密钥无效: %s", signature.KeyID)
-	}
-	signatureBytes, err := base64.StdEncoding.DecodeString(signature.Signature)
-	if err != nil || !ed25519.Verify(ed25519.PublicKey(publicKey), manifestRaw, signatureBytes) {
-		return "", errors.New("插件签名校验失败")
-	}
-	return PluginSignatureTrusted, nil
+	return manifest, manifestRaw, entries, nil
 }
 
 func trustedPluginPublisherKey(cfg *config.Config, keyID, pluginID string) string {
@@ -329,7 +314,7 @@ func (i *PluginPackageInstaller) extractArchive(ctx context.Context, archive *zi
 		}
 		hasher := sha256.New()
 		mode := os.FileMode(0o600)
-		if path == manifest.Runtimes[manifest.RuntimeKey()].Path {
+		if path == manifest.Runtimes[i.runtimeKey(manifest)].Path {
 			mode = 0o700
 		}
 		output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)

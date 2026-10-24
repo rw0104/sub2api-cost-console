@@ -10,6 +10,7 @@ func TestIsValidModelSource(t *testing.T) {
 	}{
 		{name: "requested", source: ModelSourceRequested, want: true},
 		{name: "upstream", source: ModelSourceUpstream, want: true},
+		{name: "upstream response", source: "response", want: true},
 		{name: "mapping", source: ModelSourceMapping, want: true},
 		{name: "invalid", source: "foobar", want: false},
 		{name: "empty", source: "", want: false},

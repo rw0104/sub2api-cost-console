@@ -2,7 +2,10 @@
  * Setup API endpoints
  */
 import axios from 'axios'
+import { invoke } from '@tauri-apps/api/core'
+import type { SetupEnvironment } from '@/features/desktop/setupEnvironment'
 import { buildGatewayUrl } from './url'
+import { isDesktopRuntime } from './url'
 
 // Create a separate client for setup endpoints (not under /api/v1)
 const setupClient = axios.create({
@@ -57,6 +60,50 @@ export interface InstallRequest {
 export interface InstallResponse {
   message: string
   restart: boolean
+}
+
+export interface ManagedSetupConfig {
+  database: DatabaseConfig
+  redis: RedisConfig
+  postgres_image: string
+  valkey_image: string
+}
+
+export interface SetupProvisionProgress {
+  stage: string
+  message: string
+  percent: number
+}
+
+export async function detectSetupEnvironment(): Promise<SetupEnvironment> {
+  if (!isDesktopRuntime()) {
+    const unavailable = (port: number) => ({
+      host: '127.0.0.1',
+      port,
+      reachable: false,
+    })
+    return {
+      desktop: false,
+      docker: {
+        installed: false,
+        running: false,
+        version: '',
+        message: 'Automatic environment detection is available in the desktop application only.',
+      },
+      postgres: unavailable(5432),
+      redis: unavailable(6379),
+      managed_postgres: unavailable(15432),
+      managed_redis: unavailable(16379),
+    }
+  }
+  return invoke<SetupEnvironment>('detect_setup_environment')
+}
+
+export async function provisionQuickSetup(): Promise<ManagedSetupConfig> {
+  if (!isDesktopRuntime()) {
+    throw new Error('快速安装仅在 Windows 桌面应用中可用。')
+  }
+  return invoke<ManagedSetupConfig>('provision_quick_setup')
 }
 
 /**

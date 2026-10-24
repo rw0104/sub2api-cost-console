@@ -47,7 +47,10 @@ export async function getRealtimeMetrics(): Promise<{
 export interface TrendParams {
   start_date?: string
   end_date?: string
-  granularity?: 'day' | 'hour'
+  start_time?: string
+  end_time?: string
+  time_range?: '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
+  granularity?: 'day' | 'hour' | 'minute'
   user_id?: number
   api_key_id?: number
   model?: string
@@ -83,7 +86,7 @@ export interface ModelStatsParams {
   user_id?: number
   api_key_id?: number
   model?: string
-  model_source?: 'requested' | 'upstream' | 'mapping'
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   account_id?: number
   group_id?: number
   request_type?: UsageRequestType
@@ -130,6 +133,7 @@ export interface GroupStatsResponse {
 }
 
 export interface DashboardSnapshotV2Params extends TrendParams {
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   include_stats?: boolean
   include_trend?: boolean
   include_model_stats?: boolean
@@ -146,6 +150,8 @@ export interface DashboardSnapshotV2Response {
   generated_at: string
   start_date: string
   end_date: string
+  start_time?: string
+  end_time?: string
   granularity: string
   stats?: DashboardSnapshotV2Stats
   trend?: TrendDataPoint[]
@@ -169,7 +175,7 @@ export interface UserBreakdownParams {
   end_date?: string
   group_id?: number
   model?: string
-  model_source?: 'requested' | 'upstream' | 'mapping'
+  model_source?: 'requested' | 'upstream' | 'response' | 'mapping'
   endpoint?: string
   endpoint_type?: 'inbound' | 'upstream' | 'path'
   limit?: number

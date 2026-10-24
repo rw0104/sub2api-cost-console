@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.1",
+  "mission_contract": "apple-design-knowledge-to-interface/v1",
+  "project_ref": "..",
+  "delivery_mode": "functional-implementation",
+  "visual_intent": {
+    "mode": "apple-fidelity",
+    "reason": "Strict Apple fidelity is the default visual contract."
+  },
+  "stage": "implementing",
+  "last_valid_stage": "implementing",
+  "artifacts": {
+    "design_brief": "design-brief.json",
+    "workflow": "workflow.json",
+    "delivery_record": "delivery-record.json",
+    "visual_system": "visual-system.json"
+  },
+  "scope": {
+    "completed_work": [
+      "Initialized the durable Apple UI design brief and delivery checkpoint."
+    ],
+    "remaining_work": [
+      "Complete evidence-led design decisions.",
+      "Advance through design, implementation, and proportional verification.",
+      "Finalize against the delivery record without unsupported claims."
+    ],
+    "open_questions": []
+  },
+  "blockers": [],
+  "implementation": {
+    "material_revision_or_sha256": "",
+    "last_material_change_at": "",
+    "visual_system": {
+      "contract": "apple-fidelity-web/v1",
+      "manifest_ref": "visual-system.json",
+      "sha256": "",
+      "validation_status": "not-tested",
+      "validated_at": ""
+    }
+  },
+  "verification": {
+    "runtime_environment": "",
+    "actual_url": "",
+    "actual_port": null,
+    "test_state_isolated": "not-tested",
+    "presentation_state_restored": "not-tested",
+    "artifact_revision_or_sha256": "",
+    "evidence_captured_at": "",
+    "visual_system": {
+      "contract": "apple-fidelity-web/v1",
+      "manifest_ref": "visual-system.json",
+      "sha256": "",
+      "validation_status": "not-tested",
+      "validated_at": ""
+    },
+    "visual_review": {
+      "apple_fidelity": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "platform_coherence": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "hierarchy_and_visual_system": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "functional_material": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "responsive_image_direction": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "motion_and_continuity": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      },
+      "accessibility_fallbacks": {
+        "status": "not-tested",
+        "observation": "",
+        "evidence_ids": []
+      }
+    }
+  },
+  "validation": {
+    "brief": {
+      "status": "pass",
+      "checked_at": "2026-08-11T10:55:04.851661Z",
+      "errors": []
+    },
+    "visual_system": {
+      "status": "plan-ready",
+      "checked_at": "2026-08-11T10:55:04.851661Z",
+      "manifest_ref": "visual-system.json",
+      "sha256": "3dda7ea5cb5194ec6dea5eb6c7f769aa355db868af7555848eba4ed5aa6db978",
+      "errors": [],
+      "warnings": []
+    },
+    "delivery": {
+      "status": "not-tested",
+      "checked_at": "",
+      "mode": "",
+      "exit_code": null,
+      "stdout": "",
+      "stderr": ""
+    },
+    "blockers": []
+  },
+  "history": [
+    {
+      "from": null,
+      "to": "briefing",
+      "at": "2026-08-11T10:46:11.609551Z",
+      "reason": "start"
+    },
+    {
+      "from": "briefing",
+      "to": "design-ready",
+      "at": "2026-08-11T10:50:53.208921Z",
+      "reason": "advance"
+    },
+    {
+      "from": "design-ready",
+      "to": "implementing",
+      "at": "2026-08-11T10:55:04.851661Z",
+      "reason": "advance"
+    }
+  ],
+  "created_at": "2026-08-11T10:46:11.609551Z",
+  "updated_at": "2026-08-11T10:55:04.851661Z"
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "contract": "apple-fidelity-web/v1",
+  "visual_intent": {
+    "mode": "apple-fidelity",
+    "reason": "Strict Apple fidelity is the default visual contract."
+  },
+  "profile": "macos-productivity",
+  "platform_analogy": "macOS dense pointer-and-keyboard productivity window",
+  "default_material": "regular",
+  "tokens": {
+    "control_height": "2rem",
+    "sidebar_width": "16rem",
+    "content_max": "100rem",
+    "shape_control": "0.5rem",
+    "shape_surface": "0.875rem",
+    "shape_floating": "0.75rem",
+    "title_size": "clamp(1.625rem, 2.4vw, 2.5rem)",
+    "title_tracking": "-0.025em",
+    "body_size": "0.875rem",
+    "material_blur": "24px",
+    "material_saturation": "170%",
+    "motion_fast": "110ms",
+    "motion_standard": "200ms"
+  },
+  "accent": {
+    "mode": "accent",
+    "value": "#B9E55A",
+    "source": "existing Sub2API Cost Console operational lime used for selection and primary actions",
+    "light": {
+      "accent": "#B9E55A",
+      "hover": "#AAD353",
+      "pressed": "#9BC04C",
+      "foreground": "#000000",
+      "wash": "rgb(185 229 90 / 0.14)",
+      "focus": "rgb(185 229 90 / 0.46)"
+    },
+    "dark": {
+      "accent": "#B9E55A",
+      "hover": "#BFE769",
+      "pressed": "#C5E976",
+      "foreground": "#000000",
+      "wash": "rgb(185 229 90 / 0.22)",
+      "focus": "rgb(185 229 90 / 0.56)"
+    }
+  }
+}

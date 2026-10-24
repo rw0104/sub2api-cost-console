@@ -362,7 +362,7 @@ export function useSwipeSelect(
     // Skip clicks on any scrollbar (inner containers + document)
     if (isOnScrollbar(e)) return
 
-    if (target.closest('button, a, input, select, textarea, [role="button"], [role="menuitem"], [role="combobox"], [role="dialog"]')) return
+    if (target.closest('button, a, input, select, textarea, [role="button"], [role="menuitem"], [role~="combobox"], [role="dialog"]')) return
     if (shouldPreferNativeTextSelection(target)) return
     if (shouldPreferNativeSelectionOutsideRows(target)) return
 

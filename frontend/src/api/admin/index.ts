@@ -125,5 +125,11 @@ export type {
   PluginInstallation,
   PluginCompatibility,
   PluginUISession,
-  PluginTestResult
+  PluginTestResult,
+  PluginVersion,
+  PluginRoutingPolicy,
+  PluginHostSnapshot,
+  PluginSecretGrant,
+  PluginPackageInspection,
+  PluginPublisherApproval
 } from './plugins'

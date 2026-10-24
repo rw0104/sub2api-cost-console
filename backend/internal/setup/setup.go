@@ -214,6 +214,9 @@ type postgresDatabaseOpener func(*DatabaseConfig, string) (*sql.DB, error)
 
 // TestDatabaseConnection tests the database connection and creates database if not exists
 func TestDatabaseConnection(cfg *DatabaseConfig) error {
+	if err := config.ValidatePluginPreviewDatabase(cfg.Host, cfg.Port, cfg.DBName); err != nil {
+		return err
+	}
 	return testDatabaseConnection(cfg, openAndPingPostgresDatabase)
 }
 
@@ -279,6 +282,9 @@ func testDatabaseConnection(cfg *DatabaseConfig, openDatabase postgresDatabaseOp
 
 // TestRedisConnection tests the Redis connection
 func TestRedisConnection(cfg *RedisConfig) error {
+	if err := config.ValidatePluginPreviewRedis(cfg.Host, cfg.Port); err != nil {
+		return err
+	}
 	opts := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Username: cfg.Username,
@@ -527,12 +533,27 @@ func writeConfigFile(cfg *SetupConfig) error {
 		tz = "Asia/Shanghai"
 	}
 
+	desktopOrigins := []string{}
+	allowDesktopCredentials := false
+	if desktopModeEnabled() {
+		desktopOrigins = []string{
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"tauri://localhost",
+		}
+		allowDesktopCredentials = true
+	}
+
 	// Prepare config for YAML (exclude sensitive data and admin config)
 	yamlConfig := struct {
 		Server   ServerConfig   `yaml:"server"`
 		Database DatabaseConfig `yaml:"database"`
 		Redis    RedisConfig    `yaml:"redis"`
-		JWT      struct {
+		CORS     struct {
+			AllowedOrigins   []string `yaml:"allowed_origins"`
+			AllowCredentials bool     `yaml:"allow_credentials"`
+		} `yaml:"cors,omitempty"`
+		JWT struct {
 			Secret     string `yaml:"secret"`
 			ExpireHour int    `yaml:"expire_hour"`
 		} `yaml:"jwt"`
@@ -547,6 +568,13 @@ func writeConfigFile(cfg *SetupConfig) error {
 		Server:   cfg.Server,
 		Database: cfg.Database,
 		Redis:    cfg.Redis,
+		CORS: struct {
+			AllowedOrigins   []string `yaml:"allowed_origins"`
+			AllowCredentials bool     `yaml:"allow_credentials"`
+		}{
+			AllowedOrigins:   desktopOrigins,
+			AllowCredentials: allowDesktopCredentials,
+		},
 		JWT: struct {
 			Secret     string `yaml:"secret"`
 			ExpireHour int    `yaml:"expire_hour"`
@@ -574,6 +602,15 @@ func writeConfigFile(cfg *SetupConfig) error {
 	}
 
 	return os.WriteFile(GetConfigFilePath(), data, 0600)
+}
+
+func desktopModeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DESKTOP"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func generateSecret(length int) (string, error) {

@@ -11,42 +11,133 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pluginruntime"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
+	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 	hclog "github.com/hashicorp/go-hclog"
 	hcplugin "github.com/hashicorp/go-plugin"
+	"github.com/hashicorp/go-plugin/runner"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type pluginRuntime struct {
-	installation *PluginInstallation
-	client       *hcplugin.Client
-	api          pluginv1.TransportPluginClient
-	inFlight     atomic.Int64
-	draining     atomic.Bool
-	done         chan struct{}
-	doneOnce     sync.Once
+	installation       *PluginInstallation
+	instanceID         string
+	timelineMu         sync.Mutex
+	timeline           *pluginRuntimeTimeline
+	client             *hcplugin.Client
+	api                pluginv1.TransportPluginClient
+	transport          pluginv2.TransportClient
+	extension          pluginv2.ExtensionHandler
+	isolation          string
+	host               *pluginHostServices
+	inFlight           atomic.Int64
+	draining           atomic.Bool
+	done               chan struct{}
+	doneOnce           sync.Once
+	readinessMu        sync.Mutex
+	readinessAt        time.Time
+	readinessErr       error
+	readinessFailures  int
+	readinessInFlight  bool
+	statusMu           sync.Mutex
+	statusAt           time.Time
+	statusValue        *pluginv1.HealthResponse
+	statusInFlight     bool
+	statusStale        bool
+	stdoutLog          *pluginRuntimeLogSink
+	stderrLog          *pluginRuntimeLogSink
+	egressOwner        *pluginruntime.EgressBrokerOwner
+	egressPolicyDigest string
 }
 
-func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices pluginv1.HostServiceServer) (*pluginRuntime, error) {
+func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
+	var host pluginv1.HostServiceServer
+	if len(hostServices) > 0 {
+		host = hostServices[0]
+	}
+	return startPluginRuntimeWithSandboxAndHost(ctx, installation, startTimeout, socketDir, config.PluginSandboxConfig{}, host)
+}
+
+func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig) (*pluginRuntime, error) {
+	return startPluginRuntimeWithSandboxAndHost(ctx, installation, startTimeout, socketDir, sandbox, nil)
+}
+
+func startPluginRuntimeWithSandboxAndHost(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer) (*pluginRuntime, error) {
+	return startPluginRuntimeWithSandboxAndHostOwner(ctx, installation, startTimeout, socketDir, sandbox, hostServices, nil, "")
+}
+
+func startPluginRuntimeWithSandboxAndHostOwner(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer, owner *pluginruntime.EgressBrokerOwner, instanceID string) (*pluginRuntime, error) {
+	ownerSucceeded := false
+	defer func() {
+		if !ownerSucceeded && owner != nil {
+			_ = owner.Close()
+		}
+	}()
+	return startPluginRuntimeWithSandboxAndHostOptions(ctx, installation, startTimeout, socketDir, sandbox, hostServices, owner, instanceID, &ownerSucceeded)
+}
+
+func startPluginRuntimeWithSandboxAndHostOptions(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices pluginv1.HostServiceServer, owner *pluginruntime.EgressBrokerOwner, instanceID string, ownerSucceeded *bool) (*pluginRuntime, error) {
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
+	}
+	if installation.Manifest.SchemaVersion == 2 {
+		sandbox = sandbox.WithDefaults()
+		if err := sandbox.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	if installation.Manifest.SchemaVersion == 2 && sandbox.Mode == "container" {
+		if sandbox.EgressBroker.Enabled && owner == nil {
+			return nil, errors.New("sandbox egress broker requires a scoped runtime owner")
+		}
+		for _, capability := range installation.Manifest.Capabilities {
+			if capability.ID == pluginv2.CapabilityProtectionTransport {
+				if !sandbox.EgressBroker.Enabled {
+					return nil, errors.New("账号保护传输需要配置 egress broker；网络受限容器默认拒绝出站连接")
+				}
+				if owner == nil {
+					return nil, errors.New("账号保护传输需要 scoped egress broker owner")
+				}
+			}
+		}
+	}
+	if owner != nil {
+		if installation.Manifest.SchemaVersion != 2 || sandbox.Mode != "container" || !sandbox.EgressBroker.Enabled || owner.SocketPath() == "" {
+			return nil, errors.New("egress broker owner is only valid for a configured container sandbox")
+		}
+		sandbox.EgressBroker.SocketPath = owner.SocketPath()
 	}
 	checksum, err := hex.DecodeString(installation.BinarySHA256)
 	if err != nil || len(checksum) != sha256.Size {
 		return nil, errors.New("插件二进制哈希无效")
 	}
+	if strings.TrimSpace(instanceID) == "" {
+		instanceID = fmt.Sprintf("%s-%d", installation.PluginKey, time.Now().UnixNano())
+	}
+	var ownerIdentity pluginruntime.EgressBrokerIdentity
+	if owner != nil {
+		ownerIdentity = owner.Identity()
+	}
+	stdoutLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStdout, defaultPluginRuntimeLogBytes)
+	stderrLog := newPluginRuntimeLogSink(instanceID, pluginRuntimeLogStreamStderr, defaultPluginRuntimeLogBytes)
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), installation.BinaryPath)
-	client := hcplugin.NewClient(&hcplugin.ClientConfig{
-		HandshakeConfig:  pluginv1.HandshakeConfig,
-		Plugins:          pluginv1.ClientPluginMap(),
+	pluginruntime.HideCommandWindow(cmd)
+	handshake, plugins, name := pluginv1.HandshakeConfig, pluginv1.ClientPluginMap(), pluginv1.TransportPluginName
+	if installation.Manifest.SchemaVersion == 2 {
+		handshake, plugins, name = pluginv2.HandshakeConfig, pluginv2.ClientPluginMap(), pluginv2.ExtensionPluginName
+	}
+	clientConfig := &hcplugin.ClientConfig{
+		HandshakeConfig:  handshake,
+		Plugins:          plugins,
 		Cmd:              cmd,
 		AllowedProtocols: []hcplugin.Protocol{hcplugin.ProtocolGRPC},
 		StartTimeout:     startTimeout,
@@ -55,56 +146,72 @@ func startPluginRuntime(ctx context.Context, installation *PluginInstallation, s
 			Hash:     sha256.New(),
 		},
 		Logger:           hclog.NewNullLogger(),
-		SyncStdout:       io.Discard,
-		SyncStderr:       io.Discard,
+		SyncStdout:       stdoutLog,
+		SyncStderr:       stderrLog,
 		UnixSocketConfig: &hcplugin.UnixSocketConfig{TempDir: socketDir},
 		SkipHostEnv:      true,
-	})
+	}
+	isolation := "process"
+	if installation.Manifest.SchemaVersion == 2 {
+		clientConfig.AutoMTLS = true
+		clientConfig.GRPCBrokerMultiplex = hasHostPermissions(installation.Manifest)
+		if sandbox.Mode == "container" {
+			isolation = "container"
+			clientConfig.Cmd = nil
+			// The runner hashes the exact private copy mounted into the container.
+			clientConfig.SecureConfig = nil
+			clientConfig.RunnerFunc = func(_ hclog.Logger, spec *exec.Cmd, workDir string) (runner.Runner, error) {
+				return pluginruntime.NewContainer(pluginruntime.ContainerOptions{BinaryPath: installation.BinaryPath,
+					BinarySHA256: installation.BinarySHA256, WorkDir: workDir, Image: sandbox.Image,
+					MemoryMB: sandbox.MemoryMB, CPUMilli: sandbox.CPUMilli, PidsLimit: sandbox.PidsLimit, Env: spec.Env,
+					EgressBroker: pluginruntime.EgressBrokerOptions{Enabled: sandbox.EgressBroker.Enabled,
+						SocketPath: sandbox.EgressBroker.SocketPath, AllowedHosts: append([]string(nil), sandbox.EgressBroker.AllowedHosts...),
+						AllowedSchemes: append([]string(nil), sandbox.EgressBroker.AllowedSchemes...), RequireTLS: sandbox.EgressBroker.RequireTLS},
+					EgressBrokerIdentity: ownerIdentity})
+			}
+		}
+	}
+	client := hcplugin.NewClient(clientConfig)
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()
 		return nil, fmt.Errorf("启动插件进程: %w", err)
 	}
-	dispensed, err := rpcClient.Dispense(pluginv1.TransportPluginName)
+	dispensed, err := rpcClient.Dispense(name)
 	if err != nil {
 		client.Kill()
 		return nil, fmt.Errorf("获取插件传输能力: %w", err)
 	}
-	transportClient, ok := dispensed.(*pluginv1.TransportClient)
-	if !ok || transportClient.TransportPluginClient == nil {
-		client.Kill()
-		return nil, errors.New("插件未实现传输 gRPC 客户端")
-	}
-	api := transportClient.TransportPluginClient
 	runtime := &pluginRuntime{
 		installation: installation,
+		instanceID:   instanceID,
+		timeline:     newPluginRuntimeTimeline(time.Now()),
 		client:       client,
-		api:          api,
 		done:         make(chan struct{}),
+		isolation:    isolation,
+		stdoutLog:    stdoutLog,
+		stderrLog:    stderrLog,
+		egressOwner:  owner,
+	}
+	if owner != nil {
+		runtime.egressPolicyDigest = pluginEgressPolicyDigest(sandbox.EgressBroker)
+	}
+	if ownerSucceeded != nil {
+		*ownerSucceeded = true
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
-	info, err := api.GetInfo(infoCtx, &pluginv1.GetInfoRequest{})
-	if err != nil {
+	if err := runtime.initializeAPI(infoCtx, dispensed); err != nil {
+		runtime.markRuntimeError(err)
 		runtime.kill()
-		return nil, fmt.Errorf("读取插件信息: %w", err)
+		return nil, err
 	}
-	if info.PluginId != installation.PluginKey || info.PluginVersion != installation.Version ||
-		info.ProtocolVersion != pluginv1.ProtocolVersion || info.TransportApiVersion != pluginv1.TransportAPIVersion {
-		runtime.kill()
-		return nil, errors.New("插件运行时信息与已校验清单不一致")
+	runtime.markRuntimeAPIReady()
+	// v1 plugins may opt into the generic host service over the same broker. v2
+	// extension plugins keep their dedicated host connector path in PluginManager.
+	if transportClient, ok := dispensed.(*pluginv1.TransportClient); ok {
+		offerPluginHostServices(ctx, installation, transportClient.TransportPluginClient, transportClient.Broker, hostServices, startTimeout)
 	}
-	health, err := api.Health(infoCtx, &pluginv1.HealthRequest{})
-	if err != nil || !health.Healthy {
-		runtime.kill()
-		if err != nil {
-			return nil, fmt.Errorf("插件健康检查失败: %w", err)
-		}
-		return nil, fmt.Errorf("插件不健康: %s", health.Message)
-	}
-	// 可选地把宿主服务（HostService）反向暴露给插件。这是叠加在传输契约之上的能力：
-	// 老插件不实现 InitHostServices（返回 Unimplemented），此处静默跳过，绝不阻断启动。
-	offerPluginHostServices(ctx, installation, api, transportClient.Broker, hostServices, startTimeout)
 	return runtime, nil
 }
 
@@ -153,12 +260,28 @@ func offerPluginHostServices(
 }
 
 func (r *pluginRuntime) validateAndApplyConfig(ctx context.Context, configJSON []byte) error {
+	// Stored protection snapshots already passed validation on save. Replaying
+	// one must not increment its revision or execute its transition twice.
+	if r.transport != nil {
+		return restoreStoredProtectionConfig(ctx, r, configJSON)
+	}
 	_, err := r.validateAndApplyNormalizedConfig(ctx, configJSON)
 	return err
 }
 
 func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, configJSON []byte) ([]byte, error) {
-	validation, err := r.api.ValidateConfig(ctx, &pluginv1.ValidateConfigRequest{ConfigJson: configJSON})
+	normalized, err := r.validateNormalizedConfig(ctx, configJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.applyNormalizedConfig(ctx, normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func (r *pluginRuntime) validateNormalizedConfig(ctx context.Context, configJSON []byte) ([]byte, error) {
+	validation, err := r.validateConfig(ctx, configJSON)
 	if err != nil {
 		return nil, fmt.Errorf("插件配置校验失败: %w", err)
 	}
@@ -185,40 +308,163 @@ func (r *pluginRuntime) validateAndApplyNormalizedConfig(ctx context.Context, co
 	if err != nil {
 		return nil, fmt.Errorf("序列化插件规范化配置: %w", err)
 	}
-	applied, err := r.api.ApplyConfig(ctx, &pluginv1.ApplyConfigRequest{ConfigJson: configJSON})
-	if err != nil {
-		return nil, fmt.Errorf("应用插件配置失败: %w", err)
-	}
-	if !applied.Applied {
-		return nil, fmt.Errorf("插件拒绝应用配置: %s", applied.Message)
-	}
 	return configJSON, nil
 }
 
-func (r *pluginRuntime) checkHealth(ctx context.Context) error {
-	if r == nil || r.api == nil || r.client == nil || r.client.Exited() {
-		return errors.New("插件进程已退出")
-	}
-	health, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
+func (r *pluginRuntime) applyNormalizedConfig(ctx context.Context, configJSON []byte) error {
+	applied, err := r.applyConfig(ctx, configJSON)
 	if err != nil {
-		return fmt.Errorf("插件健康检查失败: %w", err)
+		return fmt.Errorf("应用插件配置失败: %w", err)
+	}
+	if applied == nil || !applied.Applied {
+		return errors.New("插件拒绝应用已保存配置")
+	}
+	if r.host != nil {
+		r.host.setConfig(configJSON)
+	}
+	return nil
+}
+
+func (r *pluginRuntime) checkHealth(ctx context.Context) error {
+	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
+		err := errors.New("插件进程已退出")
+		r.markRuntimeError(err)
+		return err
+	}
+	health, err := r.health(ctx)
+	if err != nil {
+		wrapped := fmt.Errorf("插件健康检查失败: %w", err)
+		r.markRuntimeError(wrapped)
+		return wrapped
 	}
 	if health == nil || !health.Healthy {
 		message := "插件报告不健康"
 		if health != nil && strings.TrimSpace(health.Message) != "" {
 			message = "插件不健康: " + health.Message
 		}
-		return errors.New(message)
+		err := errors.New(message)
+		r.markRuntimeError(err)
+		return err
 	}
 	return nil
 }
 
-// status returns the plugin's passive Health response, including any status_json
-// blob it exposes for the config UI. It performs no config apply and no upstream
-// call, so it is safe to serve from a lightweight, ungated status endpoint.
+// checkReadiness caches the active capability probe. Reconcile runs every
+// second, but a readiness RPC is deliberately sampled at a slower interval and
+// must fail consecutively before the route is removed. A single slow probe can
+// therefore never kill an otherwise serving runtime.
+func (r *pluginRuntime) checkReadiness(ctx context.Context) error {
+	if r == nil || r.client == nil || r.client.Exited() {
+		err := errors.New("插件进程已退出")
+		r.markRuntimeReadiness(err)
+		return err
+	}
+	now := time.Now()
+	r.readinessMu.Lock()
+	if r.readinessInFlight {
+		err := r.readinessDecisionLocked()
+		r.readinessMu.Unlock()
+		return err
+	}
+	if !r.readinessAt.IsZero() && now.Sub(r.readinessAt) < pluginReadinessInterval {
+		err := r.readinessDecisionLocked()
+		r.readinessMu.Unlock()
+		return err
+	}
+	r.readinessAt = now
+	r.readinessInFlight = true
+	previous := r.readinessDecisionLocked()
+	r.readinessMu.Unlock()
+
+	// The reconcile loop must never wait on a remote readiness RPC. One probe
+	// is allowed per interval; its result is consumed by later iterations.
+	probeCtx, cancel := context.WithTimeout(ctx, pluginHealthTimeout)
+	go func() {
+		err := r.checkHealth(probeCtx)
+		cancel()
+		r.markRuntimeReadiness(err)
+		r.readinessMu.Lock()
+		r.readinessInFlight = false
+		if err == nil {
+			r.readinessErr = nil
+			r.readinessFailures = 0
+		} else {
+			r.readinessErr = err
+			r.readinessFailures++
+		}
+		r.readinessMu.Unlock()
+	}()
+	return previous
+}
+
+func (r *pluginRuntime) readinessDecisionLocked() error {
+	if r.readinessFailures >= pluginReadinessFailureThreshold {
+		return r.readinessErr
+	}
+	return nil
+}
+
+const pluginRuntimeStatusCacheTTL = 2 * time.Second
+
+// status returns a cached passive Health response for the config UI. At most
+// one remote Health RPC is in flight per runtime; concurrent UI polls receive
+// the last snapshot marked stale instead of multiplying slow probes.
 func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, error) {
-	if r == nil || r.api == nil || r.client == nil || r.client.Exited() {
+	if r == nil || (r.api == nil && r.extension == nil) || r.client == nil || r.client.Exited() {
 		return nil, errors.New("插件进程已退出")
+	}
+	now := time.Now()
+	r.statusMu.Lock()
+	if r.statusValue != nil && now.Sub(r.statusAt) < pluginRuntimeStatusCacheTTL {
+		cached := clonePluginHealthResponse(r.statusValue)
+		r.statusMu.Unlock()
+		return cached, nil
+	}
+	if r.statusInFlight {
+		if r.statusValue != nil {
+			r.statusStale = true
+			cached := clonePluginHealthResponse(r.statusValue)
+			r.statusMu.Unlock()
+			return cached, nil
+		}
+		r.statusMu.Unlock()
+		return nil, errors.New("插件状态查询正在进行")
+	}
+	r.statusInFlight = true
+	previous := clonePluginHealthResponse(r.statusValue)
+	r.statusMu.Unlock()
+
+	health, err := r.fetchStatus(ctx)
+	r.statusMu.Lock()
+	r.statusInFlight = false
+	if err != nil {
+		r.statusStale = true
+		r.statusMu.Unlock()
+		if previous != nil {
+			return previous, nil
+		}
+		return nil, err
+	}
+	r.statusValue = clonePluginHealthResponse(health)
+	r.statusAt = time.Now()
+	r.statusStale = false
+	r.statusMu.Unlock()
+	return health, nil
+}
+
+func (r *pluginRuntime) fetchStatus(ctx context.Context) (*pluginv1.HealthResponse, error) {
+	if r.extension != nil {
+		result, err := r.extension.Health(ctx)
+		if err != nil {
+			return nil, safeExtensionRPCError("扩展状态查询失败", err)
+		}
+		health := &pluginv1.HealthResponse{Healthy: result.Healthy, Message: "扩展运行状态"}
+		// v2 has a bounded Health message; structured display data is forwarded
+		// through the existing status_json channel, never interpreted as commands.
+		if len(result.Message) <= pluginConfigMaxBytes && json.Valid([]byte(result.Message)) {
+			health.StatusJson = result.Message
+		}
+		return health, nil
 	}
 	health, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
 	if err != nil {
@@ -228,6 +474,22 @@ func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, e
 		return nil, errors.New("插件未返回状态")
 	}
 	return health, nil
+}
+
+func clonePluginHealthResponse(value *pluginv1.HealthResponse) *pluginv1.HealthResponse {
+	if value == nil {
+		return nil
+	}
+	return &pluginv1.HealthResponse{Healthy: value.Healthy, Message: value.Message, StatusJson: value.StatusJson}
+}
+
+func (r *pluginRuntime) statusIsStale() bool {
+	if r == nil {
+		return false
+	}
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	return r.statusStale
 }
 
 func (r *pluginRuntime) beginRequest() bool {
@@ -248,27 +510,20 @@ func (r *pluginRuntime) finishRequest() {
 	}
 }
 
-func (r *pluginRuntime) drain(timeout time.Duration) {
+func (r *pluginRuntime) kill() {
 	if r == nil {
 		return
 	}
-	r.draining.Store(true)
-	if r.inFlight.Load() == 0 {
-		r.doneOnce.Do(func() { close(r.done) })
+	if r.host != nil {
+		r.host.Close()
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-r.done:
-	case <-timer.C:
+	if r.egressOwner != nil {
+		_ = r.egressOwner.Close()
 	}
-	r.kill()
-}
-
-func (r *pluginRuntime) kill() {
-	if r != nil && r.client != nil {
+	if r.client != nil {
 		r.client.Kill()
 	}
+	r.markRuntimeExited()
 }
 
 func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
@@ -276,25 +531,31 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		return nil, errors.New("插件出站请求参数不完整")
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := r.api.Forward(streamCtx)
+	forwarder := pluginv2.TransportClient(r.api)
+	if r.transport != nil {
+		forwarder = r.transport
+	}
+	stream, err := forwarder.Forward(streamCtx)
 	if err != nil {
 		cancel()
 		return nil, normalizePluginRPCError(ctx, "创建插件转发流", err, false)
 	}
-	requestID := strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatInt(account.ID, 36)
+	requestID := pluginForwardRequestID(ctx)
 	if err := stream.Send(&pluginv1.ForwardRequest{Frame: &pluginv1.ForwardRequest_Start{Start: &pluginv1.ForwardRequestStart{
-		RequestId:          requestID,
-		Method:             request.Method,
-		Url:                request.URL.String(),
-		Host:               request.Host,
-		Headers:            headersToPlugin(request.Header),
-		ProxyUrl:           proxyURL,
-		AccountId:          account.ID,
-		AccountConcurrency: int32(account.Concurrency),
-		Platform:           account.Platform,
-		AccountType:        account.Type,
-		ContentLength:      request.ContentLength,
-		HasBody:            request.Body != nil && request.Body != http.NoBody,
+		RequestId:           requestID,
+		Method:              request.Method,
+		Url:                 request.URL.String(),
+		Host:                request.Host,
+		Headers:             headersToPlugin(request.Header),
+		ProxyUrl:            proxyURL,
+		AccountId:           account.ID,
+		AccountConcurrency:  int32(account.Concurrency),
+		Platform:            account.Platform,
+		AccountType:         account.Type,
+		ContentLength:       request.ContentLength,
+		HasBody:             request.Body != nil && request.Body != http.NoBody,
+		OriginalBodyJson:    r.protectionOriginalBody(ctx, account),
+		AccountMetadataJson: r.protectionAccountMetadata(ctx, account),
 	}}}); err != nil {
 		cancel()
 		// gRPC Send 返回错误时无法证明服务端没有收到元数据，必须禁止自动重放。

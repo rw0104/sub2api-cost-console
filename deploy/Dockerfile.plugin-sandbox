@@ -1,0 +1,11 @@
+# Build from the repository root:
+# docker build -f deploy/Dockerfile.plugin-sandbox -t sub2api-plugin-sandbox:1 .
+FROM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS build
+WORKDIR /src
+COPY backend/cmd/plugin-sandbox/main.go ./main.go
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /sandbox main.go
+
+FROM scratch
+LABEL org.sub2api.plugin-sandbox.api="1"
+COPY --from=build /sandbox /sub2api-plugin-sandbox
+ENTRYPOINT ["/sub2api-plugin-sandbox", "supervise"]

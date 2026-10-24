@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -73,14 +74,14 @@ func openaiResponsesProbePayload(modelID string) []byte {
 	return body
 }
 
-// selectResponsesProbeModel 选出用于探测的上游模型。
+// selectOpenAIAPIKeyTestModel 选出用于测试的真实上游模型。
 //
 // 工具能力探测必须用上游真实存在的模型——用占位模型(DefaultTestModel)打第三方
 // 上游只会拿到 400 model-not-found,无从判定工具能力。优先取账号 model_mapping
 // 的上游模型(值),其中优先通用 GPT 文本模型,同类按字典序取首个具体(非通配符)
 // 模型以保证可复现;无映射时回退
 // DefaultTestModel(适配 OpenAI 官方 APIKey 账号)。
-func selectResponsesProbeModel(account *Account) string {
+func selectOpenAIAPIKeyTestModel(account *Account) string {
 	mapping := account.GetModelMapping()
 	candidates := make([]string, 0, len(mapping))
 	for _, upstream := range mapping {
@@ -91,7 +92,7 @@ func selectResponsesProbeModel(account *Account) string {
 		candidates = append(candidates, upstream)
 	}
 	if len(candidates) == 0 {
-		return openai.DefaultTestModel
+		return defaultOpenAICompatibleTestModel(account.GetOpenAIBaseURL())
 	}
 	sort.Strings(candidates)
 	// Prefer a general text model over auxiliary entries such as
@@ -102,6 +103,25 @@ func selectResponsesProbeModel(account *Account) string {
 		}
 	}
 	return candidates[0]
+}
+
+// selectResponsesProbeModel keeps the upstream probe name available while
+// preserving the host's existing account-test call path.
+func selectResponsesProbeModel(account *Account) string {
+	return selectOpenAIAPIKeyTestModel(account)
+}
+
+// defaultOpenAICompatibleTestModel centralizes official-provider defaults so
+// OpenAI-compatible APIs are never probed with an unrelated OpenAI model ID.
+func defaultOpenAICompatibleTestModel(baseURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err == nil {
+		switch strings.ToLower(parsed.Hostname()) {
+		case "api.deepseek.com":
+			return "deepseek-v4-flash"
+		}
+	}
+	return openai.DefaultTestModel
 }
 
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
@@ -170,7 +190,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	}
 
 	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
-	probeModel := selectResponsesProbeModel(account)
+	probeModel := selectOpenAIAPIKeyTestModel(account)
 
 	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
 	defer cancel()

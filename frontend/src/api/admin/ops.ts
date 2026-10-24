@@ -87,8 +87,20 @@ export interface OpsPercentiles {
 export interface OpsThroughputTrendPoint {
   bucket_start: string
   request_count: number
+  success_count: number
+  error_count: number
   token_consumed: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
   switch_count?: number
+  user_billed_usd: number
+  account_cost_usd: number
+  contribution_usd: number
+  duration_p95_ms?: number | null
+  ttft_p50_ms?: number | null
+  ttft_p95_ms?: number | null
   qps: number
   tps: number
 }
@@ -191,6 +203,7 @@ export interface OpsErrorTrendPoint {
   business_limited_count: number
   error_count_sla: number
   upstream_error_count_excl_429_529: number
+  upstream_402_count: number
   upstream_429_count: number
   upstream_529_count: number
 }
@@ -991,7 +1004,7 @@ export async function getDashboardOverview(
 
 export async function getDashboardSnapshotV2(
   params: {
-  time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+  time_range?: '1m' | '5m' | '30m' | '1h' | '6h' | '24h' | '7d' | '30d'
   start_time?: string
   end_time?: string
   platform?: string

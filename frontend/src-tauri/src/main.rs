@@ -1,0 +1,120 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod client_launcher;
+mod desktop_listen;
+mod desktop_profile;
+mod desktop_proxy;
+mod desktop_runtime;
+mod desktop_shell;
+mod managed_child;
+mod managed_core_process;
+mod setup_environment;
+mod startup_dependencies;
+
+use client_launcher::{
+    launch_native_client, list_native_clients, native_working_directory,
+    pick_native_working_directory, preview_native_client_launch,
+};
+use desktop_listen::{desktop_listen_settings, desktop_listen_settings_save};
+use desktop_runtime::{
+    check_core_update, desktop_backend_prepare_relaunch, desktop_backend_start,
+    desktop_backend_status, desktop_backend_stop, initialize_backend, inspect_core_identity,
+    install_core_update, prepare_core_rollback, restore_bundled_core, shutdown_backend,
+    start_backend, BackendSupervisor, CoreCompatibilityAction,
+};
+use desktop_shell::{handle_main_window_event, setup_desktop_shell};
+use setup_environment::{detect_setup_environment, provision_quick_setup};
+use tauri::Manager;
+
+fn main() {
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            let _ = desktop_shell::show_main_window(app);
+        }))
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init());
+    #[cfg(not(feature = "plugin-preview"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let app = builder
+        .on_window_event(handle_main_window_event)
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let supervisor = initialize_backend(&handle)
+                .map_err(|error| format!("failed to initialize desktop backend: {error}"))?;
+            app.manage(supervisor.clone());
+            match inspect_core_identity(handle.clone()) {
+                Ok(identity)
+                    if matches!(identity.action, CoreCompatibilityAction::InstallBundled) =>
+                {
+                    let state = app.state::<BackendSupervisor>();
+                    if let Err(error) =
+                        tauri::async_runtime::block_on(restore_bundled_core(handle.clone(), state))
+                    {
+                        eprintln!("failed to activate required bundled Sub2API core: {error}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("failed to inspect bundled Sub2API core compatibility: {error}");
+                }
+            }
+            if let Err(error) = start_backend(handle, supervisor) {
+                eprintln!("failed to start managed Sub2API backend: {error}");
+            }
+            setup_desktop_shell(app)
+                .map_err(|error| format!("failed to initialize system tray: {error}"))?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            desktop_backend_status,
+            desktop_backend_start,
+            desktop_backend_stop,
+            desktop_backend_prepare_relaunch,
+            desktop_listen_settings,
+            desktop_listen_settings_save,
+            detect_setup_environment,
+            provision_quick_setup,
+            check_core_update,
+            inspect_core_identity,
+            install_core_update,
+            restore_bundled_core,
+            prepare_core_rollback,
+            list_native_clients,
+            preview_native_client_launch,
+            launch_native_client,
+            native_working_directory,
+            pick_native_working_directory,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building Sub2API Cost Console");
+
+    app.run(|app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            shutdown_backend(app_handle);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn desktop_capabilities_allow_the_fullscreen_control() {
+        let capabilities: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("desktop capabilities must be valid JSON");
+        let permissions = capabilities["permissions"]
+            .as_array()
+            .expect("desktop capabilities must declare permissions");
+
+        assert!(
+            permissions
+                .iter()
+                .any(|permission| permission.as_str() == Some("core:window:allow-set-fullscreen")),
+            "the cost-center fullscreen control requires set_fullscreen permission"
+        );
+    }
+}

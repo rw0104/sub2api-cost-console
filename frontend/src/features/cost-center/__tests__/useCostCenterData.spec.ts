@@ -1,0 +1,222 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { testAccount } = vi.hoisted(() => ({ testAccount: vi.fn() }))
+
+vi.mock('@/api/admin', () => ({
+  adminAPI: {
+    accounts: { testAccount },
+    dashboard: {},
+    ops: {},
+  },
+}))
+
+import {
+  buildCostCenterSnapshotQuery,
+  buildCostCenterDataQueries,
+  economicsWindowHours,
+  DEFAULT_COST_CENTER_RANGE,
+  DEFAULT_MODEL_COST_RANGE,
+  accountUsageSource,
+  filterModelAuditLogs,
+  mergeRetainedAccountUsage,
+  rejectedReason,
+  selectExactWindowModelStats,
+  snapshotMatchesRequestedWindow,
+  shouldUseUsageLogCompatibilityTrend,
+  trendHasAccountCost,
+  useCostCenterData,
+} from '../useCostCenterData'
+
+describe('cost center live ranges', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('defaults live observation and recent model economics to one hour', () => {
+    expect(DEFAULT_COST_CENTER_RANGE).toBe('1h')
+    expect(DEFAULT_MODEL_COST_RANGE).toBe('1h')
+    expect(useCostCenterData().modelCostRange.value).toBe('1h')
+  })
+
+  it('requests the current device calendar day with exact bounds', () => {
+    const now = new Date('2026-08-06T13:45:30+08:00')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    const end = now
+
+    expect(buildCostCenterSnapshotQuery('today')).toEqual({
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+      granularity: 'hour',
+    })
+  })
+
+  it('uses minute buckets for the one minute window', () => {
+    expect(buildCostCenterSnapshotQuery('1m')).toEqual({
+      time_range: '1m',
+      granularity: 'minute',
+    })
+  })
+
+  it('uses minute buckets for the default one hour chart', () => {
+    expect(buildCostCenterSnapshotQuery('1h')).toEqual({
+      time_range: '1h',
+      granularity: 'minute',
+    })
+  })
+
+  it('keeps observation and model queries on their independent windows', () => {
+    const queries = buildCostCenterDataQueries('1h', 'today')
+    expect(queries.observation).toMatchObject({ time_range: '1h', granularity: 'minute' })
+    expect(queries.model).toMatchObject({ granularity: 'hour' })
+    expect(queries.model).not.toHaveProperty('time_range')
+  })
+
+  it('requests an exact 30 minute snapshot with minute buckets', () => {
+    expect(buildCostCenterSnapshotQuery('30m')).toEqual({
+      time_range: '30m',
+      granularity: 'minute',
+    })
+  })
+
+  it('requests an explicit exact 15 minute window with minute buckets', () => {
+    const now = new Date('2026-08-07T08:00:00.000Z')
+    expect(buildCostCenterSnapshotQuery('15m', now)).toEqual({
+      start_time: '2026-08-07T07:45:00.000Z',
+      end_time: '2026-08-07T08:00:00.000Z',
+      granularity: 'minute',
+    })
+  })
+
+  it('uses day buckets for the seven day window', () => {
+    expect(buildCostCenterSnapshotQuery('7d')).toEqual({
+      time_range: '7d',
+      granularity: 'day',
+    })
+  })
+
+  it('uses day buckets for the one month window', () => {
+    expect(buildCostCenterSnapshotQuery('30d')).toEqual({
+      time_range: '30d',
+      granularity: 'day',
+    })
+  })
+
+  it('passes the selected observation window to persistent economics sampling', () => {
+    expect(economicsWindowHours('1m')).toBeCloseTo(1 / 60)
+    expect(economicsWindowHours('1h')).toBe(1)
+    expect(economicsWindowHours('7d')).toBe(168)
+    expect(economicsWindowHours('30d')).toBe(720)
+  })
+
+  it('uses passive quota snapshots only for Anthropic OAuth-style accounts', () => {
+    expect(accountUsageSource({ platform: 'anthropic', type: 'oauth' } as any)).toBe('passive')
+    expect(accountUsageSource({ platform: 'anthropic', type: 'setup-token' } as any)).toBe('passive')
+    expect(accountUsageSource({ platform: 'openai', type: 'oauth' } as any)).toBe('active')
+    expect(accountUsageSource({ platform: 'gemini', type: 'oauth' } as any)).toBe('active')
+  })
+
+  it('rejects a legacy snapshot that omitted the requested exact time boundary', () => {
+    const start = new Date('2026-08-07T07:00:00.000Z')
+    const end = new Date('2026-08-07T08:00:00.000Z')
+    expect(snapshotMatchesRequestedWindow({ start_date: '2026-08-07', end_date: '2026-08-07' }, start, end)).toBe(false)
+    expect(snapshotMatchesRequestedWindow({
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+    }, start, end)).toBe(true)
+  })
+
+  it('requires upstream account-cost evidence for a non-empty dashboard trend', () => {
+    expect(trendHasAccountCost([])).toBe(true)
+    expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2 }] as any)).toBe(false)
+    expect(trendHasAccountCost([{ requests: 1, cost: 1, actual_cost: 2, account_cost: 0.75 }] as any)).toBe(true)
+  })
+
+  it('keeps short windows on usage logs so second-level buckets are real', () => {
+    expect(shouldUseUsageLogCompatibilityTrend('1m', true, true)).toBe(true)
+    expect(shouldUseUsageLogCompatibilityTrend('5m', true, true)).toBe(true)
+    expect(shouldUseUsageLogCompatibilityTrend('1h', true, true)).toBe(false)
+    expect(shouldUseUsageLogCompatibilityTrend('1h', false, true)).toBe(true)
+  })
+
+  it('does not present a truncated compatibility sample as complete model cost', () => {
+    const start = new Date('2026-08-07T07:00:00.000Z')
+    const end = new Date('2026-08-07T08:00:00.000Z')
+    const result = selectExactWindowModelStats(
+      { models: [{ model: 'gpt-old', requests: 269 }] as any },
+      { logs: [{ model: 'deepseek-v4-flash', created_at: '2026-08-07T07:30:00.000Z' }] as any, truncated: true },
+      start,
+      end,
+      'upstream',
+    )
+
+    expect(result.models).toEqual([])
+    expect(result.compatibilityTruncated).toBe(true)
+    expect(result.usedCompatibilityAggregation).toBe(false)
+  })
+
+  it('keeps only confirmed upstream model mismatches when the audit filter is enabled', () => {
+    const logs = [
+      { id: 1, upstream_model_mismatch: true },
+      { id: 2, upstream_model_mismatch: false },
+      { id: 3, upstream_model_mismatch: null },
+    ] as any
+
+    expect(filterModelAuditLogs(logs, true).map((log) => log.id)).toEqual([1])
+    expect(filterModelAuditLogs(logs, false)).toBe(logs)
+  })
+
+  it('retains successful account usage when a later refresh is partial', () => {
+    const previous = {
+      '7': { five_hour: { utilization: 12 } },
+      '8': { seven_day: { utilization: 34 } },
+    } as any
+    const refreshed = {
+      '7': { five_hour: { utilization: 18 } },
+    } as any
+
+    expect(mergeRetainedAccountUsage(previous, refreshed, [7, 8, 9])).toEqual({
+      '7': refreshed['7'],
+      '8': previous['8'],
+    })
+  })
+
+  it('preserves structured API rejection context for source diagnostics', () => {
+    expect(rejectedReason({
+      status: 'rejected',
+      reason: { status: 503, code: 1001, reason: 'PRICING_CATALOG_UNAVAILABLE', message: '价格目录暂时不可用' },
+    }, '价格目录状态读取失败')).toBe('价格目录暂时不可用 (status=503, code=PRICING_CATALOG_UNAVAILABLE)')
+
+    expect(rejectedReason({
+      status: 'rejected',
+      reason: { response: { status: 429, data: { code: 'RATE_LIMITED', detail: '请求过于频繁' } } },
+    }, '请求失败')).toBe('请求过于频繁 (status=429, code=RATE_LIMITED)')
+  })
+})
+
+describe('cost center account probe feedback', () => {
+  it('publishes visible progress before the upstream request completes', async () => {
+    let resolveProbe!: (value: { success: boolean; message: string; latency_ms: number }) => void
+    testAccount.mockReturnValueOnce(new Promise((resolve) => { resolveProbe = resolve }))
+    const data = useCostCenterData()
+    const account = { id: 9, name: 'probe@example.com' } as any
+
+    const pending = data.probeAccount(account)
+
+    expect(data.probes.value['9']).toMatchObject({
+      loading: true,
+      message: '正在请求真实上游…',
+    })
+
+    resolveProbe({ success: true, message: '连接成功', latency_ms: 86 })
+    await pending
+    expect(data.probes.value['9']).toMatchObject({
+      loading: false,
+      success: true,
+      latency_ms: 86,
+    })
+  })
+})

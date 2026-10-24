@@ -493,12 +493,15 @@ func (s *BillingService) initFallbackPricing() {
 	// rates double to $1.50/$7.50/$0.15 from 2027-01-01). Antigravity's
 	// -high/-low/-medium/-tiered aliases are matched below so unavailable
 	// remote pricing never records token-bearing requests at $0.
-	s.fallbackPrices["gemini-3.6-flash"] = &ModelPricing{
+	// Priority 档按标准价 1.8 倍，与目录条目的 *_cost_per_token_priority 绝对价同口径：
+	// 不显式带上，usePriorityServiceTierPricing 会落到通用服务档 2x 倍率，
+	// 远程目录不可用期间 priority 请求比官方价多收 11%。
+	s.fallbackPrices["gemini-3.6-flash"] = pricingWithPriorityMultiplier(&ModelPricing{
 		InputPricePerToken:     0.75e-6,
 		OutputPricePerToken:    3.75e-6,
 		CacheReadPricePerToken: 0.075e-6,
 		SupportsCacheBreakdown: false,
-	}
+	}, 1.8)
 
 	// Gemini 3.7 Flash (Google AI pricing: $0.75 input / $3.75 output /
 	// $0.075 cached input per MTok, promotional through 2026-12-31; official
@@ -978,6 +981,19 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextOutputMultiplier:   2,
 	}
 
+	// xAI Grok 4.7 Fast: $4 input / $1 cached / $12 output below 200k;
+	// long-context rates are $6 / $1.50 / $18.
+	s.fallbackPrices["grok-4.7-fast"] = &ModelPricing{
+		InputPricePerToken:            4e-6,
+		OutputPricePerToken:           12e-6,
+		CacheReadPricePerToken:        1e-6,
+		SupportsCacheBreakdown:        false,
+		LongContextInputThreshold:     200000,
+		LongContextThresholdInclusive: true,
+		LongContextInputMultiplier:    1.5,
+		LongContextOutputMultiplier:   1.5,
+	}
+
 	// xAI Grok 4.3: $1.25 input / $0.20 cached / $2.50 output below 200k;
 	// long-context rates are $2.50 / $0.40 / $5.
 	s.fallbackPrices["grok-4.3"] = &ModelPricing{
@@ -1274,6 +1290,8 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["grok-4.6"]
 	case "grok-4.7", "grok-4.7-latest":
 		return s.fallbackPrices["grok-4.7"]
+	case "grok-4.7-fast", "grok-4.7-build-fast":
+		return s.fallbackPrices["grok-4.7-fast"]
 	case "grok-4.5", "grok-4.5-latest":
 		return s.fallbackPrices["grok-4.5"]
 	case "grok-3-mini":
@@ -1463,7 +1481,7 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 	applyChannelTokenPriceOverrides(pricing, channelPricing)
 	pricing.FastMultiplier = channelPricing.FastMultiplier
 	pricing.FlexMultiplier = channelPricing.FlexMultiplier
-	pricing.ReasoningEffortMultipliers = maps.Clone(channelPricing.ReasoningEffortMultipliers)
+	pricing.ReasoningEffortMultipliers = maps.Clone(configuredReasoningEffortMultipliers(channelPricing))
 	applyChannelImagePriceOverrides(channelPricing, pricing)
 	return pricing, nil
 }
@@ -1577,7 +1595,7 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 	case BillingModePerRequest, BillingModeImage, BillingModeVideo:
 		breakdown, err = s.calculatePerRequestCost(resolved, input)
 		if err == nil && resolved.channelPricing != nil {
-			applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, resolved.channelPricing.ReasoningEffortMultipliers))
+			applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, configuredReasoningEffortMultipliers(resolved.channelPricing)))
 		}
 	default: // BillingModeToken
 		breakdown, err = s.calculateTokenCost(resolved, input)
@@ -1677,6 +1695,17 @@ func (s *BillingService) computeTokenBreakdown(
 		}
 		if pricing.CacheCreationPricePerTokenPriority > 0 {
 			cacheCreationPrice = pricing.CacheCreationPricePerTokenPriority
+			if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
+				// The TTL-specific path reads its own base prices. Preserve the
+				// 1h premium while applying the explicitly configured priority rate.
+				baseCacheCreationPrice := pricing.CacheCreationPricePerToken
+				if baseCacheCreationPrice <= 0 {
+					baseCacheCreationPrice = pricing.CacheCreation5mPrice
+				}
+				if baseCacheCreationPrice > 0 {
+					cacheCreationMultiplier = cacheCreationPrice / baseCacheCreationPrice
+				}
+			}
 		}
 	} else {
 		tierMultiplier = configuredServiceTierMultiplier(serviceTier, pricing)
@@ -1697,7 +1726,7 @@ func (s *BillingService) computeTokenBreakdown(
 		// 缓存创建（cache_write）也是输入侧操作，三档价格（标准 / 5m / 1h）
 		// 都通过 computeCacheCreationCost 直接读取 pricing.*，不会经过这里
 		// 的倍率修改，因此显式向下传一个倍率，避免长上下文场景下被漏乘。
-		cacheCreationMultiplier = longCtxInputMultiplier
+		cacheCreationMultiplier *= longCtxInputMultiplier
 	}
 
 	bd := &CostBreakdown{}
@@ -1937,7 +1966,7 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	needsCacheCreationPolicy := usesCacheWritePremium && !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
 	fastRatio := openAIModelFastPricingRatio(normalized)
-	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil
+	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil && !usePriorityServiceTierPricing("priority", pricing)
 	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier {
 		return pricing
 	}

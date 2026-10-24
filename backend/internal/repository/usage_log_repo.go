@@ -38,10 +38,11 @@ const usageLogEffectivePlatformExpr = "CASE WHEN g.platform = 'composite' THEN a
 
 // dateFormatWhitelist 将 granularity 参数映射为 PostgreSQL TO_CHAR 格式字符串，防止外部输入直接拼入 SQL
 var dateFormatWhitelist = map[string]string{
-	"hour":  "YYYY-MM-DD HH24:00",
-	"day":   "YYYY-MM-DD",
-	"week":  "IYYY-IW",
-	"month": "YYYY-MM",
+	"minute": "YYYY-MM-DD HH24:MI",
+	"hour":   "YYYY-MM-DD HH24:00",
+	"day":    "YYYY-MM-DD",
+	"week":   "IYYY-IW",
+	"month":  "YYYY-MM",
 }
 
 // safeDateFormat 根据白名单获取 dateFormat，未匹配时返回默认值

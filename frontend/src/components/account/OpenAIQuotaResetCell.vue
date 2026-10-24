@@ -106,6 +106,32 @@
       </span>
     </div>
 
+    <div
+      v-if="autoResetState"
+      class="flex flex-wrap items-center gap-1 text-[10px]"
+      data-testid="auto-reset-credit-state"
+    >
+      <span
+        class="inline-flex items-center rounded px-1.5 py-0.5 font-medium"
+        :class="autoResetStateClass"
+      >
+        {{ autoResetStateLabel }}
+        <span v-if="autoResetState.trigger_window" class="ml-1 tabular-nums">
+          {{ autoResetState.trigger_window }}
+        </span>
+      </span>
+      <span v-if="autoResetState.checked_at" class="text-gray-500 dark:text-gray-400">
+        {{ formatResetCreditExpiry(autoResetState.checked_at, 'short') }}
+      </span>
+      <span
+        v-if="autoResetState.error_code"
+        class="max-w-full truncate text-red-600 dark:text-red-400"
+        :title="autoResetState.error_code"
+      >
+        {{ autoResetState.error_code }}
+      </span>
+    </div>
+
     <div v-if="primaryResetCreditExpiry" class="space-y-1">
       <div class="flex flex-wrap items-center gap-1">
         <span

@@ -1,0 +1,38 @@
+[package]
+name = "sub2api-cost-console"
+version = "0.4.0"
+description = "Sub2API desktop cost operations console"
+authors = ["Sub2API"]
+edition = "2021"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+plugin-preview = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+hex = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "system-proxy"] }
+rand = "0.8"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-process = "2"
+tauri-plugin-opener = "2.5.4"
+tauri-plugin-shell = "2"
+tauri-plugin-updater = "2.10.1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "sync", "time"] }
+zip = { version = "4.6.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+tauri-plugin-single-instance = "2.4.3"
+serde_yaml_ng = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_Security"] }
+
+[patch.crates-io]
+tray-icon = { path = "vendor/tray-icon" }

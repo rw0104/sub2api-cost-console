@@ -18,6 +18,7 @@ import (
 
 const (
 	securitySecretKeyJWT        = "jwt_secret"
+	securitySecretKeyTOTP       = "totp_encryption_key"
 	securitySecretReadRetryMax  = 5
 	securitySecretReadRetryWait = 10 * time.Millisecond
 )
@@ -42,7 +43,7 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 			log.Println("Warning: configured JWT secret mismatches persisted value; using persisted secret for cross-instance consistency.")
 		}
 		cfg.JWT.Secret = storedSecret
-		return nil
+		return ensureEncryptionSecret(ctx, client, cfg)
 	}
 
 	secret, created, err := getOrCreateGeneratedSecuritySecret(ctx, client, securitySecretKeyJWT, 32)
@@ -53,6 +54,43 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 
 	if created {
 		log.Println("Warning: JWT secret auto-generated and persisted to database. Consider rotating to a managed secret for production.")
+	}
+	return ensureEncryptionSecret(ctx, client, cfg)
+}
+
+// Bind the AES key to the database that owns its ciphertext before constructing
+// any encryptor. Config.Load's random key is provisional, never authoritative.
+// Insert-on-conflict and read-back give concurrently starting replicas one key.
+func ensureEncryptionSecret(ctx context.Context, client *ent.Client, cfg *config.Config) error {
+	var key string
+	var err error
+	if cfg.Totp.EncryptionKeyConfigured {
+		configured := strings.ToLower(strings.TrimSpace(cfg.Totp.EncryptionKey))
+		if err := validateEncryptionSecret(configured); err != nil {
+			return fmt.Errorf("configured TOTP_ENCRYPTION_KEY: %w", err)
+		}
+		key, err = createSecuritySecretIfAbsent(ctx, client, securitySecretKeyTOTP, configured)
+		if err == nil && !strings.EqualFold(key, configured) {
+			return fmt.Errorf("TOTP_ENCRYPTION_KEY conflicts with the persisted encryption key; restore the matching configuration before starting; no key was replaced")
+		}
+	} else {
+		key, _, err = getOrCreateGeneratedSecuritySecret(ctx, client, securitySecretKeyTOTP, 32)
+	}
+	if err != nil {
+		return fmt.Errorf("ensure persistent encryption key: %w", err)
+	}
+	if err := validateEncryptionSecret(key); err != nil {
+		return fmt.Errorf("stored encryption key is invalid; restore it from backup: %w", err)
+	}
+	cfg.Totp.EncryptionKey = strings.ToLower(key)
+	cfg.Totp.EncryptionKeyConfigured = true
+	return nil
+}
+
+func validateEncryptionSecret(value string) error {
+	key, err := hex.DecodeString(value)
+	if err != nil || len(key) != 32 {
+		return fmt.Errorf("encryption key must be exactly 64 hexadecimal characters")
 	}
 	return nil
 }

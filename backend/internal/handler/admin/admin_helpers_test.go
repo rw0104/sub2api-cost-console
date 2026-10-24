@@ -32,6 +32,21 @@ func TestParseTimeRange(t *testing.T) {
 	require.False(t, end.IsZero())
 }
 
+func TestParseDashboardSnapshotV2TimeRangeUsesExactLiveWindow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/?time_range=30m", nil)
+
+	before := time.Now()
+	start, end, err := parseDashboardSnapshotV2TimeRange(c)
+	after := time.Now()
+
+	require.NoError(t, err)
+	require.WithinDuration(t, before.Add(-30*time.Minute), start, 2*time.Second)
+	require.WithinDuration(t, after, end, 2*time.Second)
+}
+
 func TestParseOpsViewParam(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -178,9 +193,13 @@ func TestParseOpsRealtimeWindow(t *testing.T) {
 }
 
 func TestPickThroughputBucketSeconds(t *testing.T) {
+	require.Equal(t, 5, pickThroughputBucketSeconds(time.Minute))
+	require.Equal(t, 15, pickThroughputBucketSeconds(5*time.Minute))
 	require.Equal(t, 60, pickThroughputBucketSeconds(30*time.Minute))
 	require.Equal(t, 300, pickThroughputBucketSeconds(6*time.Hour))
-	require.Equal(t, 3600, pickThroughputBucketSeconds(48*time.Hour))
+	require.Equal(t, 900, pickThroughputBucketSeconds(24*time.Hour))
+	require.Equal(t, 7200, pickThroughputBucketSeconds(7*24*time.Hour))
+	require.Equal(t, 21600, pickThroughputBucketSeconds(30*24*time.Hour))
 }
 
 func TestParseOpsQueryMode(t *testing.T) {

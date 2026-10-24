@@ -4,6 +4,11 @@ export interface PluginCapability {
   id: string
   platform: string
   account_type: string
+  kind?: 'hook' | 'provider' | 'event_sink' | 'worker'
+  permissions?: string[]
+  timeout_ms?: number
+  failure_mode?: 'fail_closed' | 'fail_open' | 'async'
+  synchronous?: boolean
 }
 
 export interface PluginRequirements {
@@ -11,7 +16,8 @@ export interface PluginRequirements {
   recommended_sub2api_version?: string
   tested_sub2api_versions?: string[]
   plugin_protocol: number
-  transport_api: number
+  transport_api?: number
+  extension_api?: number
   ui_bridge: number
 }
 
@@ -48,6 +54,59 @@ export interface PluginBinding {
   account_type: string
   enabled: boolean
   rollout_percent: number
+  priority?: number
+  account_ids?: number[]
+  user_ids?: number[]
+  group_ids?: number[]
+  max_concurrency?: number
+  timeout_ms?: number
+}
+
+export interface PluginRoutingPolicy {
+  capability: string
+  priority: number
+  account_ids: number[]
+  user_ids: number[]
+  group_ids: number[]
+  rollout_percent: number
+  max_concurrency: number
+  timeout_ms: number
+}
+
+export interface PluginSecretGrant {
+  plugin_id: number
+  capability: string
+  alias: string
+  expires_at: string
+  updated_at: string
+}
+export interface PluginHostSnapshot {
+  logs: number
+  metrics: Record<string, number>
+  events_accepted: number
+  events_dropped: number
+  recent_events: { sequence: number; capability: string; name: string; value: number; time: string }[]
+}
+export async function hostStats(id: number): Promise<PluginHostSnapshot> {
+  const { data } = await apiClient.get<PluginHostSnapshot>(`/admin/plugins/${id}/host`)
+  return data
+}
+export async function secretGrants(id: number): Promise<PluginSecretGrant[]> {
+  const { data } = await apiClient.get<PluginSecretGrant[]>(`/admin/plugins/${id}/secret-grants`)
+  return data
+}
+export async function putSecretGrant(id: number, capability: string, alias: string, value: string, ttlSeconds: number): Promise<void> {
+  await apiClient.put(`/admin/plugins/${id}/secret-grants`, { capability, alias, value, ttl_seconds: ttlSeconds })
+}
+export async function deleteSecretGrant(id: number, capability: string, alias: string): Promise<void> {
+  await apiClient.delete(`/admin/plugins/${id}/secret-grants`, { data: { capability, alias } })
+}
+
+export async function saveRouting(id: number, policies: PluginRoutingPolicy[], expectedUpdatedAt: string, expectedRevision?: number): Promise<PluginInstallation> {
+  const { data } = await apiClient.put<PluginInstallation>(`/admin/plugins/${id}/routing`, {
+    policies, expected_updated_at: expectedUpdatedAt, ...(expectedRevision && expectedRevision > 0 ? { expected_revision: expectedRevision } : {})
+  })
+  return data
 }
 
 export interface PluginInstallation {
@@ -65,10 +124,55 @@ export interface PluginInstallation {
   installed_at: string
   enabled_at?: string
   updated_at: string
+  revision?: number
+  etag?: string
   bindings: PluginBinding[]
   compatibility: PluginCompatibility
   runtime_healthy: boolean
+  runtime_version?: string
+  runtime_isolation?: 'process' | 'container'
   runtime_message: string
+  capability_runtime?: {
+    capability: string
+    healthy: boolean
+    message?: string
+    in_flight: number
+    calls: number
+    errors: number
+    denied: number
+    circuit_open: boolean
+    concurrency_limit: number
+  }[]
+}
+
+export interface PluginPackageInspection {
+  manifest: PluginManifest
+  compatibility: PluginCompatibility
+  package_sha256: string
+  signature_status: 'trusted' | 'unsigned' | 'untrusted'
+  publisher?: { key_id: string; fingerprint: string }
+  runtime_isolation: 'process' | 'container'
+}
+
+export interface PluginPublisherApproval {
+  package_sha256: string
+  publisher_fingerprint: string
+}
+
+function appendPublisherApproval(form: FormData, approval?: PluginPublisherApproval): void {
+  if (!approval) return
+  form.append('trust_publisher', 'true')
+  form.append('package_sha256', approval.package_sha256)
+  form.append('publisher_fingerprint', approval.publisher_fingerprint)
+}
+
+export async function inspect(file: File): Promise<PluginPackageInspection> {
+  const form = new FormData()
+  form.append('plugin', file)
+  const { data } = await apiClient.post<PluginPackageInspection>('/admin/plugins/inspect', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
+  })
+  return data
 }
 
 export interface PluginTestResult {
@@ -84,6 +188,40 @@ export interface PluginStatusResult {
   status_json?: string
 }
 
+export interface PluginVersion {
+  id: number
+  plugin_id: number
+  version: string
+  binary_sha256: string
+  saved_at: string
+  expires_at: string
+  manifest: PluginManifest
+  compatibility: PluginCompatibility
+}
+
+export async function versions(id: number): Promise<PluginVersion[]> {
+  const { data } = await apiClient.get<PluginVersion[]>(`/admin/plugins/${id}/versions`)
+  return data
+}
+
+export async function upgrade(id: number, file: File, acceptUntested: boolean, approval?: PluginPublisherApproval): Promise<PluginInstallation> {
+  const form = new FormData()
+  form.append('plugin', file)
+  form.append('accept_untested', String(acceptUntested))
+  appendPublisherApproval(form, approval)
+  const { data } = await apiClient.post<PluginInstallation>(`/admin/plugins/${id}/upgrade`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000
+  })
+  return data
+}
+
+export async function rollback(id: number, versionID: number, acceptUntested: boolean): Promise<PluginInstallation> {
+  const { data } = await apiClient.post<PluginInstallation>(`/admin/plugins/${id}/rollback`, {
+    version_id: versionID, accept_untested: acceptUntested
+  }, { timeout: 120000 })
+  return data
+}
+
 export interface PluginUISession {
   url: string
   bridge_token: string
@@ -96,14 +234,24 @@ export async function list(): Promise<PluginInstallation[]> {
   return data
 }
 
-export async function upload(file: File): Promise<PluginInstallation> {
+export async function get(id: number): Promise<PluginInstallation> {
+  const { data } = await apiClient.get<PluginInstallation>(`/admin/plugins/${id}`)
+  return data
+}
+
+export async function upload(file: File, approval?: PluginPublisherApproval): Promise<PluginInstallation> {
   const form = new FormData()
   form.append('plugin', file)
+  appendPublisherApproval(form, approval)
   const { data } = await apiClient.post<PluginInstallation>('/admin/plugins/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000
   })
   return data
+}
+
+export async function authorizeUpload(): Promise<void> {
+  await apiClient.post('/admin/plugins/authorize-upload', {})
 }
 
 export async function enable(
@@ -132,16 +280,71 @@ export async function getConfig(id: number): Promise<Record<string, unknown>> {
   return data
 }
 
+export interface PluginConfigSaveResult {
+  /** 保存后的配置内容（后端回显）。 */
+  config: Record<string, unknown>
+  /** 写入路径返回的权威 revision（来自 X-Plugin-Revision 响应头）。 */
+  revision?: number
+  /** 本次写入的 ETag（如 "plugin-<id>-<rev>"）。 */
+  etag?: string
+  /** 本次写入的操作 ID（X-Plugin-Operation-ID），用于日志/幂等排查。 */
+  operationId?: string
+}
+
+/** 解析 X-Plugin-Revision 响应头为正整数 revision，非法或缺失返回 undefined。 */
+function parsePluginRevisionHeader(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+/** 读取字符串响应头，空白/缺失返回 undefined。 */
+function readStringHeader(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
 export async function saveConfig(
   id: number,
-  config: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const { data } = await apiClient.put<Record<string, unknown>>(`/admin/plugins/${id}/config`, config)
-  return data
+  config: Record<string, unknown>,
+  expectedRevision?: number
+): Promise<PluginConfigSaveResult> {
+  const headers: Record<string, string> = {}
+  if (expectedRevision && expectedRevision > 0) {
+    // 优先走 X-Plugin-Revision 专用通道（后端优先读取它）。
+    // If-Match 保留为向后兼容回退，兼顾仅识别 If-Match 的旧宿主。
+    headers['X-Plugin-Revision'] = String(expectedRevision)
+    headers['If-Match'] = String(expectedRevision)
+  }
+  const response = await apiClient.put<Record<string, unknown>>(
+    `/admin/plugins/${id}/config`,
+    config,
+    Object.keys(headers).length ? { headers } : undefined
+  )
+  return {
+    config: response.data,
+    revision: parsePluginRevisionHeader(response.headers['x-plugin-revision']),
+    etag: readStringHeader(response.headers['etag']),
+    operationId: readStringHeader(response.headers['x-plugin-operation-id']),
+  }
 }
 
 export async function test(id: number): Promise<PluginTestResult> {
   const { data } = await apiClient.post<PluginTestResult>(`/admin/plugins/${id}/test`)
+  return data
+}
+
+export async function recoverConfig(
+  id: number,
+  config: Record<string, unknown>,
+  expectedConfigDigest: string
+): Promise<Record<string, unknown>> {
+  const { data } = await apiClient.post<Record<string, unknown>>('/admin/plugins/' + id + '/config/recover', {
+    config, expected_config_digest: expectedConfigDigest
+  })
   return data
 }
 
@@ -156,6 +359,17 @@ export async function createUISession(id: number): Promise<PluginUISession> {
 }
 
 export default {
+  inspect,
+  authorizeUpload,
+  hostStats,
+  secretGrants,
+  putSecretGrant,
+  deleteSecretGrant,
+  get,
+  saveRouting,
+  versions,
+  upgrade,
+  rollback,
   list,
   upload,
   enable,
@@ -163,6 +377,7 @@ export default {
   remove,
   getConfig,
   saveConfig,
+  recoverConfig,
   test,
   status,
   createUISession

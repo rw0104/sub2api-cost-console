@@ -88,6 +88,33 @@ func TestRequestLogger_GenerateAndPropagateRequestID(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerCapturesPluginIngressProvenance(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequestLogger())
+	r.POST("/v1/responses", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		if got, _ := ctx.Value(ctxkey.PluginOriginalIngress).(string); got != "/v1/responses" {
+			t.Fatalf("original ingress=%q", got)
+		}
+		if got, _ := ctx.Value(ctxkey.PluginClientFamily).(string); got != "codex_cli" {
+			t.Fatalf("client family=%q", got)
+		}
+		if got, _ := ctx.Value(ctxkey.PluginClientVersion).(string); got != "0.146.0" {
+			t.Fatalf("client version=%q", got)
+		}
+		c.Status(http.StatusOK)
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req.Header.Set("User-Agent", "codex_cli_rs/0.146.0 (Linux; x86_64)")
+	req.Header.Set("originator", "codex_cli_rs")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
 func TestRequestLogger_KeepIncomingRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

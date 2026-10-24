@@ -33,6 +33,30 @@ func TestDeriveAuditAction(t *testing.T) {
 	}
 }
 
+func TestPluginSecretAndConfigBodiesNeverEnterAuditLog(t *testing.T) {
+	repo := &auditCaptureRepository{}
+	audit := service.NewAuditLogService(repo, nil)
+	audit.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+	for _, route := range []string{"/api/v1/admin/plugins/:id/secret-grants", "/api/v1/admin/plugins/:id/config"} {
+		router.PUT(route, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	}
+	for _, path := range []string{"/api/v1/admin/plugins/1/secret-grants", "/api/v1/admin/plugins/1/config"} {
+		request := httptest.NewRequest("PUT", path, bytes.NewBufferString(`{"value":"private-broker-marker","opaque":"custom-password"}`))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(httptest.NewRecorder(), request)
+	}
+	audit.Stop()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.logs, 2)
+	for _, entry := range repo.logs {
+		require.Equal(t, "<credential-bearing body omitted>", entry.RequestBody)
+		require.NotContains(t, entry.RequestBody, "private")
+	}
+}
+
 type auditCaptureRepository struct {
 	mu   sync.Mutex
 	logs []*service.AuditLog

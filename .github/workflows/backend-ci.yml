@@ -35,13 +35,31 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.2'
+          go version | grep -q 'go1.27.3'
       - name: Unit tests
         working-directory: backend
         run: make test-unit
       - name: Integration tests
         working-directory: backend
         run: make test-integration
+
+  canonical-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Check canonical package verifier formatting
+        working-directory: backend
+        shell: bash
+        run: test -z "$(gofmt -d internal/service/plugin_package_provenance.go internal/service/plugin_package_provenance_test.go)"
+      - name: Verify canonical package provenance without release secrets
+        working-directory: backend
+        run: go test ./internal/service -run '^TestCanonical' -count=1
 
   frontend:
     runs-on: ubuntu-latest
@@ -75,7 +93,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.2'
+          go version | grep -q 'go1.27.3'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -90,6 +108,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: node --test frontend/scripts/core-release-contract.test.mjs
+      - run: node frontend/scripts/check-plugin-isolation.mjs
       - run: python -m pip install -r .github/release-tools/requirements-release.txt
       - run: python -m unittest discover -s .github/release-tools -p 'test_release_matrix.py'
       - run: bash -n .github/release-tools/release-images.sh

@@ -279,6 +279,16 @@ export default {
         expiresAt: 'Expires At',
         actions: 'Actions'
       },
+      protectionTransport: {
+        title: 'Request header probe',
+        unobserved: 'No request header observed yet',
+        observedBytes: '{value} B',
+        observedBlocks: '{value} blocks',
+        format: '{observed}/{expected} B · {observedBlocks}/{expectedBlocks} blocks',
+        phase: 'Phase: {value}',
+        diagnostic: 'Diagnostic: {value}',
+        lastProbe: 'Last probe: {value}'
+      },
       schedulerScore: {
         baseShort: 'Base',
         stickyShort: 'Sticky',

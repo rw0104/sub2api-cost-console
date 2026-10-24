@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -911,10 +912,11 @@ function handleToolbarRefresh() {
 
           <div class="mx-1 hidden h-4 w-[1px] bg-gray-200 dark:bg-dark-700 sm:block"></div>
 
-          <Select
+          <TimeRangeSelect
             :model-value="timeRange"
             :options="timeRangeOptions"
-            class="relative w-full sm:w-[150px]"
+            aria-label="时间窗口"
+            select-class="w-full sm:w-[150px]"
             @update:model-value="handleTimeRangeChange"
           />
         </template>

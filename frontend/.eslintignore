@@ -7,6 +7,7 @@ node_modules/
 
 # 忽略构建输出
 dist/
+src-tauri/target/
 ../backend/internal/web/dist/
 
 # 忽略缓存

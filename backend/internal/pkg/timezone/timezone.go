@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"log"
 	"time"
+	// The managed Windows sidecar runs without a system zoneinfo database.
+	// Embed Go's IANA data so configured locations such as Asia/Shanghai work
+	// after installation and during automatic core restarts.
+	_ "time/tzdata"
 )
 
 var (

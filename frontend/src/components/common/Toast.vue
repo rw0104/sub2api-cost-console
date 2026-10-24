@@ -1,7 +1,10 @@
 <template>
   <Teleport to="body">
     <div
-      class="pointer-events-none fixed right-4 top-4 z-[9999] space-y-3"
+      :class="[
+        'toast-stack pointer-events-none fixed right-4 z-[9999] space-y-3',
+        desktop ? 'toast-stack--desktop' : 'top-4'
+      ]"
       aria-live="polite"
       aria-atomic="true"
     >
@@ -80,8 +83,10 @@
 import { computed } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
+import { isDesktopRuntime } from '@/api/url'
 
 const appStore = useAppStore()
+const desktop = isDesktopRuntime()
 
 const toasts = computed(() => appStore.toasts)
 
@@ -135,6 +140,19 @@ const removeToast = (id: string) => {
 </script>
 
 <style scoped>
+.toast-stack {
+  max-width: min(28rem, calc(100vw - 2rem));
+}
+
+.toast-stack--desktop {
+  top: auto;
+  bottom: 72px;
+}
+
+.toast-stack--desktop > * {
+  min-width: min(320px, calc(100vw - 2rem));
+}
+
 .toast-progress {
   width: 100%;
   animation-name: toast-progress-shrink;

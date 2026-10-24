@@ -27,6 +27,8 @@ type dashboardSnapshotV2Response struct {
 
 	StartDate   string `json:"start_date"`
 	EndDate     string `json:"end_date"`
+	StartTime   string `json:"start_time"`
+	EndTime     string `json:"end_time"`
 	Granularity string `json:"granularity"`
 
 	Stats      *dashboardSnapshotV2Stats        `json:"stats,omitempty"`
@@ -42,6 +44,7 @@ type dashboardSnapshotV2Filters struct {
 	AccountID             int64
 	GroupID               int64
 	Model                 string
+	ModelSource           string
 	RequestType           *int16
 	Stream                *bool
 	NativeCompactionV2    *bool
@@ -58,6 +61,7 @@ type dashboardSnapshotV2CacheKey struct {
 	AccountID             int64  `json:"account_id"`
 	GroupID               int64  `json:"group_id"`
 	Model                 string `json:"model"`
+	ModelSource           string `json:"model_source"`
 	RequestType           *int16 `json:"request_type"`
 	Stream                *bool  `json:"stream"`
 	NativeCompactionV2    *bool  `json:"native_compaction_v2"`
@@ -72,9 +76,13 @@ type dashboardSnapshotV2CacheKey struct {
 }
 
 func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
-	startTime, endTime := parseTimeRange(c)
+	startTime, endTime, err := parseDashboardSnapshotV2TimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	granularity := strings.TrimSpace(c.DefaultQuery("granularity", "day"))
-	if granularity != "hour" {
+	if granularity != "minute" && granularity != "hour" {
 		granularity = "day"
 	}
 
@@ -105,6 +113,7 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		AccountID:             filters.AccountID,
 		GroupID:               filters.GroupID,
 		Model:                 filters.Model,
+		ModelSource:           filters.ModelSource,
 		RequestType:           filters.RequestType,
 		Stream:                filters.Stream,
 		NativeCompactionV2:    filters.NativeCompactionV2,
@@ -150,6 +159,17 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 	response.Success(c, cached.Payload)
 }
 
+func parseDashboardSnapshotV2TimeRange(c *gin.Context) (time.Time, time.Time, error) {
+	if strings.TrimSpace(c.Query("time_range")) != "" ||
+		strings.TrimSpace(c.Query("start_time")) != "" ||
+		strings.TrimSpace(c.Query("end_time")) != "" {
+		return parseOpsTimeRange(c, "24h")
+	}
+
+	startTime, endTime := parseTimeRange(c)
+	return startTime, endTime, nil
+}
+
 func (h *DashboardHandler) buildSnapshotV2Response(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -161,7 +181,9 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	resp := &dashboardSnapshotV2Response{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		StartDate:   startTime.Format("2006-01-02"),
-		EndDate:     endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+		EndDate:     endTime.Add(-time.Nanosecond).Format("2006-01-02"),
+		StartTime:   startTime.UTC().Format(time.RFC3339),
+		EndTime:     endTime.UTC().Format(time.RFC3339),
 		Granularity: granularity,
 	}
 
@@ -208,7 +230,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.APIKeyID,
 			filters.AccountID,
 			filters.GroupID,
-			usagestats.ModelSourceRequested,
+			filters.ModelSource,
 			filters.RequestType,
 			filters.Stream,
 			filters.NativeCompactionV2,
@@ -255,7 +277,14 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 
 func parseDashboardSnapshotV2Filters(c *gin.Context) (*dashboardSnapshotV2Filters, error) {
 	filters := &dashboardSnapshotV2Filters{
-		Model: strings.TrimSpace(c.Query("model")),
+		Model:       strings.TrimSpace(c.Query("model")),
+		ModelSource: usagestats.ModelSourceRequested,
+	}
+	if rawModelSource := strings.TrimSpace(c.Query("model_source")); rawModelSource != "" {
+		if !usagestats.IsValidModelSource(rawModelSource) {
+			return nil, errors.New("invalid model_source, use requested/upstream/response/mapping")
+		}
+		filters.ModelSource = rawModelSource
 	}
 
 	if userIDStr := strings.TrimSpace(c.Query("user_id")); userIDStr != "" {

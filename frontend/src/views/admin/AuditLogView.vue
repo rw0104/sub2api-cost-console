@@ -57,9 +57,10 @@
 
               <div class="w-full sm:w-auto sm:min-w-[170px]">
                 <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
-                <Select
+                <TimeRangeSelect
                   :model-value="timeRange"
                   :options="timeRangeOptions"
+                  aria-label="审计日志时间窗口"
                   @update:model-value="handleTimeRangeChange"
                 />
               </div>
@@ -362,6 +363,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import type { Column } from '@/components/common/types'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'

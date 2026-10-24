@@ -199,6 +199,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { isDesktopRuntime } from '@/api/url'
 
 interface NavItem {
   path: string
@@ -330,6 +331,12 @@ const ChartIcon = {
         })
       ]
     )
+}
+
+const BackToCostMonitorIcon = {
+  render: () => h('svg', { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.8' }, [
+    h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', d: 'M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18' }),
+  ])
 }
 
 const GiftIcon = {
@@ -776,6 +783,7 @@ const customMenuItemsForAdmin = computed(() => {
 const adminNavItems = computed((): NavItem[] => {
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
+    { path: '/admin/cost-center', label: isDesktopRuntime() ? '返回成本监控' : t('nav.costCenter'), icon: isDesktopRuntime() ? BackToCostMonitorIcon : ChartIcon },
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon },

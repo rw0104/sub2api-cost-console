@@ -6,6 +6,7 @@ import LogRetentionSelect from './LogRetentionSelect.vue'
 import { opsAPI, type OpsRuntimeLogConfig, type OpsSystemLog, type OpsSystemLogSinkHealth } from '@/api/admin/ops'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
+import TimeRangeSelect from '@/components/common/TimeRangeSelect.vue'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
@@ -479,7 +480,7 @@ onMounted(async () => {
     <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
       <label class="text-xs text-gray-600 dark:text-gray-300">
         {{ t('admin.ops.systemLogs.timeRange') }}
-        <Select v-model="filters.time_range" class="mt-1" :options="timeRangeOptions" />
+        <TimeRangeSelect v-model="filters.time_range" select-class="mt-1" :options="timeRangeOptions" aria-label="系统日志时间窗口" />
       </label>
       <label class="text-xs text-gray-600 dark:text-gray-300">
         {{ t('admin.ops.systemLogs.startTime') }}

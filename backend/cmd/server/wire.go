@@ -76,8 +76,9 @@ func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
 
 func providePluginHostInfo(buildInfo handler.BuildInfo) service.PluginHostInfo {
 	return service.PluginHostInfo{
-		Version:   buildInfo.Version,
-		BuildType: buildInfo.BuildType,
+		Version:          buildInfo.Version,
+		BuildType:        buildInfo.BuildType,
+		ExtensionVersion: CoreExtensionVersion,
 	}
 }
 
@@ -131,6 +132,7 @@ func provideCleanup(
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
+	accountEconomics *service.AccountEconomicsService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -152,6 +154,12 @@ func provideCleanup(
 			{"OpenAIQuotaAutoResetService", func() error {
 				if openAIAutoReset != nil {
 					openAIAutoReset.Stop()
+				}
+				return nil
+			}},
+			{"AccountEconomicsService", func() error {
+				if accountEconomics != nil {
+					accountEconomics.Stop()
 				}
 				return nil
 			}},

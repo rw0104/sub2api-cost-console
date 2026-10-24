@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -110,11 +111,34 @@ func isClientCanceledTransportError(ctx context.Context, err error) bool {
 //     to a healthy account) for all non-canceled errors, or a plain error for
 //     context.Canceled (client gone — no failover, no eviction).
 //
-// It deliberately does NOT write to the response: the handler owns the response
-// (failover, or a protocol-correct error once failover is exhausted).
+// For transport faults it deliberately does NOT write to the response: the
+// handler owns failover and the final protocol-correct error. Extension policy
+// errors are terminal host decisions instead, and commit their own JSON response.
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	var extensionErr *PluginPreprocessError
+	if errors.As(err, &extensionErr) {
+		status := http.StatusServiceUnavailable
+		if extensionErr.Denied {
+			status = http.StatusForbidden
+		}
+		if c != nil && !c.Writer.Written() {
+			// This is a complete terminal policy response, not stream output.
+			// The outer handler otherwise appends a fallback SSE error to the JSON.
+			MarkResponseCommitted(c)
+			detail := gin.H{"type": "extension_error", "message": extensionErr.Error()}
+			if extensionErr.DiagnosticCode == "all_routes_cooling" || extensionErr.DiagnosticCode == "fixed_route_cooling" {
+				detail["code"] = extensionErr.DiagnosticCode
+				c.Header("X-Sleep-State-Error-Source", "local")
+				if extensionErr.RetryAfterSeconds > 0 {
+					c.Header("Retry-After", strconv.Itoa(min(86400, extensionErr.RetryAfterSeconds)))
+				}
+			}
+			c.JSON(status, gin.H{"error": detail})
+		}
+		return err
+	}
 	if isClientCanceledTransportError(ctx, err) {
 		return err
 	}
