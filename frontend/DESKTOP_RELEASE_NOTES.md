@@ -5,7 +5,7 @@
 - 修复保护传输插件重新启用后 Codex 连不上网关的问题。宿主在 `v0.3.5` 起丢失了写入“比较基线”的挂钩，真实请求到达插件时 `OriginalBodyJson` 恒为空；启用完整性检查的保护传输插件（例如账号保护 mode1 默认 `enforce`）会把每个 `/responses` 请求判为拒绝，客户端收到 403 `extension_error`。现在 Responses、透传、Chat Completions 与 WebSocket HTTP Bridge 都会在出站前写入最终请求体作为基线，插件同时拿到映射后的模型和默认 instructions 摘要。
 - 命中保护传输的账号固定使用 HTTP/SSE 上游，避免 WebSocket 上游绕过插件。
 - API 接入中心的 Codex 示例配置改为 `env_key = "SUB2API_API_KEY"`，并附带对应的 PowerShell 环境变量命令。Codex 0.149 起，`requires_openai_auth = false` 的自定义 Provider 不再读取 `auth.json`，旧示例会让 Codex 不带密钥访问网关并收到 401。“复制密钥命令”在 Codex 预设下复制同名变量，其余预设仍复制 `OPENAI_API_KEY`。
-- 本轮同步上游 Sub2API `v0.2.18`（提交 `37067e8e340e9440d173a92b4faa05e8ce58368f`），并保留宿主侧插件运行时、V1/V2 API、契约测试和能力清单。
+- 本轮同步上游 Sub2API `v0.2.18`（官方发布提交 `ac1b8f1271be0d674fa6f074403c1410f30a3a81`；合并头 `37067e8e340e9440d173a92b4faa05e8ce58368f`），并保留宿主侧插件运行时、V1/V2 API、契约测试和能力清单。
 - 接入作用域管理员 API Key、Gemini 生图分组能力、账号配额快照、流式断开处理、OpenAI overload 重试和新的计费/模型定价修复。
 - Windows 原生一键启动沿用 v0.3.26 的平台协议选择规则，本轮没有行为变化。
 
@@ -13,7 +13,8 @@
 
 - 桌面：`v0.4.1`
 - 上游 Sub2API：`v0.2.18`
-- 上游提交：`37067e8e340e9440d173a92b4faa05e8ce58368f`
+- 上游提交：`ac1b8f1271be0d674fa6f074403c1410f30a3a81`
+- 合并头：`37067e8e340e9440d173a92b4faa05e8ce58368f`
 - 本地扩展：`v1.3.20`
 - 成本算法：`v1.6.1`
 - 必需能力：`account_cost_loss_ledger.v1`、`account_economics_sampling.v1`、`plugin_extensions.v2`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1`、`plugin_publisher_trust.v1`
