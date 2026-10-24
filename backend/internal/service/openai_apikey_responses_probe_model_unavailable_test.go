@@ -45,5 +45,5 @@ func TestSelectResponsesProbeModelPrefersGeneralTextModel(t *testing.T) {
 	account := &Account{Credentials: map[string]any{"model_mapping": map[string]any{
 		"codex-auto-review": "codex-auto-review", "gpt-image-2": "gpt-image-2", "gpt-5.5": "gpt-5.5",
 	}}}
-	require.Equal(t, "gpt-5.5", selectOpenAIAPIKeyTestModel(account))
+	require.Equal(t, "gpt-5.5", selectResponsesProbeModel(account))
 }

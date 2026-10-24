@@ -105,6 +105,12 @@ func selectOpenAIAPIKeyTestModel(account *Account) string {
 	return candidates[0]
 }
 
+// selectResponsesProbeModel keeps the upstream probe name available while
+// preserving the host's existing account-test call path.
+func selectResponsesProbeModel(account *Account) string {
+	return selectOpenAIAPIKeyTestModel(account)
+}
+
 // defaultOpenAICompatibleTestModel centralizes official-provider defaults so
 // OpenAI-compatible APIs are never probed with an unrelated OpenAI model ID.
 func defaultOpenAICompatibleTestModel(baseURL string) string {
