@@ -329,6 +329,50 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
   })
 }
 
+describe('EditAccountModal official model additions', () => {
+  it.each([
+    ['apikey', 'whitelist'], ['apikey', 'mapping'], ['oauth', 'whitelist'], ['oauth', 'mapping']
+  ] as const)('merges confirmed models into the %s %s draft and saves existing routing', async (type, mode) => {
+    authIsSimpleMode.value = true
+    const account = type === 'oauth' ? buildOpenAIOAuthParentAccount() : buildAccount()
+    const original = {
+      'gpt-5.6-sol': 'gpt-5.6-sol',
+      'my-alias': 'gpt-6.1-sol',
+      'gpt-6.1-sol': 'existing-custom-target',
+      'gpt-6-*': 'wildcard-target'
+    }
+    account.credentials.model_mapping = { ...original }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    if (mode === 'mapping') {
+      await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.modelMapping')!.trigger('click')
+    }
+
+    const panel = wrapper.getComponent({ name: 'OpenAIOfficialModelsPanel' })
+    expect(panel.props('accountId')).toBe(account.id)
+    expect(panel.props('modelMapping')).toEqual(original)
+    expect(panel.props('mode')).toBe(mode)
+    panel.vm.$emit('add-models', ['gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-sol'])
+    await wrapper.vm.$nextTick()
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(panel.props('modelMapping')).toEqual({ ...original, 'gpt-6.1-terra': 'gpt-6.1-terra' })
+    if (mode === 'mapping') {
+      expect(wrapper.findAll('input').filter(input => input.element.value === 'gpt-6.1-terra')).toHaveLength(2)
+    } else {
+      expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelValue')).toContain('gpt-6.1-terra')
+    }
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping)
+      .toEqual({ ...original, 'gpt-6.1-terra': 'gpt-6.1-terra' })
+    await wrapper.setProps({ show: false })
+    expect(wrapper.findComponent({ name: 'OpenAIOfficialModelsPanel' }).exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true

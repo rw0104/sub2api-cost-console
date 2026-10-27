@@ -335,6 +335,7 @@ const (
 	configuredCodexGrokBuildContext    = 256_000
 	configuredCodexGPT56MaxContext     = 872_000
 	configuredCodexGPT6AstraContext    = 1_050_000
+	configuredCodexGPT61TerraContext   = 1_050_000
 	configuredCodexToolOutputMaxTokens = 10_000
 )
 
@@ -526,6 +527,12 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 				descriptor.ContextWindow = configuredCodexGPT6AstraContext
 				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
 			}
+			if openai.IsGPT61TerraModelSpelling(modelID) {
+				// Official API specifications; a live account manifest still wins.
+				// https://developers.openai.com/api/docs/models/gpt-6.1-terra
+				descriptor.ContextWindow = configuredCodexGPT61TerraContext
+				descriptor.MaxContextWindow = configuredCodexGPT61TerraContext
+			}
 		}
 		if SupportsVerbosity(modelID) {
 			defaultVerbosity := "low"
@@ -635,6 +642,9 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 		{Effort: "medium", Description: "Balanced reasoning for most coding tasks"},
 		{Effort: "high", Description: "Greater reasoning depth for coding and agent tasks"},
 		{Effort: "xhigh", Description: "Extra-high reasoning depth for difficult tasks"},
+	}
+	if openai.IsGPT61TerraModelSpelling(modelID) {
+		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "Fast responses without reasoning"}}, levels...)
 	}
 	normalized := getNormalizedCodexModel(modelID)
 	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6Model(modelID) {
@@ -2081,6 +2091,7 @@ func CodexModelsManifestETag(body []byte) string {
 
 var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
 	"gpt-6.1-sol":   {},
+	"gpt-6.1-terra": {},
 	"gpt-6-astra":   {},
 	"gpt-5.6-sol":   {},
 	"gpt-5.6-terra": {},

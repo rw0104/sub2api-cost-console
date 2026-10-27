@@ -682,6 +682,34 @@ export interface UpstreamModelMetadata {
   max_output_tokens?: number
 }
 
+export interface OfficialModelMappingCheck {
+  from: string
+  to: string
+  available: boolean
+}
+
+export interface VerifyOfficialModelsResult {
+  models: string[]
+  metadata: Record<string, UpstreamModelMetadata>
+  source: string
+  fetched_at: string
+  checks: OfficialModelMappingCheck[]
+  missing_models: string[]
+  suggested_model_mapping: Record<string, string>
+}
+
+/** Fetch the saved account's official catalog and compare a draft without saving it. */
+export async function verifyOfficialModels(
+  id: number,
+  params?: { model_mapping: Record<string, string> }
+): Promise<VerifyOfficialModelsResult> {
+  const { data } = await apiClient.post<VerifyOfficialModelsResult>(
+    `/admin/accounts/${id}/models/verify-official`,
+    params
+  )
+  return data
+}
+
 /**
  * Sync live supported models from the account's upstream model-list endpoint
  * @param id - Account ID
@@ -1211,6 +1239,7 @@ export const accountsAPI = {
   resetTempUnschedulable,
   setSchedulable,
   getAvailableModels,
+  verifyOfficialModels,
   syncUpstreamModels,
   syncUpstreamModelsPreview,
   generateAuthUrl,

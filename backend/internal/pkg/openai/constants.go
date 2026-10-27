@@ -26,6 +26,7 @@ var DefaultModels = []Model{
 	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
 	{ID: "gpt-5.6-luna", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Luna"},
 	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
+	{ID: "gpt-6.1-terra", Object: "model", OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Terra"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
@@ -49,6 +50,16 @@ func DefaultModelIDs() []string {
 		ids[i] = m.ID
 	}
 	return ids
+}
+
+// RecommendedModelIDs is the ordered official model picker preset. It is
+// separate from DefaultModels so updating the picker does not change the
+// existing account-test default or remove older compatibility aliases.
+func RecommendedModelIDs() []string {
+	return []string{
+		"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna",
+		"gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-5.6-sol",
+	}
 }
 
 // DefaultTestModel default model for testing OpenAI accounts
@@ -210,6 +221,25 @@ func IsGPT61SolModelSpelling(model string) bool {
 	}
 	switch suffix {
 	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsGPT61TerraModelSpelling recognizes the official ID and local effort/compact
+// aliases without claiming unknown preview models belong to the same family.
+func IsGPT61TerraModelSpelling(model string) bool {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	if canonical == "gpt-6.1-terra" {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(canonical, "gpt-6.1-terra-")
+	if !ok {
+		return false
+	}
+	switch suffix {
+	case "none", "low", "medium", "high", "xhigh", "max", "openai-compact":
 		return true
 	default:
 		return false

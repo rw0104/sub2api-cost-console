@@ -433,6 +433,14 @@
                 </button>
               </div>
             </div>
+            <OpenAIOfficialModelsPanel
+              v-if="show && account.platform === 'openai'"
+              :account-id="account.id"
+              :model-mapping="buildModelRestrictionMapping() || {}"
+              :mode="modelRestrictionMode"
+              :disabled="submitting"
+              @add-models="addOfficialModelMappings"
+            />
           </template>
         </div>
 
@@ -928,6 +936,14 @@
               </button>
             </div>
           </div>
+          <OpenAIOfficialModelsPanel
+            v-if="show && account.platform === 'openai'"
+            :account-id="account.id"
+            :model-mapping="buildModelRestrictionMapping() || {}"
+            :mode="modelRestrictionMode"
+            :disabled="submitting"
+            @add-models="addOfficialModelMappings"
+          />
         </template>
       </div>
 
@@ -3260,6 +3276,7 @@ import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import OpenAIOfficialModelsPanel from '@/components/account/OpenAIOfficialModelsPanel.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import CnBaseUrlPresets from '@/components/account/CnBaseUrlPresets.vue'
@@ -4257,6 +4274,18 @@ const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) =
 
 const buildModelRestrictionMapping = () =>
   buildModelMappingObject('combined', allowedModels.value, modelMappings.value)
+
+const addOfficialModelMappings = (models: string[]) => {
+  const existing = Object.keys(buildModelRestrictionMapping() || {})
+  const additions = [...new Set(models)].filter(model =>
+    !existing.some(from => from === model || (from.endsWith('*') && model.startsWith(from.slice(0, -1))))
+  )
+  if (modelRestrictionMode.value === 'mapping') {
+    modelMappings.value = [...modelMappings.value, ...additions.map(model => ({ from: model, to: model }))]
+  } else {
+    allowedModels.value = [...allowedModels.value, ...additions]
+  }
+}
 
 const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>) => {
   const shouldApplyModelMapping = !openaiPassthroughEnabled.value
