@@ -849,7 +849,7 @@ export default {
       fillRelatedModels: 'Sync latest supported models',
       officialModels: {
         title: 'Official models and mapping comparison',
-        hint: 'Fetch models visible to the saved account in the official catalog. This checks catalog membership. Additions update this draft and take effect when you save the account.',
+        hint: 'Fetch all models visible to the saved account in the official catalog, including new models, and add those not covered by existing mappings. This checks catalog membership. Additions update this draft and take effect when you save the account.',
         fetch: 'Fetch and compare official models',
         loading: 'Fetching official catalog…',
         addConfirmed: 'Add confirmed models ({count})',

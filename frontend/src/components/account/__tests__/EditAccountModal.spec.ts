@@ -353,20 +353,23 @@ describe('EditAccountModal official model additions', () => {
     expect(panel.props('accountId')).toBe(account.id)
     expect(panel.props('modelMapping')).toEqual(original)
     expect(panel.props('mode')).toBe(mode)
-    panel.vm.$emit('add-models', ['gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-sol'])
+    panel.vm.$emit('add-models', ['gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-sol', 'future-official-slug'])
     await wrapper.vm.$nextTick()
 
     expect(updateAccountMock).not.toHaveBeenCalled()
-    expect(panel.props('modelMapping')).toEqual({ ...original, 'gpt-6.1-terra': 'gpt-6.1-terra' })
+    expect(panel.props('modelMapping')).toEqual({
+      ...original, 'gpt-6.1-terra': 'gpt-6.1-terra', 'future-official-slug': 'future-official-slug'
+    })
     if (mode === 'mapping') {
       expect(wrapper.findAll('input').filter(input => input.element.value === 'gpt-6.1-terra')).toHaveLength(2)
     } else {
       expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelValue')).toContain('gpt-6.1-terra')
+      expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelValue')).toContain('future-official-slug')
     }
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping)
-      .toEqual({ ...original, 'gpt-6.1-terra': 'gpt-6.1-terra' })
+      .toEqual({ ...original, 'gpt-6.1-terra': 'gpt-6.1-terra', 'future-official-slug': 'future-official-slug' })
     await wrapper.setProps({ show: false })
     expect(wrapper.findComponent({ name: 'OpenAIOfficialModelsPanel' }).exists()).toBe(false)
     wrapper.unmount()

@@ -73,11 +73,12 @@ func TestOfficialOpenAIModelsVerificationPreservesDraftAndUsesLiveSlugs(t *testi
 		{From: "retired-alias", To: "retired-official-model", Available: false},
 	}, result.Checks)
 	require.Equal(t, map[string]string{
-		"my-alias":      "gpt-6.1-terra",
-		"gpt-6.1-sol":   "gpt-5.6-luna",
-		"gpt-5.6-*":     "gpt-5.6-luna",
-		"retired-alias": "retired-official-model",
-		"gpt-6.1-terra": "gpt-6.1-terra",
+		"my-alias":             "gpt-6.1-terra",
+		"gpt-6.1-sol":          "gpt-5.6-luna",
+		"gpt-5.6-*":            "gpt-5.6-luna",
+		"retired-alias":        "retired-official-model",
+		"gpt-6.1-terra":        "gpt-6.1-terra",
+		"future-official-slug": "future-official-slug",
 	}, result.SuggestedModelMapping)
 	require.Equal(t, wantOriginal, draft, "suggestions must not mutate the mapping draft")
 	require.Equal(t, map[string]any{"unrelated": "keep"}, account.Extra)
@@ -97,6 +98,62 @@ func TestOfficialOpenAIModelsVerificationPreservesDraftAndUsesLiveSlugs(t *testi
 	require.Equal(t, []string{"text", "image"}, terra.InputModalities)
 	require.Equal(t, []string{"none", "medium", "max"}, terra.SupportedReasoningLevels)
 	require.JSONEq(t, "true", string(terra.CodexToolCapabilities["supports_search_tool"]))
+}
+
+func TestOfficialOpenAIModelsVerificationSupplementsAllOfficialIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account *Account
+		body    string
+	}{
+		{
+			name:    "OAuth slugs",
+			account: officialModelsOAuthTestAccount(),
+			body:    `{"models":[{"slug":"future-official-slug"},{"slug":"gpt-future-model"},{"slug":"audio-future"},{"slug":"audio-future"}]}`,
+		},
+		{
+			name: "API key IDs",
+			account: &Account{
+				ID: 92, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_key": "official-verification-secret"},
+			},
+			body: `{"data":[{"id":"future-official-slug"},{"id":"gpt-future-model"},{"id":"audio-future"},{"id":"audio-future"}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newOfficialModelsTestService(http.StatusOK, tc.body)
+			repo := &upstreamModelMetadataRepoStub{}
+			svc.accountRepo = repo
+			draft := map[string]string{
+				"future-official-slug": "custom-target",
+				"gpt-*":                "gpt-6.1-terra",
+				"alias-a":              "audio-future",
+				"alias-b":              "audio-future",
+				"retired":              "not-listed",
+			}
+			result, err := svc.VerifyOfficialOpenAIModels(context.Background(), tc.account, draft)
+			require.NoError(t, err)
+			require.Equal(t, []string{"audio-future", "future-official-slug", "gpt-future-model"}, result.Models)
+			require.Equal(t, map[string]string{
+				"future-official-slug": "custom-target",
+				"gpt-*":                "gpt-6.1-terra",
+				"alias-a":              "audio-future",
+				"alias-b":              "audio-future",
+				"retired":              "not-listed",
+				"audio-future":         "audio-future",
+			}, result.SuggestedModelMapping)
+			require.NotContains(t, draft, "audio-future", "suggestions must only change the preview")
+			require.Nil(t, repo.updates, "verification must not save account data")
+			completed := compareOfficialOpenAIModelMapping(result.Models, result.SuggestedModelMapping)
+			require.Equal(t, result.SuggestedModelMapping, completed.SuggestedModelMapping, "completion must be idempotent")
+		})
+	}
+}
+
+func TestOfficialOpenAIModelsVerificationPreservesCatchAllForFutureIDs(t *testing.T) {
+	draft := map[string]string{"*": "existing-target"}
+	result := compareOfficialOpenAIModelMapping([]string{"future-official-slug", "audio-future"}, draft)
+	require.Equal(t, draft, result.SuggestedModelMapping)
 }
 
 func TestOfficialOpenAIModelsVerificationRespectsBroadWildcard(t *testing.T) {

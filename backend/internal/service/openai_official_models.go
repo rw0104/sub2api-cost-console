@@ -181,8 +181,9 @@ func compareOfficialOpenAIModelMapping(models []string, mapping map[string]strin
 	for _, modelID := range openai.RecommendedModelIDs() {
 		if _, found := available[modelID]; !found {
 			result.MissingModels = append(result.MissingModels, modelID)
-			continue
 		}
+	}
+	for _, modelID := range models {
 		if !mappingSupportsRequestedModel(mapping, modelID) {
 			result.SuggestedModelMapping[modelID] = modelID
 		}

@@ -57,7 +57,6 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { accountsAPI, type VerifyOfficialModelsResult } from '@/api/admin/accounts'
-import { OPENAI_OFFICIAL_MODEL_PRESETS } from '@/composables/useModelWhitelist'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const props = defineProps<{
@@ -91,11 +90,10 @@ onBeforeUnmount(() => { generation++ })
 const unavailableChecks = computed(() => result.value?.checks.filter(check => !check.available) ?? [])
 const additions = computed(() => {
   if (!result.value) return []
-  const official = new Set(result.value.models)
   const suggested = result.value.suggested_model_mapping
   const existing = Object.keys(props.modelMapping)
-  return OPENAI_OFFICIAL_MODEL_PRESETS.map(model => model.id).filter(model =>
-    official.has(model) && suggested[model] === model &&
+  return [...new Set(result.value.models)].filter(model =>
+    suggested[model] === model &&
     !existing.some(from => from === model || (from.endsWith('*') && model.startsWith(from.slice(0, -1))))
   )
 })

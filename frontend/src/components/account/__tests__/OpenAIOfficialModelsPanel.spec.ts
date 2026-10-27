@@ -21,7 +21,11 @@ function officialResult(overrides: Partial<VerifyOfficialModelsResult> = {}): Ve
       { from: 'old-alias', to: 'unlisted-model', available: false }
     ],
     missing_models: ['gpt-6-luna'],
-    suggested_model_mapping: { 'my-alias': 'gpt-6.1-sol', 'old-alias': 'unlisted-model', 'gpt-6.1-terra': 'gpt-6.1-terra' },
+    suggested_model_mapping: {
+      'my-alias': 'gpt-6.1-sol', 'old-alias': 'unlisted-model',
+      'gpt-6.1-sol': 'gpt-6.1-sol', 'gpt-6.1-terra': 'gpt-6.1-terra',
+      'future-official-slug': 'future-official-slug'
+    },
     ...overrides
   }
 }
@@ -56,7 +60,7 @@ describe('OpenAIOfficialModelsPanel', () => {
     expect(wrapper.emitted('add-models')).toBeUndefined()
 
     await wrapper.get('[data-testid="add-official-models"]').trigger('click')
-    expect(wrapper.emitted('add-models')).toEqual([[['gpt-6.1-terra']]])
+    expect(wrapper.emitted('add-models')).toEqual([[['gpt-6.1-sol', 'gpt-6.1-terra', 'future-official-slug']]])
     expect(wrapper.find('[data-testid="add-official-models"]').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -74,7 +78,7 @@ describe('OpenAIOfficialModelsPanel', () => {
     wrapper.unmount()
   })
 
-  it('only offers suggested presets present in the live official catalog', async () => {
+  it('offers future official IDs and excludes suggestions absent from the live catalog', async () => {
     verifyOfficialModels.mockResolvedValue(officialResult({
       models: ['gpt-6.1-sol', 'future-official-slug'],
       suggested_model_mapping: { 'gpt-6.1-terra': 'gpt-6.1-terra', 'future-official-slug': 'future-official-slug' }
@@ -82,7 +86,41 @@ describe('OpenAIOfficialModelsPanel', () => {
     const wrapper = mountPanel({ modelMapping: {} })
     await wrapper.get('[data-testid="verify-official-models"]').trigger('click')
     await flushPromises()
+    expect(wrapper.get('[data-testid="add-official-models"]').text()).toContain('"count":1')
+    await wrapper.get('[data-testid="add-official-models"]').trigger('click')
+    expect(wrapper.emitted('add-models')).toEqual([[['future-official-slug']]])
+    wrapper.unmount()
+  })
+
+  it('deduplicates all official IDs and preserves existing future-model routes', async () => {
+    verifyOfficialModels.mockResolvedValue(officialResult({
+      models: ['future-remapped', 'future-covered', 'audio-future', 'audio-future', 'already-listed'],
+      suggested_model_mapping: {
+        'future-remapped': 'future-remapped', 'future-covered': 'future-covered',
+        'audio-future': 'audio-future', 'already-listed': 'already-listed'
+      }
+    }))
+    const wrapper = mountPanel({
+      modelMapping: {
+        'future-remapped': 'custom-target', 'future-*': 'wildcard-target',
+        'audio-alias': 'audio-future', 'already-listed': 'already-listed'
+      }
+    })
+    await wrapper.get('[data-testid="verify-official-models"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="add-official-models"]').text()).toContain('"count":1')
+    await wrapper.get('[data-testid="add-official-models"]').trigger('click')
+    expect(wrapper.emitted('add-models')).toEqual([[['audio-future']]])
+    wrapper.unmount()
+  })
+
+  it('does not supplement models already covered by a catch-all mapping', async () => {
+    verifyOfficialModels.mockResolvedValue(officialResult())
+    const wrapper = mountPanel({ modelMapping: { '*': 'custom-target' } })
+    await wrapper.get('[data-testid="verify-official-models"]').trigger('click')
+    await flushPromises()
     expect(wrapper.get('[data-testid="add-official-models"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('add-models')).toBeUndefined()
     wrapper.unmount()
   })
 
