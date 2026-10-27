@@ -1,8 +1,10 @@
-# 插件开发指南 · 正式版 v0.4.1
+# 插件开发指南 · 正式版 v0.4.2
 
 面向自行开发、签名、安装和维护 Sub2API 插件的开发者。以仓库内可运行示例为起点，不需要修改宿主前端即可提供插件配置页面。
 
-> 本指南对应正式桌面 **0.4.1**、兼容内核 **0.2.18**、扩展 **1.3.20**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1` 及通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.10，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+> 本指南对应正式桌面 **0.4.2**、兼容内核 **0.2.18**、扩展 **1.3.21**。已注册 `request.preprocess.v1`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1` 及通用宿主服务，兼容 v1/v2 传输。旧桌面版或官方原版内核即使显示 0.2.10，也不代表包含这些扩展；以正式版安装器及「版本与更新」中的扩展版本/必需能力为准。
+
+v0.4.2 增加官方模型校对及 GPT-6.1 Terra 支持，沿用 v0.4.1 的插件协议、SDK、保护传输修复和六项内核必需能力。扩展递增到 1.3.21，以便新的宿主二进制使用独立版本及校验值。
 
 v0.4.1 同步上游 v0.2.18，扩展 1.3.20 恢复保护传输在真实流量上的比较基线（Responses、透传、Chat Completions 与 WS HTTP Bridge 均在出站前写入，`OriginalBodyJson` 与 `mapped_model` 不再为空），并让命中保护传输的账号固定使用 HTTP/SSE 上游；`/v1/messages` 转 OpenAI OAuth 的路径暂不提供基线。开发包从 go.mod 生成最低 Go 版本说明。插件协议、能力清单和 SDK 接口与 v0.3.26 相同，保留插件拒绝、已发送请求失败与客户端取消的处理边界，插件协议及六项内核必需能力保持兼容。桌面或内核升级后首次启动会停用旧插件一次，保留配置、原包、发布者信任和路由作用域，确认兼容后可重新启用。
 
@@ -24,10 +26,10 @@ v0.3.13 修复 Windows 托盘点击被丢弃导致主窗口无法恢复的问题
 
 宿主保留插件协议、SDK、通用运行时、管理界面和契约测试，这些是宿主支持插件所需的代码；具体第三方插件实现和历史开发产物不属于宿主。仓库 CI 会拒绝重新纳入根目录 `plugins/` 或旧插件产物目录。
 
-- 推荐下载 [v0.4.1 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.4.1/sub2api-plugin-devkit-v0.4.1.zip)，解压后先读根目录 `START_HERE.md`。
+- 推荐下载 [v0.4.2 SDK 与示例开发包](https://github.com/rw0104/sub2api-cost-console/releases/download/v0.4.2/sub2api-plugin-devkit-v0.4.2.zip)，解压后先读根目录 `START_HERE.md`。
 - 开发包包含 Go SDK、proto、Schema、完整公开示例及 UI、密钥生成器、打包器和 vendor 依赖。不包含主程序内核、任何私有插件或发布者私钥。
 - 安装不低于 [`backend/go.mod`](../backend/go.mod) 中 `go` 指令指定版本的 Go 工具链即可编译示例；开发包的 `START_HERE.md` 和 `DEVKIT_MANIFEST.json` 同步列出该最低版本。无需 Rust、Node.js 或主程序源码。vendor 支持在已安装满足最低版本的 Go 工具链的机器上离线构建，Go 工具链自身不在包内。
-- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.4.1` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
+- 如需调试宿主，克隆 `https://github.com/rw0104/sub2api-cost-console.git`，从 `v0.4.2` 标签开始。不要克隆上游原版替代本项目的扩展 SDK。
 - 发布页同时提供本指南的独立 Markdown 附件和 `PLUGIN_DEVKIT_SHA256SUMS.txt`。单独下载 Markdown 时，可使用[在线文档入口](https://github.com/rw0104/sub2api-cost-console/blob/main/docs/PLUGIN_DEVELOPMENT.md)访问其它文档链接；开发包内保留对应目录结构。
 
 ## 1. 选择接口
@@ -92,7 +94,7 @@ Write-Output "    publisher-demo: '$publicKey'"
 
 ### 开发环境验收
 
-1. 安装正式桌面 v0.4.1，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
+1. 安装正式桌面 v0.4.2，并准备独立开发数据库/缓存与测试账号；或使用已有独立开发宿主。开发者无需安装 Plugin Preview 才能使用 v2。
 2. 系统设置中显示“插件管理”菜单。此开关只影响菜单，不启停运行时。
 3. 点击“安装插件”上传签名包。启用 step-up 时先完成 TOTP，页面会先做轻量授权检查再发文件。
 4. 确认签名、兼容性、权限和作用域；安装后默认停用。
