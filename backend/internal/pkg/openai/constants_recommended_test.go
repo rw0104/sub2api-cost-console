@@ -6,6 +6,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultModelsHaveCompleteResponseMetadata(t *testing.T) {
+	seen := make(map[string]bool, len(DefaultModels))
+	for _, model := range DefaultModels {
+		require.NotEmpty(t, model.ID)
+		require.False(t, seen[model.ID], "duplicate model ID: %s", model.ID)
+		seen[model.ID] = true
+		require.Equal(t, "model", model.Object, model.ID)
+		require.Positive(t, model.Created, model.ID)
+		require.Equal(t, "openai", model.OwnedBy, model.ID)
+		require.Equal(t, "model", model.Type, model.ID)
+		require.NotEmpty(t, model.DisplayName, model.ID)
+	}
+}
+
 func TestRecommendedModelIDsMatchOfficialPickerAndKeepCompatibilityDefaults(t *testing.T) {
 	want := []string{
 		"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna",
