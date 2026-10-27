@@ -20,7 +20,9 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.4.0 基于上游 v0.2.17。** 本轮不同步上游，集中修复两个会让 Codex 连不上本地网关的问题：保护传输插件重新启用后，真实请求缺少比较基线而被完整性检查全部拒绝，内核扩展升至 1.3.19；API 接入中心的 Codex 示例改用 `env_key` 传入密钥，适配 Codex 0.149 起不再读取 `auth.json` 的行为。桌面端继续支持自定义本地服务监听地址与端口，同时保留成本账本、插件协议、Windows 托盘恢复与 Header Probe 观测显示修复。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.0 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.0) 下载配套 SDK 与示例。
+**v0.4.2 基于上游 v0.2.18。** 账号编辑页新增“获取并校对官方模型”和“补齐已确认模型”，实时检查官方列表与模型映射，补齐结果留在编辑草稿中，保存后才生效。模型选择器按固定顺序提供 8 个推荐模型，并补齐 `gpt-6.1-terra` 的推理档位、别名和计费支持；该模型的工具调用需要 Responses，只有 Chat Completions 上游的账号会在发送前明确报错。继续保留 v0.4.1 的保护传输修复、作用域管理员 API Key 和 Codex `env_key` 接入方式。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.2 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.2) 下载配套 SDK 与示例。
+
+作用域管理员 API Key 的权限目录、响应边界、轮换、IP 限制和 Codex 导入方式见 [管理员 API Key 文档](docs/admin-api-keys.md)。
 
 ## 你可以用它做什么
 
@@ -363,7 +365,7 @@
 
 ## 版本说明与反馈
 
-本轮更新为 **桌面 v0.4.0**，内置兼容内核基线为 **v0.2.17**、扩展 **1.3.19**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.4.0 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.0) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+本轮更新为 **桌面 v0.4.2**，内置兼容内核基线为 **v0.2.18**、扩展 **1.3.21**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.4.2 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.2) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)

@@ -1,56 +1,51 @@
-# Sub2API Cost Console v0.4.1
+# Sub2API Cost Console v0.4.2
 
 ## 主要更新
 
-- 修复保护传输插件重新启用后 Codex 连不上网关的问题。宿主在 `v0.3.5` 起丢失了写入“比较基线”的挂钩，真实请求到达插件时 `OriginalBodyJson` 恒为空；启用完整性检查的保护传输插件（例如账号保护 mode1 默认 `enforce`）会把每个 `/responses` 请求判为拒绝，客户端收到 403 `extension_error`。现在 Responses、透传、Chat Completions 与 WebSocket HTTP Bridge 都会在出站前写入最终请求体作为基线，插件同时拿到映射后的模型和默认 instructions 摘要。
-- 命中保护传输的账号固定使用 HTTP/SSE 上游，避免 WebSocket 上游绕过插件。
-- API 接入中心的 Codex 示例配置改为 `env_key = "SUB2API_API_KEY"`，并附带对应的 PowerShell 环境变量命令。Codex 0.149 起，`requires_openai_auth = false` 的自定义 Provider 不再读取 `auth.json`，旧示例会让 Codex 不带密钥访问网关并收到 401。“复制密钥命令”在 Codex 预设下复制同名变量，其余预设仍复制 `OPENAI_API_KEY`。
-- 本轮同步上游 Sub2API `v0.2.18`（官方发布提交 `ac1b8f1271be0d674fa6f074403c1410f30a3a81`；合并头 `37067e8e340e9440d173a92b4faa05e8ce58368f`），并保留宿主侧插件运行时、V1/V2 API、契约测试和能力清单。
-- 接入作用域管理员 API Key、Gemini 生图分组能力、账号配额快照、流式断开处理、OpenAI overload 重试和新的计费/模型定价修复。
+- 账号编辑页新增“获取并校对官方模型”和“补齐已确认模型”。校对实时读取当前账号可见的官方模型列表，列出映射目标的可用性；补齐只修改编辑草稿，需要保存账号后才生效。
+- 模型选择器按固定顺序提供 8 个推荐模型：`gpt-6.1-sol`、`gpt-6.1-terra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`、`gpt-5.6-sol`。
+- 补齐 `gpt-6.1-terra` 的模型别名、推理档位（含 `none`）、上下文和计费数据。工具调用需要 Responses；账号仅支持 Chat Completions 上游时，请求会在出站前收到明确错误。
+- 沿用 v0.4.1 的上游 Sub2API `v0.2.18` 基线、保护传输插件修复、作用域管理员 API Key 和 Codex `env_key` 接入方式，本轮没有新增上游合并。
 - Windows 原生一键启动沿用 v0.3.26 的平台协议选择规则，本轮没有行为变化。
 
 ## 当前兼容内核
 
-- 桌面：`v0.4.1`
+- 桌面：`v0.4.2`
 - 上游 Sub2API：`v0.2.18`
 - 上游提交：`ac1b8f1271be0d674fa6f074403c1410f30a3a81`
-- 合并头：`37067e8e340e9440d173a92b4faa05e8ce58368f`
-- 本地扩展：`v1.3.20`
+- 已集成上游合并头：`37067e8e340e9440d173a92b4faa05e8ce58368f`
+- 本地扩展：`v1.3.21`
 - 成本算法：`v1.6.1`
 - 必需能力：`account_cost_loss_ledger.v1`、`account_economics_sampling.v1`、`plugin_extensions.v2`、`openai.oauth.protection_transport.v1`、`openai.oauth.request_header_probe.v1`、`plugin_publisher_trust.v1`
 
 ## 技术变更
 
-- 回归来源：`9f3c1de9f`（2026-09-23 合并上游 v0.2.8）整段删除了四个转发入口里宿主自有的保护传输挂钩，之后的上游同步没有恢复。`v0.3.4` 之前的版本仍带有这些调用。
-- 新增 `OpenAIGatewayService.withProtectionOriginal`，仅在账号命中保护传输时才写入基线，其余账号原样返回上下文。调用点紧贴构造上游请求之前，使用最终已准备好的请求体，每次重试都会刷新：`Forward`、`forwardOpenAIPassthrough`、`forwardAsChatCompletions`，以及 `proxyOpenAIWSHTTPBridgeTurn` 内的请求构造闭包。
-- `Forward` 在命中保护传输时把 `wsDecision.Transport` 固定为 `http_sse`，原因记录为 `account_protection_plugin`。
-- 新增回归测试 `openai_protection_baseline_test.go`：用进程内假保护传输驱动上述四个入口（含经 `ProxyResponsesWebSocketFromClient` 的端到端 WS 桥接），断言插件收到非空且与线上请求体一致的基线、`mapped_model` 与 instructions 摘要，且没有直连上游；账号不在绑定范围、API Key 账号则不写基线并直连。将四个入口文件还原到修复前，对应用例全部失败。
-- 已知未覆盖：`/v1/messages` 转 OpenAI OAuth、count_tokens、alpha/search 等入口仍不提供基线，行为与此前版本一致，开发指南已注明；插件遇到空基线应按“未提供”处理。
-- 插件命中时 Codex 的 WebSocket 仍经 HTTP Bridge，`generate:false` 预热会被当作真实生成请求发往上游，该行为未在本轮改变，作为后续事项跟踪。
-- 上游合并保留插件宿主专属路径；插件契约、V1/V2 兼容、沙箱和生命周期测试作为发布门禁，任何失败都阻止发布。
-- 插件协议和能力清单与上一版兼容；扩展版本递增是因为内核二进制内容变化，已发布的同名内核包不能用不同 SHA-256 覆盖。
+- 新增管理员接口 `POST /api/v1/admin/accounts/:id/models/verify-official`，检查当前映射草稿或已保存映射。API Key 账号使用 `https://api.openai.com/v1/models`，OAuth 账号使用官方 Codex 模型端点；自定义第三方地址不能作为官方验证来源。
+- 官方获取失败会返回错误，不使用本地模型配置回退，也不写入账号。补齐候选只包含官方列表实际返回的推荐模型；已有非空 `model_mapping` 不会在后台自动增加新模型。
+- 推荐模型预设独立于兼容默认模型列表，保留已有账号测试默认值及旧模型别名。
+- Terra 定价覆盖标准/优先档、缓存读写和长上下文规则；Responses 路径保留 `none` 推理意图，Chat Completions 及其兼容桥接在工具调用不受支持时拒绝发送。
+- 插件协议、能力清单和应用身份保持兼容。本轮递增扩展版本是因为宿主内核二进制内容变化，避免用不同 SHA-256 覆盖已经发布的同名包。
+- 发布工作流将插件契约、生命周期、V1/V2 兼容、沙箱和 race 检查作为门禁；桌面发布还要求同一源码 SHA 的完整后端 CI 成功。
 
 ## 升级行为
 
 - 可在“版本与更新”中升级，也可以退出程序后使用安装器原位升级；应用身份、数据库连接和已有业务配置保留。
-- 新增上游迁移 246/247；首次启动会按现有迁移器升级数据库，发布前必须验证迁移和回滚路径。
-- 桌面、兼容内核或扩展版本变化后的首次启动会停用旧插件一次，保留配置、已签名原包、发布者信任及路由作用域；确认兼容后重新启用即可。本轮升级后重新启用保护传输插件，真实请求不再被空基线拒绝。
-- 兼容内核先于桌面安装器发布，校验版本、上游提交、扩展版本、能力清单和归档 SHA-256。
-- 必需能力清单与 v0.3.26 相同；桌面会按版本、上游提交、扩展版本、能力和 SHA-256 校验后拉取本轮内核。
-- 已按旧示例配置 Codex 的用户需要改用 `env_key`：把配置里的 `requires_openai_auth = false` 保持不变，加入 `env_key = "SUB2API_API_KEY"`，并在启动 Codex 前设置同名环境变量。通过桌面“启动 Codex CLI”按钮启动的用户不受影响。
+- 本轮不新增数据库迁移。从 v0.4.0 或更早版本升级时仍会经过 v0.4.1 的迁移 246/247；迁移 246 会将已有 Gemini/Antigravity 分组中关闭的 `allow_image_generation` 批量改为开启，降级不会自动恢复这些值，升级前应保留数据库备份。
+- 桌面、兼容内核或扩展版本变化后的首次启动会停用旧插件一次，保留配置、已签名原包、发布者信任及路由作用域；确认兼容后重新启用。
+- 兼容内核先于桌面安装器发布，校验版本、上游提交、扩展版本、能力清单和归档 SHA-256，并在发布后下载回读。
+- 官方校对需要当前账号的有效凭据和可用网络。官方列表反映该账号当前可见的模型，不保证所有账号可见同一组模型，也不等于已执行模型推理请求。
 
 ## 验证结果
 
-- 后端：`go test ./... -run '^$'` 编译通过；插件契约/迁移/生命周期、沙箱、V1/V2 兼容测试通过。Windows race 检查因本机没有 gcc 跳过，必须由同一源码 SHA 的 Linux CI 补齐。
-- 前端：完整 Vitest、ESLint、类型检查和桌面构建作为发布门禁；插件页面回归覆盖配置 revision、签名包、路由和二次验证。
-- 发布门禁要求同一源码提交通过完整后端 CI（unit、integration、golangci-lint）、前端测试与 lint、Rust 桌面测试和生产构建；稳定内核通道在桌面安装器之前发布并回读校验。
-- 本地未使用真实签名的保护传输插件包和真实 Codex 客户端；生产插件 E2E 与 race 结果以同一源码 SHA 的 CI 为准。
-- 已知的非绿检查：发布提交上的安全扫描未通过，两项均为近期新公布的公告，与本轮改动无关，依赖清单本轮未改动。govulncheck 报告 Go 标准库 `crypto/x509`（GO-2026-6809，Go 1.27.3 修复，可经 passkey 登录路径到达）；前端审计报告 follow-redirects 的两条高危公告（GHSA-q3jh-wrc6-jgq8、GHSA-8r9p-f939-6h3c）。需要在后续版本升级 Go 工具链和该依赖。
+- 功能开发阶段本地检查已通过：`go build ./...`、相关包 `go vet`、`service`/`internal/pkg/openai`/`server/routes`/`handler/admin` 测试；前端类型检查、改动文件 ESLint 及 6 个 Vitest 文件共 115 项测试通过。测试命令临时使用仓库要求的 Go 1.27.3。
+- 最终发布门禁要求同一源码 SHA 通过完整后端 unit、integration、golangci-lint、插件契约/生命周期/路由范围/V1/V2/race、完整前端测试与 lint、Rust 桌面测试及生产构建。最终状态以对应 GitHub Actions 执行记录为准。
+- 当前功能尚未使用真实账号调用官方模型接口。生产插件 E2E 需要独立测试数据库及 Docker；不可用时必须记录跳过原因，不能据定向测试宣称生产插件链路已完整验证。
+- 安装器、Tauri 更新签名、更新清单、稳定内核和开发包须在发布后重新下载，核对版本、能力及 SHA-256。
 
 ## 回滚说明
 
-- 本轮包含数据库迁移，回退前必须备份数据库并确认迁移兼容；桌面可回退到 v0.4.0 及匹配的内核 `v0.2.17` / 扩展 `1.3.19`。
-- 兼容内核不允许降级发布，也不允许同名包更换内容。出现问题时向前修复并递增扩展版本；客户端可使用本地回滚槽位回到上一个内核。
+- 本轮可回退到桌面 v0.4.1 及匹配的内核 `v0.2.18` / 扩展 `1.3.20`。回退前备份数据库；跨越迁移 246/247 回到更早版本时，还需确认迁移兼容和数据补偿方案。
+- 兼容内核稳定通道不允许降级发布，也不允许同名包更换内容。出现问题时向前修复并递增扩展版本；客户端可使用本地回滚槽位回到上一个内核。
 - Tauri updater 的 `.sig` 用于自动更新验签，不代表 Windows Authenticode 发行者签名。
 
 ## 用户交流

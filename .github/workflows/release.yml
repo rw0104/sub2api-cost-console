@@ -80,8 +80,53 @@ jobs:
           path: backend/cmd/server/VERSION
           retention-days: 1
 
-  build-frontend:
+  plugin-contract:
+    name: Verify plugin host contract
     needs: prepare
+    uses: ./.github/workflows/plugin-contract.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+    permissions:
+      contents: read
+
+  backend-ci:
+    name: Require complete backend CI
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require passing CI for the selected source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_DRY_RUN" == true ]]; then
+            echo 'Dry run does not publish artifacts; publication CI gate is deferred.'
+            exit 0
+          fi
+          for attempt in {1..40}; do
+            runs="$(gh run list --workflow backend-ci.yml --commit "$RELEASE_SHA" --limit 30 --json headSha,status,conclusion)"
+            matching="$(jq --arg sha "$RELEASE_SHA" '[.[] | select(.headSha == $sha)]' <<< "$runs")"
+            if jq -e 'any(.[]; .conclusion == "success")' <<< "$matching" >/dev/null; then
+              exit 0
+            fi
+            if jq -e 'length > 0 and all(.[]; .status == "completed")' <<< "$matching" >/dev/null; then
+              echo "Full backend CI failed for $RELEASE_SHA; refusing publication" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "No successful full backend CI found for $RELEASE_SHA" >&2
+          exit 1
+
+  build-frontend:
+    needs: [prepare, plugin-contract, backend-ci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

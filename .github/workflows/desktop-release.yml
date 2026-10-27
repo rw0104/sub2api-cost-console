@@ -16,8 +16,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plugin-contract:
+    name: Verify plugin host contract
+    uses: ./.github/workflows/plugin-contract.yml
+    with:
+      ref: ${{ github.sha }}
+    permissions:
+      contents: read
+
   windows-release:
     name: Build signed Windows desktop release
+    needs: plugin-contract
     runs-on: windows-latest
     timeout-minutes: 60
     env:

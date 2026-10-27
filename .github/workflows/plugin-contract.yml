@@ -1,6 +1,12 @@
 name: Plugin host contract
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Commit or ref to test; defaults to the triggering commit.'
+        required: false
+        type: string
   pull_request:
     paths:
       - "backend/internal/service/plugin_*.go"
@@ -34,6 +40,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -55,6 +63,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
