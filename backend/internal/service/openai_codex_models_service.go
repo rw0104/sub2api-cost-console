@@ -643,9 +643,6 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 		{Effort: "high", Description: "Greater reasoning depth for coding and agent tasks"},
 		{Effort: "xhigh", Description: "Extra-high reasoning depth for difficult tasks"},
 	}
-	if openai.IsGPT61TerraModelSpelling(modelID) {
-		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "Fast responses without reasoning"}}, levels...)
-	}
 	normalized := getNormalizedCodexModel(modelID)
 	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6Model(modelID) {
 		levels = append(levels, configuredCodexReasoningLevel{
@@ -658,6 +655,9 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Effort:      "ultra",
 			Description: "Maximum reasoning with automatic task delegation",
 		})
+	}
+	if openai.IsGPT61TerraModelSpelling(modelID) {
+		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "No reasoning"}}, levels...)
 	}
 	return levels
 }
@@ -1900,14 +1900,13 @@ func (s *OpenAIGatewayService) fetchCachedOpenAIModels(ctx context.Context, requ
 
 func (s *OpenAIGatewayService) refreshCachedOpenAIModels(cacheKey string, request openAIModelsRequest, fetch func(ctx context.Context, ifNoneMatch string) (*OpenAIModelsResponse, error)) <-chan singleflight.Result {
 	return s.openAIModelsCache.refresh.DoChan(cacheKey, func() (any, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), codexModelsManifestRequestTimeout)
-		defer cancel()
-		// A prior flight can finish after the caller's cache miss but before
-		// this flight starts. Reuse its fresh result instead of fetching twice.
 		cached, state := s.openAIModelsCache.get(cacheKey, time.Now())
+		// 调用方读缓存之后、进入 singleflight 之前，上一轮刷新可能已写入新鲜结果：直接复用，不重复请求上游。
 		if state == openAIModelsCacheFresh {
 			return cached, nil
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), codexModelsManifestRequestTimeout)
+		defer cancel()
 		ifNoneMatch := ""
 		if cached != nil {
 			ifNoneMatch = cached.upstreamETag
