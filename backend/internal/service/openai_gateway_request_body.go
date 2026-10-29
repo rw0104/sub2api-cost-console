@@ -1709,6 +1709,28 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 	return ""
 }
 
+// codexClientCarriesInputBaseInstructions reports whether an official Codex
+// client already sent its base instructions as the leading developer message.
+// Codex 0.162+ removed the top-level instructions field and prepends the base
+// prompt to input instead (openai/codex#51156). Injecting the gateway default
+// prompt for these requests would send two different base prompts upstream.
+func codexClientCarriesInputBaseInstructions(c *gin.Context, body []byte) bool {
+	if c == nil || !openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) {
+		return false
+	}
+	if gjson.GetBytes(body, "instructions").Exists() {
+		return false
+	}
+	first := gjson.GetBytes(body, "input.0")
+	if !first.IsObject() {
+		return false
+	}
+	if itemType := first.Get("type"); itemType.Exists() && itemType.String() != "message" {
+		return false
+	}
+	return first.Get("role").String() == "developer"
+}
+
 func isOpenAICodexModel(model string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "codex")
 }
