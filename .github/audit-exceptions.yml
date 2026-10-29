@@ -42,3 +42,24 @@ exceptions:
     mitigation: "No zero-size custom generators in codebase; upgrade when nanoid releases fix"
     expires_on: "2026-10-13"
     owner: "security@your-domain"
+  - package: vue-i18n
+    advisory: "GHSA-83rm-6c8r-g728"
+    severity: high
+    reason: "escapeParameter is not enabled (frontend/src/i18n/index.ts); no translation message is rendered with v-html (every v-html sink renders DOMPurify-sanitized Markdown or sanitized SVG) and the only HTML translations are bundled onboarding texts passed to driver.js without parameters. Published 2026-10-28 with no patched 9.x release"
+    mitigation: "Keep translation output out of v-html and never rely on escapeParameter as an XSS control; upgrade to a patched vue-i18n (9.x backport or 11.4.14+) before expiry"
+    expires_on: "2027-01-28"
+    owner: "security@your-domain"
+  - package: "@intlify/core-base"
+    advisory: "GHSA-83rm-6c8r-g728"
+    severity: high
+    reason: "Transitive vue-i18n 9.14.5 dependency; escapeParameter is not enabled and no translation message is rendered with v-html. Published 2026-10-28 with no patched 9.x release"
+    mitigation: "Upgrade together with vue-i18n to a patched release before expiry"
+    expires_on: "2027-01-28"
+    owner: "security@your-domain"
+  - package: "@intlify/shared"
+    advisory: "GHSA-83rm-6c8r-g728"
+    severity: high
+    reason: "Transitive vue-i18n 9.14.5 dependency; escapeParameter is not enabled and no translation message is rendered with v-html. Published 2026-10-28 with no patched 9.x release"
+    mitigation: "Upgrade together with vue-i18n to a patched release before expiry"
+    expires_on: "2027-01-28"
+    owner: "security@your-domain"

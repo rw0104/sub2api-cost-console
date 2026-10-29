@@ -163,7 +163,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		if isOpenAICodexModel(reqModel) && !gjson.GetBytes(body, "instructions").Exists() && !(s.isCodexClientRequest(c) && codexInputCarriesBaseInstructions(body)) {
+		clientInputBaseInstructions := s.isCodexClientRequest(c) && codexInputCarriesBaseInstructions(body)
+		if isOpenAICodexModel(reqModel) && !gjson.GetBytes(body, "instructions").Exists() && !clientInputBaseInstructions {
 			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(reqModel))
 			if setErr != nil {
 				return nil, fmt.Errorf("set passthrough codex instructions: %w", setErr)

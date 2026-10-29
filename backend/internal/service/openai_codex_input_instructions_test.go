@@ -24,17 +24,16 @@ const codexInputBasePrompt = "You are Codex, a coding agent based on GPT-6.1 Ter
 const codexInputOfficialUA = "codex_cli_rs/0.165.0 (Windows 10.0.26100; x86_64) WindowsTerminal"
 
 func codexInputInstructionsBody(model string, withInstructions bool, firstRole string) []byte {
-	var b strings.Builder
-	b.WriteString(`{"model":"` + model + `","stream":true,"store":false,`)
+	body := `{"model":"` + model + `","stream":true,"store":false,`
 	if withInstructions {
-		b.WriteString(`"instructions":"legacy client instructions",`)
+		body += `"instructions":"legacy client instructions",`
 	}
-	b.WriteString(`"input":[`)
+	body += `"input":[`
 	if firstRole == "developer" {
-		b.WriteString(`{"type":"message","role":"developer","id":"msg_base","content":[{"type":"input_text","text":"` + codexInputBasePrompt + `"}]},`)
+		body += `{"type":"message","role":"developer","id":"msg_base","content":[{"type":"input_text","text":"` + codexInputBasePrompt + `"}]},`
 	}
-	b.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)
-	return []byte(b.String())
+	body += `{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`
+	return []byte(body)
 }
 
 func codexInputInstructionsContext(path, userAgent, originator string) *gin.Context {
