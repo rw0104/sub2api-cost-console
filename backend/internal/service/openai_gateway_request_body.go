@@ -1709,15 +1709,13 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 	return ""
 }
 
-// codexClientCarriesInputBaseInstructions reports whether an official Codex
-// client already sent its base instructions as the leading developer message.
+// codexInputCarriesBaseInstructions reports whether a Codex client request
+// already carries its base instructions as the leading developer message.
 // Codex 0.162+ removed the top-level instructions field and prepends the base
-// prompt to input instead (openai/codex#51156). Injecting the gateway default
+// prompt to input instead (openai/codex#51156). Callers must only apply this
+// to requests identified as Codex clients: injecting the gateway default
 // prompt for these requests would send two different base prompts upstream.
-func codexClientCarriesInputBaseInstructions(c *gin.Context, body []byte) bool {
-	if c == nil || !openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) {
-		return false
-	}
+func codexInputCarriesBaseInstructions(body []byte) bool {
 	if gjson.GetBytes(body, "instructions").Exists() {
 		return false
 	}
@@ -1729,6 +1727,15 @@ func codexClientCarriesInputBaseInstructions(c *gin.Context, body []byte) bool {
 		return false
 	}
 	return first.Get("role").String() == "developer"
+}
+
+// isCodexClientRequest mirrors Forward's Codex client identity, including the
+// gateway.force_codex_cli override for proxies that strip client headers.
+func (s *OpenAIGatewayService) isCodexClientRequest(c *gin.Context) bool {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		return true
+	}
+	return c != nil && openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
 }
 
 func isOpenAICodexModel(model string) bool {

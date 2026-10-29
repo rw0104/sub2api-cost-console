@@ -386,7 +386,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	clientInputBaseInstructions := codexClientCarriesInputBaseInstructions(c, body)
+	clientInputBaseInstructions := isCodexCLI && codexInputCarriesBaseInstructions(body)
 	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses && !clientInputBaseInstructions {
 		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
 	}
