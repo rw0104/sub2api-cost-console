@@ -1962,7 +1962,9 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		return pricing
 	}
 	cloned := *pricing
-	if isOpenAIGPT6AstraModel(normalized) {
+	// 官方 Ultrafast 价为标准价 6 倍的模型：gpt-6-astra，以及自 2026-10-08 起的
+	// gpt-6.1-sol（12/0.60/60 对标准 2/0.10/10）。其余模型沿用通用 ultrafast 倍率。
+	if isOpenAIGPT6AstraModel(normalized) || openai.IsGPT61SolModelSpelling(normalized) {
 		cloned.UltrafastMultiplier = 6
 	}
 	if needsOpus55FastMultiplier {

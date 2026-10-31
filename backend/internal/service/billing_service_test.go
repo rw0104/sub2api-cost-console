@@ -2224,6 +2224,46 @@ func TestAstraUltrafastPricingUsesSixTimesStandard(t *testing.T) {
 	require.Equal(t, 2.0, configuredServiceTierMultiplier("ultrafast", p))
 }
 
+// OpenAI 自 2026-10-08 起为 gpt-6.1-sol 提供 Ultrafast，官方价目（developers.openai.com/api/docs/pricing）
+// 短上下文 12 / 0.60 / 15（30m 写入）/ 60，长上下文 24 / 1.20 / 30 / 90，均为标准价的 6 倍。
+// 通用 ultrafast 倍率是 2 倍，未给模型设置 UltrafastMultiplier 会少计 2/3。
+func TestGPT61SolUltrafastPricingUsesSixTimesStandard(t *testing.T) {
+	data, err := os.ReadFile("../../resources/model-pricing/model_prices_and_context_window.json")
+	require.NoError(t, err)
+	catalog := &PricingService{}
+	catalog.pricingData, err = catalog.parsePricingData(data)
+	require.NoError(t, err)
+	for _, svc := range []*BillingService{newTestBillingService(), NewBillingService(&config.Config{}, &PricingService{}), NewBillingService(&config.Config{}, catalog)} {
+		for _, model := range []string{"gpt-6.1-sol", "openai/gpt-6.1-sol"} {
+			for _, n := range []int{271999, 272000, 272001} {
+				tokens := UsageTokens{InputTokens: n - 3000, CacheReadTokens: 2000, CacheCreationTokens: 1000, OutputTokens: 500}
+				cost, err := svc.CalculateCostWithServiceTier(model, tokens, 1, "ultrafast")
+				require.NoError(t, err)
+				im, om := 1.0, 1.0
+				if n > 272000 {
+					im, om = 2, 1.5
+				}
+				require.InDelta(t, float64(n-3000)*12e-6*im, cost.InputCost, 1e-10, "%s n=%d", model, n)
+				require.InDelta(t, 2000*0.6e-6*im, cost.CacheReadCost, 1e-10, "%s n=%d", model, n)
+				require.InDelta(t, 1000*15e-6*im, cost.CacheCreationCost, 1e-10, "%s n=%d", model, n)
+				require.InDelta(t, 500*60e-6*om, cost.OutputCost, 1e-10, "%s n=%d", model, n)
+			}
+		}
+	}
+	svc := newTestBillingService()
+	p, err := svc.GetModelPricing("gpt-6.1-sol")
+	require.NoError(t, err)
+	require.Equal(t, 6.0, configuredServiceTierMultiplier("ultrafast", p))
+	// Fast 档仍为标准价 2 倍，不受 Ultrafast 倍率影响。
+	fast, err := svc.CalculateCostWithServiceTier("gpt-6.1-sol", UsageTokens{InputTokens: 1000, OutputTokens: 1000}, 1, "priority")
+	require.NoError(t, err)
+	require.InDelta(t, 1000*4e-6+1000*20e-6, fast.TotalCost, 1e-10)
+	// 官方未给 Terra 提供 Ultrafast，保持通用倍率。
+	terra, err := svc.GetModelPricing("gpt-6.1-terra")
+	require.NoError(t, err)
+	require.Equal(t, 2.0, configuredServiceTierMultiplier("ultrafast", terra))
+}
+
 func TestGPT61SolExplicitZeroCacheWriteAcrossTiers(t *testing.T) {
 	pricing := &PricingService{}
 	var err error
