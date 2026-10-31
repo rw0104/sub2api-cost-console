@@ -20,7 +20,28 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.4.5 基于上游 v0.2.19。** 本版同步上游正式版的“按张计费”分组开关、Gemini 同账号重试配置、Grok 模型目录诊断和多项计费修复；DeepSeek V4 Pro 在 2026-09-14 之后恢复按 Pro 官方价计费，Gemini 默认模型列表移除了已停用的 2.x 系列。同时适配最新 Codex 客户端 0.165.0：Codex 0.162 起把基础提示词放在请求的首条 developer 消息里，网关不再为这类请求额外注入默认提示词，避免重复的提示词和多余的输入 token。继续保留冷模型目录缓存修复、全部官方模型补齐、官方模型校对、GPT-6.1 Terra 支持、保护传输修复、作用域管理员 API Key 和 Codex `env_key` 接入方式。管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.5 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.5) 下载配套 SDK 与示例。
+**v0.4.6 基于上游 v0.2.19，成本算法升级到 1.7.0。**
+
+本版跟进 Codex 客户端 0.166.0：
+- 网关识别 Codex 新的 `policy_capacity_unavailable`（受策略限制的容量暂不可用），先在同账号按 Retry-After 重试，不再直接把错误交给客户端。
+- 「API 接入」复制的 Codex 配置与桌面「启动 Codex CLI」使用同一个 provider ID（`sub2api`）。Codex 0.166 起只能用创建会话时的 provider ID 恢复会话。
+
+计费方面，gpt-6.1-sol 的 Ultrafast 改按官方的 6 倍标准价计算，此前按通用的 2 倍计。
+
+成本算法 1.7.0 做了以下调整：
+- Spark 影子账号不再重复计入母账号的订阅费。
+- 前后端对成本档案的拼写统一处理。
+- 单条损坏的成本档案不再让号池经济面板整体报错。
+- 本月开始计费、之后已删除的按日、按周或按小时付费账号，按已付周期数计入本月采购。
+- 汇率回退时，数据标为“部分可用”。
+- 号池预测：
+  - 至少参考最近 1 小时的采样；
+  - 剔除超过 30 分钟的采样中断；
+  - 稳定采样不足 15 分钟时只显示实测速率，不输出剩余产出预测。
+
+v0.4.5 的上游 v0.2.19 同步、Codex 0.162+ 基础提示词对齐、冷模型目录缓存修复、官方模型补齐、GPT-6.1 Terra 支持、作用域管理员 API Key 和 Codex `env_key` 接入方式继续保留。
+
+管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.6 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.6) 下载配套 SDK 与示例。
 
 作用域管理员 API Key 的权限目录、响应边界、轮换、IP 限制和 Codex 导入方式见 [管理员 API Key 文档](docs/admin-api-keys.md)。
 
@@ -365,7 +386,7 @@
 
 ## 版本说明与反馈
 
-本轮更新为 **桌面 v0.4.5**，内置兼容内核基线为 **v0.2.19**、扩展 **1.3.24**，成本算法为 **1.6.1**；可下载安装的版本以 [v0.4.5 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.5) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+本轮更新为 **桌面 v0.4.6**，内置兼容内核基线为 **v0.2.19**、扩展 **1.3.25**，成本算法为 **1.7.0**；可下载安装的版本以 [v0.4.6 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.6) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)
