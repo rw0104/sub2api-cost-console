@@ -294,7 +294,7 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
 	}
 	switch {
-	case code == "server_is_overloaded", code == "slow_down":
+	case isOpenAICapacityShedErrorCode(code):
 		return http.StatusServiceUnavailable
 	case strings.Contains(code, "server_error"),
 		strings.Contains(code, "internal_error"),

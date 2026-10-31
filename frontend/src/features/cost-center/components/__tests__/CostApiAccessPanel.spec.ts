@@ -140,6 +140,20 @@ describe('CostApiAccessPanel data truthfulness', () => {
     expect(text).not.toContain('{ "OPENAI_API_KEY"')
   })
 
+  // Codex 0.166（openai/codex#57840）起，会话只能用创建时记录的 model_provider ID 恢复。
+  // 复制的配置必须与桌面启动器（client_launcher.rs 的 model_provider="sub2api"）使用同一 ID，
+  // 否则两种入口创建的会话无法互相 resume。
+  it('uses the same Codex provider ID as the desktop launcher', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('model_provider = "sub2api"')
+    expect(text).toContain('[model_providers.sub2api]')
+    expect(text).not.toContain('Sub2APILocal')
+  })
+
   it('copies the key command for the variable the Codex config reads, and keeps OPENAI_API_KEY for SDK presets', async () => {
     mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
     const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })

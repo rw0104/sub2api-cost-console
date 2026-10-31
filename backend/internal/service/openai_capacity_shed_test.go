@@ -507,6 +507,47 @@ func TestOpenAIStreamProcessingFailureAfterOutputIsRecorded(t *testing.T) {
 	}
 }
 
+// Codex 0.166（openai/codex#57452）起把 policy_capacity_unavailable 当作独立的容量不可用
+// 信号，客户端按 Retry-After 重试。网关必须与 server_is_overloaded 同等处理：HTTP、流内、
+// WS 三条路径都识别为请求级容量降载（同账号重试、不摘号），并在转发给客户端前改写为可重试码。
+func TestOpenAIPolicyCapacityUnavailableIsRequestScopedCapacityShed(t *testing.T) {
+	const code = "policy_capacity_unavailable"
+	nonPool := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	failed := []byte(`{"type":"response.failed","response":{"error":{"code":"` + code + `","message":"Policy-restricted capacity is unavailable."}}}`)
+	require.True(t, isOpenAIUpstreamCapacityShedEvent(failed))
+	require.True(t, openAIStreamFailedEventRetryableOnSameAccount(nonPool, failed, "Policy-restricted capacity is unavailable."))
+	require.Equal(t, http.StatusServiceUnavailable, openAIWSPayloadTransientStatus(failed))
+
+	httpBody := []byte(`{"error":{"type":"server_error","code":"` + code + `","message":"Policy-restricted capacity is unavailable."}}`)
+	require.True(t, isOpenAITransientProcessingError(http.StatusServiceUnavailable, "Policy-restricted capacity is unavailable.", httpBody))
+	failoverErr := newOpenAIUpstreamFailoverError(
+		http.StatusServiceUnavailable,
+		http.Header{"Retry-After": []string{"3"}},
+		httpBody,
+		"Policy-restricted capacity is unavailable.",
+		false,
+	)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.RequestScopedTransient)
+	require.Equal(t, 3*time.Second, failoverErr.SameAccountRetryDelay)
+
+	errorFrame := []byte(`{"type":"error","error":{"code":"` + code + `","message":"Policy-restricted capacity is unavailable."}}`)
+	for _, payload := range [][]byte{failed, errorFrame} {
+		out, changed := sanitizeOpenAICapacityShedErrorCodeForClient(payload)
+		require.True(t, changed)
+		require.Contains(t, string(out), `"code":"`+openAICapacityShedRetryableClientCode+`"`)
+		require.NotContains(t, string(out), code)
+		require.Contains(t, string(out), "Policy-restricted capacity is unavailable.")
+	}
+
+	// 名称相近但不同的错误码保持原有分类，避免把策略拒绝误当容量降载。
+	other := []byte(`{"type":"response.failed","response":{"error":{"code":"policy_violation"}}}`)
+	require.False(t, isOpenAIUpstreamCapacityShedEvent(other))
+	_, changed := sanitizeOpenAICapacityShedErrorCodeForClient(other)
+	require.False(t, changed)
+}
+
 // helper 单测：只有降载码被改写，其余错误码（尤其 rate_limit_exceeded，客户端
 // 依赖其原码解析重试延时）必须原样保留。
 func TestSanitizeOpenAICapacityShedErrorCodeForClient(t *testing.T) {

@@ -1322,10 +1322,10 @@ func openAIStreamFailedEventErrorCode(payload []byte) string {
 
 // isOpenAIUpstreamCapacityShedEvent 判断流内 failed 事件是否为上游容量降载信号。
 // 上游在容量紧张时会把请求丢进降载路径：HTTP 200 之后立刻推 event: error
-// （code=server_is_overloaded / slow_down）并以 response.failed 收尾。
+// （code=server_is_overloaded / slow_down / policy_capacity_unavailable）并以
+// response.failed 收尾。错误码集合见 isOpenAICapacityShedErrorCode。
 func isOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
-	switch openAIStreamFailedEventErrorCode(payload) {
-	case "server_is_overloaded", "slow_down":
+	if isOpenAICapacityShedErrorCode(openAIStreamFailedEventErrorCode(payload)) {
 		return true
 	}
 	for _, path := range []string{"response.error.message", "error.message", "message"} {
@@ -1382,7 +1382,7 @@ func sanitizeOpenAICapacityShedErrorCodeForClient(payload []byte) ([]byte, bool)
 			continue
 		}
 		code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(updated, path).String()))
-		if code != "" && code != "server_is_overloaded" && code != "slow_down" {
+		if code != "" && !isOpenAICapacityShedErrorCode(code) {
 			continue
 		}
 		next, err := sjson.SetBytes(updated, path, openAICapacityShedRetryableClientCode)

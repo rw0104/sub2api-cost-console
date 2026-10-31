@@ -131,7 +131,7 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 		if code == "" {
 			code = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
 		}
-		return code == "server_is_overloaded" || code == "slow_down"
+		return isOpenAICapacityShedErrorCode(code)
 	}
 
 	if len(upstreamBody) > 0 && hasOpenAIServerOverloadedCode(upstreamBody) {
@@ -204,6 +204,21 @@ func isOpenAIModelCapacityError(upstreamMsg string, upstreamBody []byte) bool {
 	}
 	return !gjson.ValidBytes(upstreamBody) && match(string(upstreamBody))
 }
+
+// isOpenAICapacityShedErrorCode 判断上游错误码是否为请求级容量降载信号。
+// server_is_overloaded / slow_down 是既有降载码；policy_capacity_unavailable 由
+// Codex 0.166（openai/codex#57452）起独立识别为「受策略限制的容量暂不可用」，
+// 客户端按 Retry-After 重试。三者故障因素都与账号无关：先同账号重试、不摘号，
+// 转发给客户端前改写为可重试码。HTTP、流内与 WS 路径共用本集合，避免各处漂移。
+func isOpenAICapacityShedErrorCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "server_is_overloaded", "slow_down", "policy_capacity_unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
 func isOpenAICapacityShedMessage(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	return strings.Contains(lower, "server is overloaded") ||
