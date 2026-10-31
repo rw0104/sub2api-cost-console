@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const AccountCostLossAlgorithmVersion = CostAlgorithmVersion
@@ -339,7 +342,9 @@ func resolveAccountCostProfileSnapshot(account *Account) (AccountCostProfileSnap
 			"free": 0, "plus": 20, "pro": 100, "team": 25, "business": 25, "k12": 0, "unknown": 0,
 		}
 		amount := 0.0
-		if account.Type == AccountTypeOAuth || account.Type == AccountTypeSetupToken {
+		// Spark 影子账号不持凭据、借用母账号的订阅；默认套餐价只计在母账号上，
+		// 否则同一份订阅会被计两次。管理员显式配置的成本档案不受影响。
+		if (account.Type == AccountTypeOAuth || account.Type == AccountTypeSetupToken) && account.ParentAccountID == nil {
 			amount = prices[plan]
 		}
 		return AccountCostProfileSnapshot{
@@ -359,7 +364,7 @@ func resolveAccountCostProfileSnapshot(account *Account) (AccountCostProfileSnap
 	if currency != "USD" && currency != "CNY" {
 		return AccountCostProfileSnapshot{}, ErrInvalidCostProfile
 	}
-	cycle := strings.ToLower(strings.TrimSpace(stringCostValue(raw["billing_cycle"])))
+	cycle := normalizeCostBillingCycle(stringCostValue(raw["billing_cycle"]))
 	if cycle != "one_time" {
 		if _, ok := costCycleHours[cycle]; !ok {
 			return AccountCostProfileSnapshot{}, ErrInvalidCostProfile
@@ -385,6 +390,29 @@ func resolveAccountCostProfileSnapshot(account *Account) (AccountCostProfileSnap
 		AlgorithmVersion: algorithm,
 		Raw:              raw,
 	}, nil
+}
+
+// costBillingCycleSeparators matches the frontend normalizeBillingCycle rule
+// (`trim().toLowerCase().replace(/[\s-]+/g, '_')`). RE2's `\s` is ASCII-only, so
+// the JavaScript whitespace set (vertical tab, Unicode space separators such as
+// U+3000, line/paragraph separators and BOM) is listed explicitly.
+var costBillingCycleSeparators = regexp.MustCompile(`[\s\x{000B}\p{Zs}\x{2028}\x{2029}\x{FEFF}-]+`)
+
+func normalizeCostBillingCycle(value string) string {
+	trimmed := strings.TrimFunc(value, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' })
+	return costBillingCycleSeparators.ReplaceAllString(strings.ToLower(trimmed), "_")
+}
+
+// ParseAccountProcurementProfile parses a stored extra.cost_profile with the same
+// validation and normalization used for live accounts, so deleted-account
+// profiles cannot diverge from the active ledger.
+func ParseAccountProcurementProfile(raw []byte, accountCreatedAt time.Time) (AccountCostProfileSnapshot, error) {
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil || profile == nil {
+		return AccountCostProfileSnapshot{}, ErrInvalidCostProfile
+	}
+	account := Account{CreatedAt: accountCreatedAt, Extra: map[string]any{"cost_profile": profile}}
+	return resolveAccountCostProfileSnapshot(&account)
 }
 
 func inferCostPlan(account *Account) string {

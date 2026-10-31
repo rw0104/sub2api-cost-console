@@ -16,6 +16,7 @@ func TestCostAccountingSharedFrontendBackendCases(t *testing.T) {
 		Name      string         `json:"name"`
 		Type      string         `json:"type"`
 		Plan      string         `json:"plan"`
+		ParentID  *int64         `json:"parent_account_id"`
 		CreatedAt time.Time      `json:"created_at"`
 		Now       time.Time      `json:"now"`
 		Profile   map[string]any `json:"profile"`
@@ -26,7 +27,7 @@ func TestCostAccountingSharedFrontendBackendCases(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &cases))
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			account := Account{ID: 1, Type: tc.Type, Platform: PlatformOpenAI, CreatedAt: tc.CreatedAt, Extra: map[string]any{"plan_type": tc.Plan}}
+			account := Account{ID: 1, Type: tc.Type, Platform: PlatformOpenAI, CreatedAt: tc.CreatedAt, ParentAccountID: tc.ParentID, Extra: map[string]any{"plan_type": tc.Plan}}
 			if tc.Profile != nil {
 				account.Extra["cost_profile"] = tc.Profile
 			}

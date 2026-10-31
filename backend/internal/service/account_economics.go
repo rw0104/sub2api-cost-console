@@ -16,9 +16,23 @@ import (
 )
 
 const (
-	EconomicsProjectionVersion     = "1.1.0"
-	minimumEconomicsInterval       = 5 * time.Second
+	EconomicsProjectionVersion = "1.2.0"
+	minimumEconomicsInterval   = 5 * time.Second
+	// maximumEconomicsInterval excludes adjacent samples that are too far apart.
+	// The background sampler runs every minute, so a longer gap usually means the
+	// core was not running; counting it would spread its zero production over the
+	// whole gap and understate the rate.
+	maximumEconomicsInterval       = 30 * time.Minute
 	minimumEconomicsValidIntervals = 2
+	// minimumForecastCoverage is the stable coverage required before rates are
+	// extrapolated into capacity-adjusted forecasts and payback estimates.
+	minimumForecastCoverage = 15 * time.Minute
+	// economicsProjectionMinimumLookback is the shortest sample history used by
+	// the projection, independent of the selected display range.
+	economicsProjectionMinimumLookback = time.Hour
+	// maximumCapacityAdjustment bounds the extrapolation from the observed
+	// average healthy capacity to the current healthy capacity.
+	maximumCapacityAdjustment = 2.0
 )
 
 // AccountEconomicsSample is one immutable observation of cumulative, factual
@@ -43,6 +57,7 @@ type AccountEconomicsProjection struct {
 	Warning                               string   `json:"warning,omitempty"`
 	ValidIntervals                        int      `json:"valid_intervals"`
 	ResetIntervals                        int      `json:"reset_intervals"`
+	GapIntervals                          int      `json:"gap_intervals"`
 	CoverageHours                         float64  `json:"coverage_hours"`
 	BilledUSDPerHour                      *float64 `json:"billed_usd_per_hour"`
 	AccountCostUSDPerHour                 *float64 `json:"account_cost_usd_per_hour"`
@@ -93,7 +108,11 @@ type AccountProcurementProfile struct {
 	AccountID   int64
 	Platform    string
 	Deleted     bool
+	DeletedAt   *time.Time
 	CostProfile AccountCostProfileSnapshot
+	// Invalid marks a stored cost_profile that cannot be parsed or normalized.
+	// It is reported through data quality instead of failing the whole snapshot.
+	Invalid bool
 }
 
 type AccountEconomicsRepository interface {
@@ -262,17 +281,36 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 	if quality.ExchangeRateSource == "" {
 		quality.ExchangeRateSource = "client"
 	}
+	if strings.EqualFold(quality.ExchangeRateSource, "fallback") {
+		// The client could not reach the reference-rate source or its cache and
+		// used the built-in rate. CNY results are estimates, not complete facts.
+		quality.Status = "partial"
+	}
 
 	current, err := s.recordSample(ctx, query.Scope, query.Platform, query.AccountIDs, now)
 	if err != nil {
 		return nil, err
 	}
-	samples, err := s.repo.ListSamples(ctx, current.ScopeKey, windowStart, windowEnd)
+	// Short display ranges (1m, 5m, the first minutes of today) can never hold
+	// the stable coverage a forecast needs, so the projection looks back at
+	// least economicsProjectionMinimumLookback. The series and sample count stay
+	// limited to the requested window.
+	projectionStart := windowStart
+	if lookbackStart := windowEnd.Add(-economicsProjectionMinimumLookback); lookbackStart.Before(projectionStart) {
+		projectionStart = lookbackStart
+	}
+	projectionSamples, err := s.repo.ListSamples(ctx, current.ScopeKey, projectionStart, windowEnd)
 	if err != nil {
 		return nil, fmt.Errorf("list economics samples: %w", err)
 	}
+	samples := make([]AccountEconomicsSample, 0, len(projectionSamples))
+	for _, sample := range projectionSamples {
+		if !sample.SampledAt.Before(windowStart) {
+			samples = append(samples, sample)
+		}
+	}
 	quality.SampleCount = len(samples)
-	projection := BuildAccountEconomicsProjection(samples)
+	projection := BuildAccountEconomicsProjection(projectionSamples)
 	accounts, err := s.loadScopeAccounts(ctx, query.Platform, query.AccountIDs)
 	if err != nil {
 		return nil, err
@@ -287,13 +325,15 @@ func (s *AccountEconomicsService) GetSnapshot(ctx context.Context, query Account
 		return nil, fmt.Errorf("list account procurement profiles: %w", err)
 	}
 	monthOneTimeProcurementCNY, monthOneTimePurchaseCount, monthDeletedOneTimePurchaseCount, monthDeletedRecurringProcurementCNY, monthDeletedRecurringPurchaseCount := summarizeMonthlyProcurementProfiles(
-		procurementProfiles, query.Platform, query.AccountIDs, cnyPerUSD, now.In(location), includeDeleted,
+		procurementProfiles, states, query.Platform, query.AccountIDs, cnyPerUSD, now.In(location), includeDeleted,
 	)
 	windowProcurementCNY, windowImpairmentCNY := summarizeWindowEconomics(
 		accounts, procurementProfiles, states, query.Platform, query.AccountIDs,
 		cnyPerUSD, windowStart, windowEnd, includeDeleted,
 	)
 	procurement, impairment, hourly, invalid := summarizeProcurementEconomics(accounts, states, query.Platform, cnyPerUSD, now, includeDeleted)
+	// Live accounts are validated above; deleted ones only exist in stored profiles.
+	invalid += countInvalidDeletedProcurementProfiles(procurementProfiles, query.Platform, query.AccountIDs, includeDeleted)
 	quality.InvalidCostProfileCount = invalid
 	if invalid > 0 {
 		quality.Status = "partial"
@@ -600,8 +640,40 @@ func summarizeProcurementEconomics(accounts []Account, states []AccountCostLossS
 	return procurementCNY, impairmentCNY, hourlyCNY, invalid
 }
 
+// countInvalidDeletedProcurementProfiles reports malformed stored profiles of
+// deleted accounts within the requested scope. Live accounts are counted by
+// summarizeProcurementEconomics, so they are not counted twice here.
+func countInvalidDeletedProcurementProfiles(profiles []AccountProcurementProfile, platform string, accountIDs []int64, includeDeleted bool) int {
+	selected := make(map[int64]struct{}, len(accountIDs))
+	for _, id := range accountIDs {
+		if id > 0 {
+			selected[id] = struct{}{}
+		}
+	}
+	platform = normalizeEconomicsPlatform(platform)
+	count := 0
+	for _, item := range profiles {
+		if !item.Invalid || !item.Deleted {
+			continue
+		}
+		if platform != "" && !strings.EqualFold(item.Platform, platform) {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, exists := selected[item.AccountID]; !exists {
+				continue
+			}
+		} else if !includeDeleted {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 func summarizeMonthlyProcurementProfiles(
 	profiles []AccountProcurementProfile,
+	states []AccountCostLossState,
 	platform string,
 	accountIDs []int64,
 	cnyPerUSD float64,
@@ -614,9 +686,20 @@ func summarizeMonthlyProcurementProfiles(
 			selected[id] = struct{}{}
 		}
 	}
+	// A confirmed terminal event stops accrual (the loss ledger books the rest
+	// of the current prepaid cycle), so no further cycles are paid after it.
+	terminalAt := make(map[int64]time.Time)
+	for _, state := range ConsolidateActiveCostLossStates(states) {
+		if !state.Active || state.AccountIDSnapshot <= 0 {
+			continue
+		}
+		if previous, exists := terminalAt[state.AccountIDSnapshot]; !exists || state.OccurredAt.After(previous) {
+			terminalAt[state.AccountIDSnapshot] = state.OccurredAt
+		}
+	}
 	platform = normalizeEconomicsPlatform(platform)
 	for _, item := range profiles {
-		if item.CostProfile.Amount < 0 || item.CostProfile.StartedAt.IsZero() || item.CostProfile.StartedAt.After(now) {
+		if item.Invalid || item.CostProfile.Amount < 0 || item.CostProfile.StartedAt.IsZero() || item.CostProfile.StartedAt.After(now) {
 			continue
 		}
 		if platform != "" && !strings.EqualFold(item.Platform, platform) {
@@ -641,11 +724,42 @@ func summarizeMonthlyProcurementProfiles(
 				deletedOneTimeCount++
 			}
 		} else if item.Deleted {
-			deletedRecurringCNY += amountCNY
+			end := now
+			if item.DeletedAt != nil && !item.DeletedAt.IsZero() && item.DeletedAt.Before(end) {
+				end = *item.DeletedAt
+			}
+			if terminal, exists := terminalAt[item.AccountID]; exists && terminal.Before(end) {
+				end = terminal
+			}
+			cycles := deletedRecurringPaidCycles(item.CostProfile, end)
+			if cycles <= 0 {
+				continue
+			}
+			deletedRecurringCNY += amountCNY * cycles
 			deletedRecurringCount++
 		}
 	}
 	return oneTimeCNY, oneTimeCount, deletedOneTimeCount, deletedRecurringCNY, deletedRecurringCount
+}
+
+// deletedRecurringPaidCycles counts the prepaid cycles a recurring profile
+// started before end (its deletion, terminal event or now). A started cycle is
+// paid in full, matching the terminal loss ledger: a daily account kept for 5.5
+// days paid 6 cycles, and a monthly account deleted within its first 730-hour
+// cycle paid one. An account removed before its start date paid nothing.
+func deletedRecurringPaidCycles(profile AccountCostProfileSnapshot, end time.Time) float64 {
+	if end.Before(profile.StartedAt) {
+		return 0
+	}
+	cycleHours := costCycleHours[profile.BillingCycle]
+	if cycleHours <= 0 {
+		return 1
+	}
+	activeHours := end.Sub(profile.StartedAt).Hours()
+	if activeHours <= 0 {
+		return 1
+	}
+	return math.Max(1, math.Ceil(activeHours/cycleHours-1e-9))
 }
 
 func summarizeWindowEconomics(
@@ -691,6 +805,9 @@ func summarizeWindowEconomics(
 
 	profileByID := make(map[int64]AccountProcurementProfile, len(profiles))
 	for _, item := range profiles {
+		if item.Invalid {
+			continue
+		}
 		profileByID[item.AccountID] = item
 	}
 	for _, account := range accounts {
@@ -715,6 +832,10 @@ func summarizeWindowEconomics(
 		stop := windowEnd
 		if state, exists := latestActive[accountID]; exists && state.OccurredAt.Before(stop) {
 			stop = state.OccurredAt
+		}
+		// A deleted account stops accruing at its deletion, as in the monthly summary.
+		if item.DeletedAt != nil && !item.DeletedAt.IsZero() && item.DeletedAt.Before(stop) {
+			stop = *item.DeletedAt
 		}
 		procurementCNY += costAmountToCNY(procurementCostBetween(item.CostProfile, windowStart, stop), item.CostProfile.Currency, cnyPerUSD)
 	}
@@ -861,6 +982,10 @@ func BuildAccountEconomicsProjection(samples []AccountEconomicsSample) AccountEc
 			projection.ResetIntervals++
 			continue
 		}
+		if duration > maximumEconomicsInterval {
+			projection.GapIntervals++
+			continue
+		}
 		projection.ValidIntervals++
 		hours := duration.Hours()
 		durationHours += hours
@@ -874,8 +999,15 @@ func BuildAccountEconomicsProjection(samples []AccountEconomicsSample) AccountEc
 	if latest.AccountCount > 0 {
 		projection.HealthyCapacityRatio = float64(latest.NormalCount) / float64(latest.AccountCount)
 	}
+	warnings := make([]string, 0, 3)
+	if projection.ResetIntervals > 0 {
+		warnings = append(warnings, "some intervals were excluded after pool or counter resets")
+	}
+	if projection.GapIntervals > 0 {
+		warnings = append(warnings, "sampling gaps longer than 30 minutes were excluded")
+	}
 	if projection.ValidIntervals < minimumEconomicsValidIntervals || durationHours <= 0 {
-		projection.Warning = "insufficient stable samples after pool or counter resets"
+		projection.Warning = "insufficient stable samples after pool resets or sampling gaps"
 		return projection
 	}
 
@@ -883,26 +1015,44 @@ func BuildAccountEconomicsProjection(samples []AccountEconomicsSample) AccountEc
 	accountCostRate := accountCostDelta / durationHours
 	projection.BilledUSDPerHour = &billedRate
 	projection.AccountCostUSDPerHour = &accountCostRate
+	switch {
+	case durationHours >= 1 && projection.ValidIntervals >= 2:
+		projection.Confidence = "high"
+	case durationHours >= minimumForecastCoverage.Hours():
+		projection.Confidence = "medium"
+	default:
+		projection.Confidence = "low"
+	}
+	if projection.Confidence == "low" {
+		// The measured rate stays visible, but less than 15 minutes of stable
+		// coverage is not enough evidence for forecasts or payback estimates.
+		projection.CapacityAdjustment = 1
+		warnings = append(warnings, "stable coverage below 15 minutes; forecast withheld")
+		projection.Warning = strings.Join(warnings, "; ")
+		return projection
+	}
+
 	capacityAdjustment := 1.0
 	averageHealthyAccounts := healthyAccountHours / durationHours
-	if averageHealthyAccounts > 0 {
+	switch {
+	case latest.NormalCount <= 0:
+		// No healthy capacity remains, so no further production is expected.
+		capacityAdjustment = 0
+	case averageHealthyAccounts >= 1:
 		capacityAdjustment = float64(latest.NormalCount) / averageHealthyAccounts
+	default:
+		// Fewer than one healthy account on average cannot support a reliable
+		// per-account rate; keep the measured rate instead of extrapolating it.
+	}
+	if capacityAdjustment > maximumCapacityAdjustment {
+		capacityAdjustment = maximumCapacityAdjustment
+		warnings = append(warnings, "capacity adjustment capped at 2x")
 	}
 	adjustedBilledRate := billedRate * capacityAdjustment
 	adjustedAccountCostRate := accountCostRate * capacityAdjustment
 	projection.CapacityAdjustment = capacityAdjustment
 	projection.CapacityAdjustedBilledUSDPerHour = &adjustedBilledRate
 	projection.CapacityAdjustedAccountCostUSDPerHour = &adjustedAccountCostRate
-	switch {
-	case durationHours >= 1 && projection.ValidIntervals >= 2:
-		projection.Confidence = "high"
-	case durationHours >= 0.25:
-		projection.Confidence = "medium"
-	default:
-		projection.Confidence = "low"
-	}
-	if projection.ResetIntervals > 0 {
-		projection.Warning = "some intervals were excluded after pool or counter resets"
-	}
+	projection.Warning = strings.Join(warnings, "; ")
 	return projection
 }

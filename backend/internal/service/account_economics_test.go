@@ -77,6 +77,9 @@ func TestBuildAccountEconomicsProjectionUsesOnlyStableSampleIntervals(t *testing
 	require.InDelta(t, 6, *projection.BilledUSDPerHour, 1e-9)
 	require.InDelta(t, 2, *projection.AccountCostUSDPerHour, 1e-9)
 	require.InDelta(t, 1, projection.CoverageHours, 1e-9)
+	// Projection 1.2: no healthy account in the latest sample means no further production is forecast.
+	require.Equal(t, 0.0, projection.CapacityAdjustment)
+	require.InDelta(t, 0, *projection.CapacityAdjustedBilledUSDPerHour, 1e-12)
 }
 
 func TestBuildAccountEconomicsProjectionDoesNotInventRateAcrossPoolChanges(t *testing.T) {
@@ -279,7 +282,7 @@ func TestSummarizeMonthlyProcurementIncludesDeletedAccountProfiles(t *testing.T)
 		}},
 	}
 
-	oneTime, oneTimeCount, deletedOneTime, deletedRecurring, deletedRecurringCount := summarizeMonthlyProcurementProfiles(profiles, PlatformOpenAI, nil, 7.2, now, true)
+	oneTime, oneTimeCount, deletedOneTime, deletedRecurring, deletedRecurringCount := summarizeMonthlyProcurementProfiles(profiles, nil, PlatformOpenAI, nil, 7.2, now, true)
 
 	require.Equal(t, 4.0, oneTime)
 	require.Equal(t, 2, oneTimeCount)

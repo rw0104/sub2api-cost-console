@@ -516,7 +516,7 @@
               <MetricCell label="当前池 API 产出速率" :value="formatOptionalUsd(oauthOutputHourlyUsd, 2)" :note="economicsSampleNote" :state="economicsDisplayState" accent="gold" />
               <MetricCell label="当前池综合成本" :value="formatOptionalCnyRate(oauthCombinedHourlyCny, 2)" note="稳定区间 API 成本 + 配置采购费率" :state="economicsDisplayState" accent="gold" />
               <MetricCell label="今日当前池产出" :value="formatUsd(oauthTodayOutputUsd, 3)" note="当天现存账号真实用户计费" :state="sourceStates.todayStats.status" />
-              <MetricCell label="预计今日剩余 API 产出（USD）" :value="formatOptionalUsd(oauthRemainingForecastUsd, 2)" note="从当前时刻到用户设备当天结束的产出预测；非余额，成员变化会重置" :state="accountEconomics?.projection.confidence === 'unavailable' ? 'partial' : sourceStates.economics.status" />
+              <MetricCell label="预计今日剩余 API 产出（USD）" :value="formatOptionalUsd(oauthRemainingForecastUsd, 2)" note="从当前时刻到用户设备当天结束的产出预测；非余额，成员变化会重置" :state="economicsForecastWithheld ? 'partial' : sourceStates.economics.status" />
               <MetricCell label="每 1 USD 产出采购成本" :value="!accountEconomics ? '无数据' : accountEconomics.actual.cny_per_billed_usd == null ? '无有效产出' : formatCny(accountEconomics.actual.cny_per_billed_usd, 2)" note="经济成本 CNY / 历史实际产出 USD" :state="economicsDisplayState" />
               <MetricCell label="经济数据完整度" :value="economicsQualityLabel" :note="economicsQualityNote" :state="economicsDisplayState" accent="lime" />
             </div>
@@ -1121,14 +1121,21 @@ const oauthTodayCostUsd = computed<number | null>(() => hasMeasuredData(sourceSt
 const oauthTodayOutputUsd = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? oauthAccounts.value.reduce((sum, row) => sum + (row.today ? actualUserCost(row.today) : 0), 0) : null)
 const oauthRequests = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? oauthAccounts.value.reduce((sum, row) => sum + Number(row.today?.requests || 0), 0) : null)
 const oauthTokens = computed<number | null>(() => hasMeasuredData(sourceStates.value.todayStats) ? oauthAccounts.value.reduce((sum, row) => sum + Number(row.today?.tokens || 0), 0) : null)
-const oauthOutputHourlyUsd = computed(() => accountEconomics.value?.projection.capacity_adjusted_billed_usd_per_hour ?? null)
+// Rate cards prefer the capacity-adjusted forecast and fall back to the measured
+// stable rate, which projection 1.2 still returns when the forecast is withheld.
+const oauthOutputHourlyUsd = computed(() => {
+  const projection = accountEconomics.value?.projection
+  return projection?.capacity_adjusted_billed_usd_per_hour ?? projection?.billed_usd_per_hour ?? null
+})
 const oauthCombinedHourlyCny = computed(() => {
-  const accountCostRate = accountEconomics.value?.projection.capacity_adjusted_account_cost_usd_per_hour
+  const projection = accountEconomics.value?.projection
+  const accountCostRate = projection?.capacity_adjusted_account_cost_usd_per_hour ?? projection?.account_cost_usd_per_hour
   return accountCostRate == null ? null : oauthHourlyCny.value + accountCostRate * exchangeRate.value.rate
 })
-const oauthRemainingForecastUsd = computed(() => oauthOutputHourlyUsd.value == null
+const oauthForecastHourlyUsd = computed(() => accountEconomics.value?.projection.capacity_adjusted_billed_usd_per_hour ?? null)
+const oauthRemainingForecastUsd = computed(() => oauthForecastHourlyUsd.value == null
   ? null
-  : Math.max(0, oauthOutputHourlyUsd.value * Math.max(0, 24 - dayElapsedHours.value)))
+  : Math.max(0, oauthForecastHourlyUsd.value * Math.max(0, 24 - dayElapsedHours.value)))
 const oauthTodayProfitUsd = computed<number | null>(() => oauthTodayOutputUsd.value == null || oauthTodayCostUsd.value == null ? null : oauthTodayOutputUsd.value - oauthTodayCostUsd.value)
 const oauthProcurementBaseline = computed(() => hasMeasuredData(sourceStates.value.accounts) && hasMeasuredData(sourceStates.value.costLoss) ? trend.value.map(() => oauthHourlyCny.value) : [])
 const currentPoolStartedAtLabel = computed(() => {
@@ -1148,8 +1155,13 @@ const oauthErrorCount = computed(() => oauthAccounts.value.filter((row) => curre
 const oauthUnverifiedCount = computed(() => oauthAccounts.value.filter((row) => probes.value[String(row.account.id)]?.success == null).length)
 const poolOutputProgress = computed<number | null>(() => accountEconomics.value?.actual.payback_ratio == null ? null : Math.max(0, accountEconomics.value.actual.payback_ratio * 100))
 const economicsConfidenceLabel = computed(() => ({
-  unavailable: '样本不足', low: '低置信度', medium: '中置信度', high: '高置信度',
+  unavailable: '样本不足', low: '低置信度 · 暂不预测', medium: '中置信度', high: '高置信度',
 })[accountEconomics.value?.projection.confidence ?? 'unavailable'])
+// Projection 1.2 withholds capacity-adjusted forecasts below 15 minutes of stable coverage.
+const economicsForecastWithheld = computed(() => {
+  const confidence = accountEconomics.value?.projection.confidence ?? 'unavailable'
+  return confidence === 'unavailable' || confidence === 'low'
+})
 const economicsSampleNote = computed(() => accountEconomics.value
   ? `${economicsConfidenceLabel.value} · ${accountEconomics.value.projection.valid_intervals} 个稳定区间 · 覆盖 ${accountEconomics.value.projection.coverage_hours.toFixed(2)}h`
   : '等待后端经济采样')
@@ -1164,7 +1176,7 @@ const economicsQualityLabel = computed(() => {
   if (!accountEconomics.value) return unavailableValueLabel(sourceStates.value.economics)
   if (accountEconomics.value.data_quality.invalid_cost_profile_count > 0) return '成本档案不完整'
   if (defaultCostAccountCount.value > 0) return '采购成本含默认估算'
-  if (accountEconomics.value.projection.confidence === 'unavailable') return '事实可用 · 预测待样本'
+  if (economicsForecastWithheld.value) return '事实可用 · 预测待样本'
   return accountEconomics.value.data_quality.status === 'complete' ? '事实与预测可用' : '部分可用'
 })
 const economicsQualityNote = computed(() => accountEconomics.value

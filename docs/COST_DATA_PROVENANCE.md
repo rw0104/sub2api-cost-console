@@ -22,7 +22,7 @@
 | API 产出速率 | 相邻稳定样本累计差值 ÷ 区间小时数 | 预测输入 | 成员变化、累计倒退或样本不足时返回不可用，不以当天已过小时代替采样窗口 |
 | 单位经济性 | `usage_logs` + 成本档案 + 损失账本 + 明确汇率 | 派生 | 输出每 1 USD 产出的采购成本、贡献结果、回本比例和预测置信度 |
 | 滚动平均 | 真实时间桶的移动平均 | 派生 | 只用于平滑趋势，界面明确标记为滚动平均 |
-| 剩余预期 | 持久化稳定区间速率线性外推 | 预测 | 至少两个稳定区间；不足时显示“待采样”，不是已经发生的账单 |
+| 剩余预期 | 持久化稳定区间速率线性外推 | 预测 | 至少两个稳定区间且稳定覆盖不少于 15 分钟；超过 30 分钟的采样间隔不计入；不足时显示“待采样”，不是已经发生的账单 |
 | 默认套餐成本 | 美国官方公开订阅价的版本化快照 | 默认估算 | 没有自定义采购价时使用；用户实际采购账单可逐账号覆盖 |
 | CNY/USD 换算 | Frankfurter USD/CNY 汇率、12 小时本地缓存 | 联网参考 | 网络源和有效缓存都不可用时才回退到 `1 USD = 7.2 CNY` |
 
@@ -50,7 +50,27 @@
 
 ## 4. 默认成本与算法版本
 
-当前成本算法版本为 `1.6.1`，成本扩展为 `1.1.2`，经济预测版本为 `1.1.0`。1.6.1 修正终局生命周期去重、按量账号固定附加费、自然日窗口和未来档案当前费率；固定订阅采购、终局封禁损失与 API 按量成本继续分开计算，未调整 Token 定价。修复与验证详见[成本审计及修复记录](2026-09-16_cost-algorithm-extension-audit-report.md)。
+当前成本算法版本为 `1.7.0`，成本扩展为 `1.3.25`，经济预测版本为 `1.2.0`。
+
+`1.7.0` 修正以下口径，固定订阅采购、终局封禁损失与 API 按量成本仍分开计算：
+
+- **Spark 影子账号**：影子账号不持凭据，借用母账号的订阅。没有自定义成本档案时，默认采购价为 0，母账号的套餐价不再计两次。管理员为影子账号显式填写的固定成本仍然生效。
+- **成本档案归一化**：后端与前端使用同一规则。计费周期去掉首尾空格并转为小写，空格和连字符折叠为 `_`，因此 `One-Time`、` Monthly ` 在两端结果一致。币种同样转为大写。
+- **异常档案隔离**：已删除账号的成本档案与现存账号使用同一套解析规则，起算时间同样不早于账号创建时间。单条格式异常的档案只计入 `invalid_cost_profile_count`，并把数据质量标为 partial，不再让整份经济快照失败。
+- **已删除账号的周期采购**：本月开始计费、之后已删除的经常性采购，按从起算到删除时已开始的周期数计费。已确认终局的账号算到终局时刻，没有删除时间的算到当前时刻。已开始的周期按全额计。
+  - 例如按日付费保留 5.5 天的账号计 6 个周期；月付账号在首个 730 小时周期内删除，仍计 1 个周期。
+  - 在起算时间之前就删除的账号不计费。
+  - 所选时段的新增采购也在删除时刻停止累计。
+- **汇率回退**：前端汇率来源为 `fallback`（联网与缓存都不可用，使用 7.2）时，经济快照的数据质量标为 partial。
+- **预测规则 1.2.0**：
+  - 预测使用 max(所选时段, 1 小时) 内的样本；图表与样本数仍只统计所选时段。
+  - 相邻样本间隔超过 30 分钟时，从速率中剔除该区间并计入 `gap_intervals`。这类间隔来自内核停机，或分渠道页面未打开时的采样空档；剔除后不会把停机时段按零产出摊薄速率。分渠道范围只在页面打开期间采样，因此速率只反映有采样的时段。
+  - 稳定覆盖不足 15 分钟（低置信度）时，只返回实测速率，`capacity_adjusted_*` 为 `null`，不输出回本时长。
+  - 平均健康账号少于 1 个时不做产能放大；当前没有健康账号时 `capacity_adjustment` 为 0；产能调整系数最大为 2 倍。
+
+`1.7.0` 不调整 Sub2API Token 定价。同版桌面单独修正了 gpt-6.1-sol 的 Ultrafast 计费倍率（6 倍，见发布说明）。
+
+`1.6.1` 修正终局生命周期去重、按量账号固定附加费、自然日窗口和未来档案当前费率。修复与验证详见[成本审计及修复记录](2026-09-16_cost-algorithm-extension-audit-report.md)。
 
 固定附加费适用于所有账号的显式成本档案；未配置固定费的按量账号不能因套餐标记自动套用订阅价。终局损失资格独立判断。同一未恢复生命周期只认首次终局，退款继续附着原事件；旧重复事件采用合并读取，恢复在事务内追加冲销。
 
@@ -73,8 +93,18 @@ terminal_unamortized = current_prepaid_cycle_price - accrued_in_current_cycle
 terminal_net_loss = max(0, terminal_unamortized - refund - reversal)
 account_asset_cost_at_terminal = fixed_accrued_cost_at_terminal + terminal_net_loss
 
+projection_samples = samples in [window_end - max(window, 1h), window_end]
+stable_interval = same membership, 5s <= duration <= 30min, no counter regression
 stable_output_rate = Σ(stable_sample_output_delta) / Σ(stable_interval_hours)
 stable_account_cost_rate = Σ(stable_sample_account_cost_delta) / Σ(stable_interval_hours)
+capacity_adjustment = 0                                   if current_healthy = 0
+                    = 1                                   if avg_healthy < 1
+                    = min(2, current_healthy / avg_healthy) otherwise
+forecast_rate = stable_rate × capacity_adjustment         only when coverage >= 15min
+
+paid_until = min(deleted_at, terminal_occurred_at, now)
+deleted_recurring_month_cost = 0                                                   if paid_until < started_at
+                             = amount × max(1, ceil((paid_until - started_at) / cycle_hours)) otherwise
 ```
 
 `1.6.0` 新增持续经济采样和账号池单位经济性 Module。累计样本只来自现有 `usage_logs`，成员哈希或账号数变化、累计值倒退、间隔过短都会重置相邻区间；至少两个稳定区间才返回速率。样本不足时 API 返回 `null`，界面显示“待采样”。采购档案保持原币种，只有明确的 CNY/USD 汇率边界执行换算。详细设计与部署方式见[成本经济算法 1.6 开发与部署说明](2026-08-11_cost-economics-1.6-development.md)。

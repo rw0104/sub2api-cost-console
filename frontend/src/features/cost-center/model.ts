@@ -16,7 +16,7 @@ export interface CostProfile {
   algorithm_version: string
 }
 
-export type CostAccount = Pick<Account, 'created_at' | 'extra' | 'credentials' | 'parent_plan_type' | 'platform' | 'type'>
+export type CostAccount = Pick<Account, 'created_at' | 'extra' | 'credentials' | 'parent_account_id' | 'parent_plan_type' | 'platform' | 'type'>
 export type DateInput = string | number | Date
 
 // Used only when the daily reference-rate request and its local cache are both unavailable.
@@ -196,13 +196,23 @@ function customCostProfile(account: CostAccount): CostProfile | null {
   }
 }
 
+/**
+ * Spark shadow accounts hold no credentials and borrow the parent account's
+ * subscription. The parent plan is shown for context, but the default
+ * subscription price is charged only on the parent.
+ */
+export function isCredentialShadowAccount(account: Pick<CostAccount, 'parent_account_id'>): boolean {
+  return typeof account.parent_account_id === 'number' && account.parent_account_id > 0
+}
+
 export function resolveCostProfile(account: CostAccount): CostProfile {
   const custom = customCostProfile(account)
   if (custom) return custom
 
   const plan = inferPlan(account)
+  const chargesDefaultSubscription = resolveAccountBillingMode(account) === 'subscription' && !isCredentialShadowAccount(account)
   return {
-    amount: resolveAccountBillingMode(account) === 'subscription' ? DEFAULT_MONTHLY_PRICES_USD[plan] : 0,
+    amount: chargesDefaultSubscription ? DEFAULT_MONTHLY_PRICES_USD[plan] : 0,
     currency: 'USD',
     billing_cycle: 'monthly',
     started_at: account.created_at,
@@ -212,7 +222,10 @@ export function resolveCostProfile(account: CostAccount): CostProfile {
 }
 
 export function isDefaultSubscriptionCostProfile(account: CostAccount): boolean {
-  return resolveAccountBillingMode(account) === 'subscription' && resolveCostProfile(account).source === 'default'
+  // A shadow's zero default is structural (shared parent subscription), not a price estimate.
+  return resolveAccountBillingMode(account) === 'subscription'
+    && !isCredentialShadowAccount(account)
+    && resolveCostProfile(account).source === 'default'
 }
 
 export function billingCycleHours(cycle: BillingCycle): number {

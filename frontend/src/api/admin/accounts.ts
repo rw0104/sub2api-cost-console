@@ -1367,6 +1367,8 @@ export interface AccountEconomicsSnapshot {
     warning?: string
     valid_intervals: number
     reset_intervals: number
+    /** Projection 1.2+: adjacent samples more than 30 minutes apart, excluded from rates. */
+    gap_intervals?: number
     coverage_hours: number
     billed_usd_per_hour: number | null
     account_cost_usd_per_hour: number | null

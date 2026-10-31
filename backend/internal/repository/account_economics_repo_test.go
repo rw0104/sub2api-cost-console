@@ -32,9 +32,11 @@ func TestAccountEconomicsRepositoryReadsDeletedOneTimeProcurementProfiles(t *tes
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectQuery(`(?s)SELECT id, platform, deleted_at IS NOT NULL, extra->'cost_profile'.*WHERE extra \? 'cost_profile'`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "deleted", "cost_profile"}).AddRow(
-			42, "openai", true,
+	createdAt := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	deletedAt := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`(?s)SELECT id, platform, deleted_at, created_at, extra->'cost_profile'.*WHERE extra \? 'cost_profile'`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "deleted_at", "created_at", "cost_profile"}).AddRow(
+			42, "openai", deletedAt, createdAt,
 			[]byte(`{"amount":2.5,"currency":"CNY","billing_cycle":"one_time","started_at":"2026-08-10T15:06:51+08:00","source":"custom","algorithm_version":"1.6.0"}`),
 		))
 
@@ -44,8 +46,44 @@ func TestAccountEconomicsRepositoryReadsDeletedOneTimeProcurementProfiles(t *tes
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
 	require.True(t, profiles[0].Deleted)
+	require.NotNil(t, profiles[0].DeletedAt)
+	require.True(t, deletedAt.Equal(*profiles[0].DeletedAt))
+	require.False(t, profiles[0].Invalid)
 	require.Equal(t, "one_time", profiles[0].CostProfile.BillingCycle)
 	require.Equal(t, 2.5, profiles[0].CostProfile.Amount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// 成本算法 1.7：单条格式异常的成本档案只标记为无效，不能让整份经济快照失败；
+// 已删除账号的档案与现存账号使用同一套解析与归一化规则。
+func TestAccountEconomicsRepositoryMarksMalformedProcurementProfilesInvalid(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	createdAt := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`(?s)SELECT id, platform, deleted_at, created_at, extra->'cost_profile'.*WHERE extra \? 'cost_profile'`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "deleted_at", "created_at", "cost_profile"}).
+			AddRow(1, "openai", nil, createdAt, []byte(`{"amount":24,"currency":"CNY","billing_cycle":"daily","started_at":""}`)).
+			AddRow(2, "openai", createdAt.Add(time.Hour), createdAt, []byte(`{"amount":"24","currency":"CNY","billing_cycle":"daily","started_at":"2026-09-01T00:00:00Z"}`)).
+			AddRow(3, "openai", createdAt.Add(time.Hour), createdAt, []byte(`{"amount":24,"currency":"cny","billing_cycle":"One-Time","started_at":"2026-09-01T00:00:00Z"}`)).
+			// JSON null means "no cost profile", as for live accounts; it is neither returned nor invalid.
+			AddRow(4, "openai", createdAt.Add(time.Hour), createdAt, []byte(`null`)))
+
+	repo := NewAccountEconomicsRepository(db)
+	profiles, err := repo.ListProcurementProfiles(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, profiles, 3)
+	require.True(t, profiles[0].Invalid)
+	require.False(t, profiles[0].Deleted)
+	require.Nil(t, profiles[0].DeletedAt)
+	require.True(t, profiles[1].Invalid)
+	require.True(t, profiles[1].Deleted)
+	require.False(t, profiles[2].Invalid)
+	require.Equal(t, "one_time", profiles[2].CostProfile.BillingCycle)
+	require.Equal(t, "CNY", profiles[2].CostProfile.Currency)
+	require.Equal(t, createdAt, profiles[2].CostProfile.StartedAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

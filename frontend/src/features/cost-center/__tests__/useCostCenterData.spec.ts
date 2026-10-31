@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { testAccount } = vi.hoisted(() => ({ testAccount: vi.fn() }))
+const { testAccount, getEconomicsSnapshot } = vi.hoisted(() => ({ testAccount: vi.fn(), getEconomicsSnapshot: vi.fn() }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
-    accounts: { testAccount },
+    accounts: { testAccount, getEconomicsSnapshot },
     dashboard: {},
     ops: {},
   },
@@ -26,6 +26,50 @@ import {
   trendHasAccountCost,
   useCostCenterData,
 } from '../useCostCenterData'
+
+describe('economics source state', () => {
+  const snapshot = (confidence: 'unavailable' | 'low' | 'medium', status: 'complete' | 'partial' = 'complete') => ({
+    algorithm_version: '1.7.0',
+    projection_version: '1.2.0',
+    data_quality: { status, sample_count: 3, invalid_cost_profile_count: 0, exchange_rate_source: 'network' },
+    projection: {
+      version: '1.2.0', confidence, valid_intervals: 2, reset_intervals: 0, gap_intervals: 0, coverage_hours: 0.05,
+      billed_usd_per_hour: confidence === 'unavailable' ? null : 6,
+      account_cost_usd_per_hour: confidence === 'unavailable' ? null : 2,
+      capacity_adjusted_billed_usd_per_hour: confidence === 'medium' ? 6 : null,
+      capacity_adjusted_account_cost_usd_per_hour: confidence === 'medium' ? 2 : null,
+      capacity_adjustment: 1, healthy_capacity_ratio: 1,
+    },
+  })
+
+  afterEach(() => {
+    getEconomicsSnapshot.mockReset()
+  })
+
+  // Projection 1.2 withholds forecasts below 15 minutes of coverage. The same source
+  // feeds factual procurement cards, so low confidence must not downgrade it to partial.
+  it('keeps factual economics measured when only the forecast is withheld', async () => {
+    const data = useCostCenterData()
+
+    getEconomicsSnapshot.mockResolvedValueOnce(snapshot('low'))
+    await data.loadAccountEconomics('codex', '1h', [1])
+    expect(data.sourceStates.value.economics.status).toBe('measured')
+    expect(data.sourceStates.value.economics.reason).toContain('15 分钟')
+
+    getEconomicsSnapshot.mockResolvedValueOnce(snapshot('unavailable'))
+    await data.loadAccountEconomics('codex', '1h', [1])
+    expect(data.sourceStates.value.economics.status).toBe('partial')
+
+    getEconomicsSnapshot.mockResolvedValueOnce(snapshot('medium', 'partial'))
+    await data.loadAccountEconomics('codex', '1h', [1])
+    expect(data.sourceStates.value.economics.status).toBe('partial')
+
+    getEconomicsSnapshot.mockResolvedValueOnce(snapshot('medium'))
+    await data.loadAccountEconomics('codex', '1h', [1])
+    expect(data.sourceStates.value.economics.status).toBe('measured')
+    expect(getEconomicsSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'codex', exchange_rate_source: expect.any(String) }))
+  })
+})
 
 describe('cost center live ranges', () => {
   afterEach(() => {

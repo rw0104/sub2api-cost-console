@@ -204,6 +204,23 @@ describe('cost center model', () => {
     expect(resolved.algorithm_version).toBe('1.0.0')
   })
 
+  it('does not charge a spark shadow account for its parent subscription', () => {
+    const shadow = account({ parent_account_id: 99, parent_plan_type: 'plus', extra: { plan_type: 'plus' } })
+    expect(inferPlan(shadow)).toBe('plus')
+    expect(resolveCostProfile(shadow)).toMatchObject({ amount: 0, currency: 'USD', source: 'default' })
+    expect(isDefaultSubscriptionCostProfile(shadow)).toBe(false)
+
+    const parent = account({ extra: { plan_type: 'plus' } })
+    expect(resolveCostProfile(parent)).toMatchObject({ amount: 20, source: 'default' })
+    expect(isDefaultSubscriptionCostProfile(parent)).toBe(true)
+
+    const explicit = account({
+      parent_account_id: 99,
+      extra: { cost_profile: { amount: 5, currency: 'CNY', billing_cycle: 'monthly', started_at: '2026-09-01T00:00:00Z' } },
+    })
+    expect(resolveCostProfile(explicit)).toMatchObject({ amount: 5, currency: 'CNY', source: 'custom' })
+  })
+
   it('falls back through credential and parent plan fields', () => {
     expect(inferPlan(account({ credentials: { subscription_tier: 'ChatGPT Pro' } }))).toBe('pro')
     expect(inferPlan(account({ parent_plan_type: 'business' }))).toBe('business')

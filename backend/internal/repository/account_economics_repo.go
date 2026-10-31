@@ -1,9 +1,9 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -46,7 +46,7 @@ func (r *accountEconomicsRepository) ListProcurementProfiles(ctx context.Context
 		return nil, errors.New("account economics repository is unavailable")
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, platform, deleted_at IS NOT NULL, extra->'cost_profile'
+		SELECT id, platform, deleted_at, created_at, extra->'cost_profile'
 		FROM accounts
 		WHERE extra ? 'cost_profile'
 		ORDER BY id ASC
@@ -59,12 +59,28 @@ func (r *accountEconomicsRepository) ListProcurementProfiles(ctx context.Context
 	profiles := make([]service.AccountProcurementProfile, 0)
 	for rows.Next() {
 		var profile service.AccountProcurementProfile
+		var deletedAt sql.NullTime
+		var createdAt time.Time
 		var profileJSON []byte
-		if err := rows.Scan(&profile.AccountID, &profile.Platform, &profile.Deleted, &profileJSON); err != nil {
+		if err := rows.Scan(&profile.AccountID, &profile.Platform, &deletedAt, &createdAt, &profileJSON); err != nil {
 			return nil, fmt.Errorf("scan account procurement profile: %w", err)
 		}
-		if err := json.Unmarshal(profileJSON, &profile.CostProfile); err != nil {
-			return nil, fmt.Errorf("unmarshal account procurement profile: %w", err)
+		// A stored JSON null means "no cost profile", the same as for live accounts.
+		if trimmed := bytes.TrimSpace(profileJSON); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+			continue
+		}
+		if deletedAt.Valid {
+			value := deletedAt.Time
+			profile.Deleted = true
+			profile.DeletedAt = &value
+		}
+		// One malformed stored profile must not fail the whole economics
+		// snapshot; the service reports it through data quality instead.
+		parsed, parseErr := service.ParseAccountProcurementProfile(profileJSON, createdAt)
+		if parseErr != nil {
+			profile.Invalid = true
+		} else {
+			profile.CostProfile = parsed
 		}
 		profiles = append(profiles, profile)
 	}

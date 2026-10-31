@@ -656,12 +656,15 @@ export function useCostCenterData() {
       })
       if (sequence === economicsRequestSequence) {
         accountEconomics.value = snapshot
-        const status = snapshot.data_quality.status === 'partial'
-          ? 'partial'
-          : snapshot.projection.confidence === 'unavailable'
-            ? 'partial'
-            : 'measured'
-        setSourceState('economics', status, snapshot.projection.confidence === 'unavailable' ? '事实数据可用；稳定采样区间不足，预测不可用' : '事实账本与稳定区间预测已读取')
+        const confidence = snapshot.projection.confidence
+        // Low confidence only withholds forecasts; factual cards sharing this source stay measured.
+        const status = snapshot.data_quality.status === 'partial' || confidence === 'unavailable' ? 'partial' : 'measured'
+        const reason = confidence === 'unavailable'
+          ? '事实数据可用；稳定采样区间不足，预测不可用'
+          : confidence === 'low'
+            ? '事实数据可用；稳定采样覆盖不足 15 分钟，暂不输出预测'
+            : '事实账本与稳定区间预测已读取'
+        setSourceState('economics', status, reason)
       }
       return snapshot
     } catch (economicsError) {
