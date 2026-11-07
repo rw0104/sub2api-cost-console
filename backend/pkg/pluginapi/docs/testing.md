@@ -20,11 +20,31 @@ go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 
 
 延迟输出只是该机器上合成上游的回归结果，不代表生产容量。测试的本机 HTTP 上游使用独立的测试配置，不改变生产 HTTPS/SSRF 规则。
 
+### Windows Docker Desktop 的 Linux engine
+
+本节仅适用于 **Windows 上的本机 Docker Desktop，且使用 Linux engine**。先确认 Docker Desktop 已启动、未暂停，并用 `docker info --format '{{.OSType}} / {{.OperatingSystem}}'` 核对环境。不要将以下 socket 路径用于 Windows containers、远程 Docker、其他操作系统或其他容器运行时。
+
+已验证的兼容问题是：testcontainers-go v0.40.0 只识别精确的 `Docker Desktop` 系统名称；当 daemon 返回 `Docker Desktop (containerized)` 时，它可能把 Windows named pipe 挂到 Linux Ryuk 容器的 `/var/run/docker.sock`。Ryuk 会因无法连接 Docker 而立即退出，外层常表现为 reaper 等待端口时报告 `No such container`。这种情况应修正挂载路径，**保持 Ryuk 启用**，不要用 `TESTCONTAINERS_RYUK_DISABLED=true` 绕过清理，也不需要为此开启 privileged。
+
+在符合上述条件的终端中，用下列包装替代上面的 Go 命令。覆盖仅作用于当前 PowerShell 进程及其测试子进程，结束后恢复原值；不要写入用户级或机器级环境变量。
+
+```powershell
+$previousPluginE2ESocketOverride = [Environment]::GetEnvironmentVariable('TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', 'Process')
+try {
+    $env:TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE = '/var/run/docker.sock'
+    go test -tags plugin_e2e ./cmd/server -run '^TestPluginProductionE2E$' -count=1 -v -timeout=8m
+} finally {
+    [Environment]::SetEnvironmentVariable('TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', $previousPluginE2ESocketOverride, 'Process')
+}
+```
+
+该变量只指定供 Ryuk 挂载的 Linux socket，不改变测试进程连接 Docker 的 Windows named pipe。更多配置见 [Testcontainers for Go 配置说明](https://golang.testcontainers.org/features/configuration/)。
+
 ## 真实浏览器管理流程
 
 需要前端依赖已安装，以及 Python Playwright 和 Chromium。打开三个终端，按顺序执行。示例路径均基于仓库根目录，不要在输出中分享临时 fixture（它含合成登录凭据）。
 
-终端一，`backend` 目录：
+终端一，`backend` 目录。若使用上述 Windows Docker Desktop Linux engine 环境，也将这里的 Go 命令放入同样的进程级 socket override `try/finally` 包装中，保留下面的 fixture 设置与 `22m` 超时；Ryuk 必须保持启用，另外两个终端无需设置该变量。
 
 ```powershell
 New-Item -ItemType Directory -Force dist | Out-Null

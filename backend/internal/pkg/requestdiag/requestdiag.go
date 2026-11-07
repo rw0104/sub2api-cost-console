@@ -197,9 +197,10 @@ func skipSpace(body []byte, pos int) int {
 
 func stringEnd(body []byte, pos int) int {
 	for pos++; pos < len(body); pos++ {
-		if body[pos] == '\\' {
+		switch body[pos] {
+		case '\\':
 			pos++
-		} else if body[pos] == '"' {
+		case '"':
 			return pos + 1
 		}
 	}

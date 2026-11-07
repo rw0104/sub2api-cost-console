@@ -2,9 +2,13 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/stretchr/testify/require"
@@ -76,6 +80,27 @@ func signedThinkingHistoryBody() []byte {
 
 func TestFilterThinkingBlocksSignedHistorySkipsDecode(t *testing.T) {
 	body := signedThinkingHistoryBody()
+	needsFiltering, decided := thinkingBlocksNeedFiltering(body, false)
+	require.True(t, decided, "signed history must be recognized by the precheck")
+	require.False(t, needsFiltering, "valid signed history needs no filtering")
+	got := filterThinkingBlocksInternal(body, false)
+	require.Equal(t, &body[0], &got[0], "valid signed history must be returned unchanged")
+
+	// AllocsPerRun counts process-wide Mallocs. Other service tests leave
+	// background work draining, so measure in a process that runs only this
+	// regression instead of weakening the allocation limit or production path.
+	const childMarker = "SUB2API_SIGNED_THINKING_ALLOCS_CHILD"
+	if os.Getenv(childMarker) != "1" {
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, executable, "-test.run=^TestFilterThinkingBlocksSignedHistorySkipsDecode$", "-test.count=1")
+		command.Env = append(os.Environ(), childMarker+"=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "isolated allocation regression: %s", output)
+		return
+	}
 	allocs := testing.AllocsPerRun(5, func() {
 		got := filterThinkingBlocksInternal(body, false)
 		if &got[0] != &body[0] {

@@ -125,6 +125,41 @@ describe('CostApiAccessPanel data truthfulness', () => {
     expect(wrapper.find('input.cost-api-input').exists()).toBe(true)
   })
 
+  it('aligns the Codex image and search export while preserving the selected model and scoped key', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'gpt-6.1-sol' }, { id: 'user-selected-model' }] }),
+    } as Response)
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    try {
+      await flushPromises()
+      const testButton = wrapper.findAll('button').find((button) => button.text().includes('测试本地接口'))!
+      await testButton.trigger('click')
+      await flushPromises()
+      const modelField = wrapper.findAll('label').find((label) => label.text().includes('默认模型'))!
+      await modelField.find('select').setValue('user-selected-model')
+      const config = wrapper.get('pre code').text()
+      expect(config.split('[model_providers.')[0]).toContain('model = "user-selected-model"')
+      expect(config.split('[model_providers.')[0]).toContain('review_model = "user-selected-model"')
+      expect(config.split('[model_providers.')[0]).toContain('web_search = "live"')
+      expect(config).toContain('env_key = "SUB2API_API_KEY"')
+      expect(config).toContain('requires_openai_auth = false')
+      expect(config).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
+      expect(config.split('[features]')[1]).toContain('image_generation = true')
+      expect(config).not.toContain('sk-test-key')
+      await wrapper.get('[role="tablist"] button:nth-child(3)').trigger('click')
+      const claudeConfig = wrapper.get('pre code').text()
+      expect(claudeConfig).toContain('ANTHROPIC_AUTH_TOKEN')
+      expect(claudeConfig).not.toContain('x-openai-actor-authorization')
+      expect(claudeConfig).not.toContain('image_generation')
+      expect(claudeConfig).not.toContain('web_search')
+    } finally {
+      fetchSpy.mockRestore()
+      wrapper.unmount()
+    }
+  })
+
   // Codex 0.149 起，requires_openai_auth = false 的自定义 Provider 不再读取 auth.json，
   // 只认 env_key 指向的环境变量。示例配置缺少 env_key 会让 Codex 不带密钥访问网关并收到 401。
   it('puts the Codex API key on env_key instead of an ignored auth.json', async () => {

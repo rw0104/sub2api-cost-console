@@ -996,13 +996,13 @@ func buildCodexModelsManifest(
 		descriptor := newConfiguredCodexModelDescriptor(metadataModelID)
 		descriptor.Slug = modelID
 		descriptor.SupportsSearchTool = searchToolModels[modelID]
+		// Official model defaults do not establish capabilities for this route.
+		// Start conservatively, then let confirmed account metadata (already
+		// intersected across the route's accounts) declare its supported inputs.
+		descriptor.InputModalities = []string{"text"}
 		if metadata, ok := modelMetadata[modelID]; ok {
 			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
 		}
-		// Official descriptors describe the model, not every configured route.
-		// Unknown or intersected text-only accounts must not inherit image input
-		// merely because a newly bundled descriptor advertises it by default.
-		descriptor.InputModalities = []string{"text"}
 		if imageInputModels[modelID] {
 			// Apply the capability-derived modality after upstream metadata so
 			// a stale official Astra snapshot cannot downgrade the catalog.

@@ -2281,20 +2281,6 @@ func recordOpenAIProfitVeto(failedAccountIDs map[int64]struct{}, accountID int64
 	return *vetoCount < maxProfitVetoAttempts
 }
 
-// handleOpenAIProfitVetoExhausted 在利润否决预算耗尽时写出错误响应。
-// 与 acquireResponsesAccountSlot 内部的 no-available-accounts 失败分支同形，
-// 保证同一调用方在两条路径上拿到一致的响应格式。
-func (h *OpenAIGatewayHandler) handleOpenAIProfitVetoExhausted(
-	c *gin.Context,
-	streamStarted bool,
-	reqLog *zap.Logger,
-	vetoCount int,
-) {
-	reqLog.Warn("openai.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", vetoCount))
-	markOpsRoutingCapacityLimited(c)
-	h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage, streamStarted)
-}
-
 func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	c *gin.Context,
 	groupID *int64,
