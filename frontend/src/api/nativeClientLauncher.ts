@@ -28,6 +28,16 @@ export interface NativeClientAvailability {
   executable: string | null
   available: boolean
   message: string
+  identity?: NativeClientIdentity | null
+}
+
+export interface NativeClientIdentity {
+  product_name: string
+  version: string | null
+  installation_source: 'windows_msix' | 'desktop_bundled' | 'npm' | 'path'
+  release_channel: 'stable' | 'prerelease' | 'unknown'
+  package_identity: string | null
+  probe_status: 'detected' | 'unavailable' | 'timed_out'
 }
 
 export interface NativeClientLaunchPreview {
@@ -39,6 +49,7 @@ export interface NativeClientLaunchPreview {
   environment_keys: string[]
   available: boolean
   message: string
+  identity?: NativeClientIdentity | null
 }
 
 export interface NativeClientLaunchReceipt {

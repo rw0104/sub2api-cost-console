@@ -697,6 +697,10 @@ export default {
         imagesUrlToB64Json: 'Image result URL to base64',
         imagesUrlToB64JsonDesc:
           'Only applies to non-streaming Images responses of OpenAI API Key accounts. When an upstream image item has a url but no b64_json, the gateway downloads the url and fills b64_json with its base64 content (url is kept) for clients built on the official API; the response is returned unchanged if the download fails.',
+        imageSizeTiers: 'Image size tiers',
+        imageSizeTiersDesc:
+          'Limits the image size tiers this account serves, using the billing tiers: longest edge ≤1024 is 1K, ≤2048 is 2K, larger is 4K (2560x1440 is 4K). Requests with an explicit size are only scheduled to accounts allowing that tier; requests without a size or with auto prefer accounts without a tier limit, then accounts allowing 4K, 2K and 1K in that order. Selecting all tiers means no limit. Applies to the Images API and the Responses image generation tool.',
+        imageSizeTiersAtLeastOne: 'Keep at least one tier',
         endpointCapabilities: 'Endpoint capabilities',
         endpointCapabilitiesDesc:
           'Used by account routing. The text endpoint follows the Responses API support setting above and is shown as Responses, Chat Completions, or auto mode; Embeddings independently controls /v1/embeddings.',
@@ -1737,6 +1741,12 @@ export default {
         gemini3Pro: 'G3P',
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
+        antigravityGemini5h: 'G·5h',
+        antigravityGeminiWeekly: 'G·wk',
+        antigravityArgon5h: 'A·5h',
+        antigravityArgonWeekly: 'A·wk',
+        antigravityOther5h: 'C·5h',
+        antigravityOtherWeekly: 'C·wk',
         claude: 'Claude',
         grokRequests: 'Req',
         grokTokens: 'Tok',
@@ -1813,6 +1823,7 @@ export default {
         resetCacheRefreshFailed: 'The window was reset and account state recovered, but the reset-credit count could not be read back. Query it again.',
         resetAccountRecoveryFailed: 'The window was reset, but account state recovery failed. Recover the account state manually.',
         resetAccountRefreshFailed: 'The window, account state, and reset-credit cache were updated, but the latest account display could not be loaded.',
+        resetRecoveryNotConfirmed: 'The reset credit was redeemed, but the account changed during the query or usable quota could not yet be confirmed. Current limits were preserved. Refresh to verify; do not redeem another credit to retry recovery.',
         refreshCachePersistFailed: 'Showing the live count, but its expiration details were unavailable, so the cached details were kept.',
         autoStatus: {
           checking: 'Checking',

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pluginruntime"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
@@ -526,19 +527,26 @@ func (r *pluginRuntime) kill() {
 	r.markRuntimeExited()
 }
 
-func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, proxyURL string, account *Account, drainTimeouts ...time.Duration) (*http.Response, error) {
 	if request == nil || request.URL == nil || account == nil {
 		return nil, errors.New("插件出站请求参数不完整")
 	}
-	streamCtx, cancel := context.WithCancel(ctx)
+	var drainTimeout time.Duration
+	if len(drainTimeouts) > 0 {
+		drainTimeout = drainTimeouts[0]
+	}
+	// Both plugin protocols bypass HTTPUpstream. Consume the detached client's
+	// drain policy here too; a healthy stream has no total duration limit.
+	streamCtx, cancel := pkghttputil.NewUpstreamAttemptContext(ctx, drainTimeout)
 	forwarder := pluginv2.TransportClient(r.api)
 	if r.transport != nil {
 		forwarder = r.transport
 	}
 	stream, err := forwarder.Forward(streamCtx)
 	if err != nil {
+		err = normalizePluginAttemptError(streamCtx, ctx, "创建插件转发流", err, false)
 		cancel()
-		return nil, normalizePluginRPCError(ctx, "创建插件转发流", err, false)
+		return nil, err
 	}
 	requestID := pluginForwardRequestID(ctx)
 	if err := stream.Send(&pluginv1.ForwardRequest{Frame: &pluginv1.ForwardRequest_Start{Start: &pluginv1.ForwardRequestStart{
@@ -557,13 +565,19 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		OriginalBodyJson:    r.protectionOriginalBody(ctx, account),
 		AccountMetadataJson: r.protectionAccountMetadata(ctx, account),
 	}}}); err != nil {
-		cancel()
 		// gRPC Send 返回错误时无法证明服务端没有收到元数据，必须禁止自动重放。
-		return nil, normalizePluginRPCError(ctx, "发送插件请求元数据", err, true)
+		err = normalizePluginAttemptError(streamCtx, ctx, "发送插件请求元数据", err, true)
+		cancel()
+		return nil, err
 	}
 	sendErr := make(chan error, 1)
 	go func() {
 		err := sendPluginRequestBody(stream, request.Body)
+		if err != nil {
+			// Classify before cleanup cancels streamCtx. Otherwise a peer send
+			// failure becomes indistinguishable from our own drain cancellation.
+			err = normalizePluginAttemptError(streamCtx, ctx, "发送插件请求体", err, true)
+		}
 		sendErr <- err
 		if err != nil {
 			cancel()
@@ -572,15 +586,16 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 
 	first, err := stream.Recv()
 	if err != nil {
-		cancel()
+		err = normalizePluginAttemptError(streamCtx, ctx, "接收插件响应头", err, true)
 		select {
 		case bodyErr := <-sendErr:
 			if bodyErr != nil {
-				return nil, normalizePluginRPCError(ctx, "发送插件请求体", bodyErr, true)
+				err = bodyErr
 			}
 		default:
 		}
-		return nil, normalizePluginRPCError(ctx, "接收插件响应头", err, true)
+		cancel()
+		return nil, err
 	}
 	if frameError := first.GetError(); frameError != nil {
 		cancel()
@@ -601,7 +616,7 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		cancel: cancel,
 		done:   r.finishRequest,
 	}
-	go receivePluginResponseBody(stream, pipeWriter, sendErr)
+	go receivePluginResponseBody(stream, pipeWriter, sendErr, ctx)
 	return &http.Response{
 		Status:        start.Status,
 		StatusCode:    int(start.StatusCode),
@@ -611,7 +626,7 @@ func (r *pluginRuntime) roundTrip(ctx context.Context, request *http.Request, pr
 		Header:        headersFromPlugin(start.Headers),
 		Body:          body,
 		ContentLength: start.ContentLength,
-		Request:       request,
+		Request:       request.WithContext(streamCtx),
 	}, nil
 }
 
@@ -648,6 +663,21 @@ func normalizePluginRPCError(ctx context.Context, operation string, err error, r
 	}
 }
 
+// pluginDrainCancellation identifies a locally expired detached drain while
+// preserving errors.Is(context.Canceled) for the gateway's no-replay handling.
+// Raw peer cancellation errors are never promoted to this internal marker.
+type pluginDrainCancellation struct{ cause error }
+
+func (e *pluginDrainCancellation) Error() string { return e.cause.Error() }
+func (e *pluginDrainCancellation) Unwrap() error { return e.cause }
+
+func normalizePluginAttemptError(attempt, parent context.Context, operation string, err error, requestMayHaveBeenSent bool) error {
+	if attempt.Err() != nil && parent.Err() == nil {
+		return &pluginDrainCancellation{cause: attempt.Err()}
+	}
+	return normalizePluginRPCError(attempt, operation, err, requestMayHaveBeenSent)
+}
+
 func sendPluginRequestBody(stream pluginv1.TransportPlugin_ForwardClient, body io.ReadCloser) error {
 	if body != nil {
 		defer func() { _ = body.Close() }()
@@ -674,15 +704,24 @@ func sendPluginRequestBody(stream pluginv1.TransportPlugin_ForwardClient, body i
 	return stream.CloseSend()
 }
 
-func receivePluginResponseBody(stream pluginv1.TransportPlugin_ForwardClient, writer *io.PipeWriter, sendErr <-chan error) {
+func receivePluginResponseBody(stream pluginv1.TransportPlugin_ForwardClient, writer *io.PipeWriter, sendErr <-chan error, parent context.Context) {
 	defer func() { _ = writer.Close() }()
 	for {
 		frame, err := stream.Recv()
-		if err == io.EOF {
-			return
-		}
 		if err != nil {
-			_ = writer.CloseWithError(normalizePluginRPCError(stream.Context(), "接收插件响应体", err, true))
+			if err != io.EOF {
+				err = normalizePluginAttemptError(stream.Context(), parent, "接收插件响应体", err, true)
+			}
+			select {
+			case bodyErr := <-sendErr:
+				if bodyErr != nil {
+					err = bodyErr
+				}
+			default:
+			}
+			if err != io.EOF {
+				_ = writer.CloseWithError(err)
+			}
 			return
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
@@ -695,7 +734,7 @@ func receivePluginResponseBody(stream pluginv1.TransportPlugin_ForwardClient, wr
 			select {
 			case err := <-sendErr:
 				if err != nil {
-					_ = writer.CloseWithError(normalizePluginRPCError(stream.Context(), "发送插件请求体", err, true))
+					_ = writer.CloseWithError(err)
 				}
 			default:
 			}

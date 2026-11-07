@@ -533,6 +533,11 @@ const confirmReset = async () => {
       resetWarning.value = t('admin.accounts.openaiQuotaReset.resetAccountRecoveryFailed')
     } else if (result.warning_code === 'account_state_refresh_failed') {
       resetWarning.value = t('admin.accounts.openaiQuotaReset.resetAccountRefreshFailed')
+    } else if (result.warning_code === 'quota_recovery_not_confirmed') {
+      resetWarning.value = t('admin.accounts.openaiQuotaReset.resetRecoveryNotConfirmed')
+      // Redemption already happened. Require an explicit refresh before another
+      // consumption instead of presenting this partial result as a retry action.
+      data.value = null
     } else {
       resetMessage.value = t('admin.accounts.openaiQuotaReset.resetSuccess', {
         windows: result.windows_reset

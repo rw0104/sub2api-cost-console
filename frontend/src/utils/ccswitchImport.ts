@@ -1,6 +1,8 @@
 import type { GroupPlatform } from '@/types'
+import { buildCodexApiKeyAuthConfig } from '@/utils/codexAuthConfig'
+import { buildCodexModelCatalogUrl } from '@/api/codex'
 
-export const OPENAI_CC_SWITCH_CODEX_MODEL = 'gpt-5.5'
+export const OPENAI_CC_SWITCH_CODEX_MODEL = 'gpt-6.1-sol'
 export const GROK_CC_SWITCH_MODEL = 'grok-4.5'
 
 export type CcSwitchClientType = 'claude' | 'gemini'
@@ -109,6 +111,26 @@ export function buildCcSwitchImportDeeplink(input: CcSwitchImportDeeplinkInput):
 
   if (config.model) {
     entries.splice(2, 0, ['model', config.model])
+  }
+
+  if (config.app === 'codex') {
+    // CC Switch's embedded-config import preserves provider auth and headers.
+    // Keep the provider catalog and image auth aligned with the other exports.
+    // Global feature choices remain owned by the user's CC Switch configuration.
+    const codexConfig = `model_provider = "sub2api"
+model = ${JSON.stringify(config.model)}
+web_search = "live"
+
+[model_providers.sub2api]
+name = "Sub2API"
+base_url = ${JSON.stringify(config.endpoint)}
+model_catalog_url = ${JSON.stringify(buildCodexModelCatalogUrl(input.baseUrl))}
+wire_api = "responses"
+${buildCodexApiKeyAuthConfig(input.apiKey)}
+`
+    const payload = JSON.stringify({ config: codexConfig })
+    const bytes = new TextEncoder().encode(payload)
+    entries.push(['config', btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))])
   }
 
   return `ccswitch://v1/import?${new URLSearchParams(entries).toString()}`

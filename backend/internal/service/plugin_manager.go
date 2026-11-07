@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 )
@@ -1410,7 +1411,7 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 	if !route.runtime.beginRequest() {
 		return nil, true, errors.New("OpenAI OAuth 插件正在停止")
 	}
-	response, err := route.runtime.roundTrip(ctx, request, proxyURL, account)
+	response, err := route.runtime.roundTrip(ctx, request, proxyURL, account, m.upstreamDrainTimeout())
 	if err != nil {
 		route.runtime.finishRequest()
 		if route.runtime.client.Exited() {
@@ -1421,6 +1422,13 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 		return nil, true, err
 	}
 	return response, true, nil
+}
+
+func (m *PluginManager) upstreamDrainTimeout() time.Duration {
+	if m != nil && m.cfg != nil && m.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		return time.Duration(m.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	return pkghttputil.DefaultUpstreamDrainTimeout
 }
 
 // ShouldRouteOpenAIOAuth 判断该账号是否命中当前 OpenAI OAuth 插件绑定。

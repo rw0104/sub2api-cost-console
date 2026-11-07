@@ -33,6 +33,15 @@ func TestOpenAISubscriptionLongContextExempt(t *testing.T) {
 		{name: "API账号", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
 		{name: "其他平台", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
 		{name: "订阅访问令牌", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}, want: true},
+		// Terra keeps the configured billing policy until a model-specific
+		// subscription exemption is documented; Sol's rule must not spread by analogy.
+		{name: "Terra订阅无隐式豁免", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6.1-terra"}},
+		{name: "Terra别名无隐式豁免", account: oauth, result: &OpenAIForwardResult{Model: "openai/GPT_6.1_TERRA-none"}},
+		{name: "映射到Terra无隐式豁免", account: oauth, result: &OpenAIForwardResult{Model: "custom", UpstreamModel: "gpt-6.1-terra"}},
+		{name: "Terra映射离开", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6.1-terra", UpstreamModel: "gpt-5.6-terra"}},
+		{name: "Terra API账号", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, result: &OpenAIForwardResult{Model: "gpt-6.1-terra"}},
+		{name: "Terra订阅访问令牌无隐式豁免", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}, result: &OpenAIForwardResult{Model: "gpt-6.1-terra"}},
+		{name: "Terra映射到Sol遵循Sol豁免", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6.1-terra", UpstreamModel: "gpt-6.1-sol"}, want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, openAISubscriptionLongContextExempt(tt.account, tt.result))
@@ -235,4 +244,44 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolExemptionSurvivesRepricing(t *t
 	require.False(t, usageRepo.lastLog.LongContextBillingApplied)
 	require.NotNil(t, usageRepo.lastLog.AccountStatsCost)
 	require.InDelta(t, standardCost*2, *usageRepo.lastLog.AccountStatsCost, 1e-12)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_GPT61TerraLongContextBoundary(t *testing.T) {
+	for _, totalInput := range []int{271999, 272000, 272001} {
+		for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken, AccountTypeAPIKey} {
+			for _, tier := range []string{"", "priority"} {
+				for _, longContextEnabled := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%d/%s/long-context=%t", accountType, totalInput, tier, longContextEnabled), func(t *testing.T) {
+						usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+						userRepo := &openAIRecordUsageUserRepoStub{}
+						svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+						err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+							Result: &OpenAIForwardResult{RequestID: "terra-boundary", Model: "gpt-6.1-terra", ServiceTier: &tier, Duration: time.Second,
+								Usage: OpenAIUsage{InputTokens: totalInput, OutputTokens: 1000}},
+							APIKey: openAIRecordUsageAPIKeyWithGroup(svc, 1, longContextEnabled), User: &User{ID: 2},
+							Account: &Account{ID: 3, Platform: PlatformOpenAI, Type: accountType,
+								Extra: map[string]any{openAILongContextBillingEnabledKey: longContextEnabled}},
+						})
+						require.NoError(t, err)
+						wantLong := longContextEnabled && totalInput > 272000
+						wantInput, wantOutput := float64(totalInput)*1e-6, 1000*5e-6
+						if wantLong {
+							wantInput *= 2
+							wantOutput *= 1.5
+						}
+						if tier == "priority" {
+							wantInput *= 2
+							wantOutput *= 2
+						}
+						require.Equal(t, wantLong, usageRepo.lastLog.LongContextBillingApplied)
+						require.InDelta(t, wantInput, usageRepo.lastLog.InputCost, 1e-12)
+						require.InDelta(t, wantOutput, usageRepo.lastLog.OutputCost, 1e-12)
+						require.InDelta(t, wantInput+wantOutput, usageRepo.lastLog.TotalCost, 1e-12)
+						require.Equal(t, 1, userRepo.deductCalls)
+						require.InDelta(t, (wantInput+wantOutput)*1.1, userRepo.lastAmount, 1e-12)
+					})
+				}
+			}
+		}
+	}
 }

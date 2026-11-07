@@ -90,11 +90,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	if endpoint.RequiresRequestBody() {
 		body, err = pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 		if err != nil {
-			if maxErr, ok := extractMaxBytesError(err); ok {
-				h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+			if handleRequestBodyReadError(c, reqLog, err) {
 				return
 			}
-			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+			status, message := requestBodyReadFailure(reqLog, c.Request, err)
+			h.errorResponse(c, status, "invalid_request_error", message)
 			return
 		}
 		if len(body) == 0 {
@@ -366,12 +366,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			admissionSessionHash = ""
 		}
 		var slotResult openAISlotAcquireResult
-		accountReleaseFunc, slotResult = h.acquireResponsesAccountSlot(c, apiKey.GroupID, admissionSessionHash, selection, false, &streamStarted, reqLog)
-		if slotResult == openAISlotAcquireProfitVetoed {
-			// 媒体路径已显式豁免利润门（suppress 标记），此分支仅防御性兜底，
-			// 同样受否决上限约束。
-			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
+		accountReleaseFunc, slotResult = h.acquireResponsesAccountSlot(c, apiKey.GroupID, admissionSessionHash, selection, false, &streamStarted, reqLog, routingModel)
+		if slotResult.shouldReselect() {
+			// 媒体路径豁免利润门，但仍须处理排队期间的新冷却或停用，
+			// 并受准入重选上限约束。
+			if !recordOpenAIAdmissionVeto(failedAccountIDs, account.ID, &profitVetoCount) {
+				h.handleOpenAIAdmissionVetoExhausted(c, streamStarted, reqLog, profitVetoCount)
 				return
 			}
 			continue
@@ -379,6 +379,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		if slotResult != openAISlotAcquireOK {
 			return
 		}
+		account = selection.Account
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
@@ -757,6 +758,7 @@ func recordGrokMediaUsage(
 			payloadForHash = []byte(videoTaskID)
 		}
 	}
+	requestPayloadHash := service.HashUsageRequestPayload(payloadForHash)
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
@@ -768,7 +770,7 @@ func recordGrokMediaUsage(
 			UpstreamEndpoint:   upstreamEndpoint,
 			UserAgent:          userAgent,
 			IPAddress:          clientIP,
-			RequestPayloadHash: service.HashUsageRequestPayload(payloadForHash),
+			RequestPayloadHash: requestPayloadHash,
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,

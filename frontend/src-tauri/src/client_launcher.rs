@@ -2,8 +2,11 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
+    time::{Duration, Instant},
 };
 
 const CODEX_API_KEY_ENV: &str = "SUB2API_CODEX_API_KEY";
@@ -55,6 +58,17 @@ pub struct NativeClientAvailability {
     pub executable: Option<String>,
     pub available: bool,
     pub message: String,
+    pub identity: Option<NativeClientIdentity>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeClientIdentity {
+    pub product_name: String,
+    pub version: Option<String>,
+    pub installation_source: &'static str,
+    pub release_channel: &'static str,
+    pub package_identity: Option<String>,
+    pub probe_status: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,6 +81,7 @@ pub struct NativeClientLaunchPreview {
     pub environment_keys: Vec<String>,
     pub available: bool,
     pub message: String,
+    pub identity: Option<NativeClientIdentity>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -429,6 +444,300 @@ fn find_executable(client_id: &NativeClientId) -> Option<PathBuf> {
     find_installed_executable(client_id)
 }
 
+const CLIENT_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+#[cfg(windows)]
+const WINDOWS_METADATA_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+const CLIENT_PROBE_OUTPUT_LIMIT: usize = 16 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum ClientProbeFailure {
+    Unavailable,
+    TimedOut,
+}
+
+// The job owns only this probe and its descendants, never a running client.
+#[cfg(windows)]
+struct ClientProbeJob(isize);
+
+#[cfg(windows)]
+impl ClientProbeJob {
+    fn attach(child: &std::process::Child) -> Result<Self, ClientProbeFailure> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(ClientProbeFailure::Unavailable);
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            ) == 0
+                || AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0
+            {
+                CloseHandle(job);
+                return Err(ClientProbeFailure::Unavailable);
+            }
+            Ok(Self(job as isize))
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ClientProbeJob {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+    }
+}
+
+fn run_client_probe(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<String, ClientProbeFailure> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let deadline = Instant::now() + timeout;
+    let mut child = command
+        .spawn()
+        .map_err(|_| ClientProbeFailure::Unavailable)?;
+    #[cfg(windows)]
+    let _job = match ClientProbeJob::attach(&child) {
+        Ok(job) => Some(job),
+        Err(_) if child.try_wait().ok().flatten().is_some() => None,
+        Err(error) => {
+            let _ = child.kill();
+            return Err(error);
+        }
+    };
+    let stdout = child.stdout.take().ok_or(ClientProbeFailure::Unavailable)?;
+    let (send, receive) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout
+            .take((CLIENT_PROBE_OUTPUT_LIMIT + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes);
+        let _ = send.send(result);
+    });
+    let mut output = None;
+    loop {
+        if output.is_none() {
+            if let Ok(result) = receive.try_recv() {
+                match result {
+                    Ok(bytes) if bytes.len() <= CLIENT_PROBE_OUTPUT_LIMIT => output = Some(bytes),
+                    _ => {
+                        let _ = child.kill();
+                        return Err(ClientProbeFailure::Unavailable);
+                    }
+                }
+            }
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err(ClientProbeFailure::Unavailable);
+                }
+                let bytes = match output {
+                    Some(bytes) => bytes,
+                    None => receive
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .map_err(|_| ClientProbeFailure::TimedOut)?
+                        .map_err(|_| ClientProbeFailure::Unavailable)?,
+                };
+                if bytes.len() > CLIENT_PROBE_OUTPUT_LIMIT {
+                    return Err(ClientProbeFailure::Unavailable);
+                }
+                return String::from_utf8(bytes).map_err(|_| ClientProbeFailure::Unavailable);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return Err(ClientProbeFailure::Unavailable);
+            }
+            Ok(None) => {}
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            return Err(ClientProbeFailure::TimedOut);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn codex_version_from_output(output: &str) -> Option<semver::Version> {
+    output.lines().find_map(|line| {
+        let version = line.trim().strip_prefix("codex-cli ")?.trim();
+        semver::Version::parse(version).ok()
+    })
+}
+
+fn native_installation_source(executable: &Path) -> &'static str {
+    let path = executable
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if path.starts_with("shell:appsfolder/") || path.contains("/windowsapps/openai.") {
+        "windows_msix"
+    } else if path.contains("/openai/codex/bin/") {
+        "desktop_bundled"
+    } else if path.contains("/npm/") || path.contains("/node_modules/") {
+        "npm"
+    } else {
+        "path"
+    }
+}
+
+#[cfg(windows)]
+#[derive(Deserialize)]
+struct WindowsClientMetadata {
+    product_name: Option<String>,
+    version: Option<String>,
+    package_identity: Option<String>,
+}
+
+#[cfg(windows)]
+fn apply_windows_client_metadata(
+    identity: &mut NativeClientIdentity,
+    metadata: WindowsClientMetadata,
+) {
+    if let Some(name) = metadata
+        .product_name
+        .filter(|value| !value.trim().is_empty())
+    {
+        identity.product_name = name;
+    }
+    identity.version = metadata.version.filter(|value| !value.trim().is_empty());
+    identity.package_identity = metadata.package_identity;
+    if identity.package_identity.is_some() {
+        identity.installation_source = "windows_msix";
+    }
+    // MSIX build numbers do not identify a stable/preview release channel.
+    if identity.version.is_some() {
+        identity.probe_status = "detected";
+    }
+}
+
+#[cfg(windows)]
+fn chatgpt_metadata_script(executable: &Path) -> String {
+    let requested = quote_powershell_arg(&executable.to_string_lossy());
+    format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$requested = {requested}
+$packages = @()
+if ($requested -match '(?i)(?:^shell:AppsFolder\\|\\WindowsApps\\)(OpenAI\.[^_\\]+)_') {{
+  $packages = @(Get-AppxPackage -Name $Matches[1] -ErrorAction SilentlyContinue)
+}}
+foreach ($package in $packages) {{
+  $root = [string]$package.InstallLocation
+  $shellPrefix = 'shell:AppsFolder\' + $package.PackageFamilyName + '!'
+  if (!$requested.StartsWith($shellPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+      (!$root -or !$requested.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) {{ continue }}
+  $manifest = Get-AppxPackageManifest -Package $package
+  foreach ($application in @($manifest.Package.Applications.Application)) {{
+    $appId = 'shell:AppsFolder\' + $package.PackageFamilyName + '!' + $application.Id
+    $appPath = Join-Path $root $application.Executable
+    if ($requested -ine $appId -and $requested -ine $appPath) {{ continue }}
+    $name = [string]$application.VisualElements.DisplayName
+    if (!$name -or $name.StartsWith('ms-resource:')) {{ $name = [string]$manifest.Package.Properties.DisplayName }}
+    if ($name.StartsWith('ms-resource:')) {{ $name = $null }}
+    @{{ product_name=$name; version=[string]$package.Version; package_identity=[string]$package.Name }} | ConvertTo-Json -Compress
+    exit 0
+  }}
+}}
+if (Test-Path -LiteralPath $requested -PathType Leaf) {{
+  $info = (Get-Item -LiteralPath $requested).VersionInfo
+  @{{ product_name=[string]$info.ProductName; version=[string]$info.ProductVersion; package_identity=$null }} | ConvertTo-Json -Compress
+  exit 0
+}}
+exit 1
+"#
+    )
+}
+
+fn detect_native_client_identity(
+    client_id: &NativeClientId,
+    executable: &Path,
+) -> Option<NativeClientIdentity> {
+    if !matches!(client_id, NativeClientId::ChatGpt | NativeClientId::Codex) {
+        return None;
+    }
+    let mut identity = NativeClientIdentity {
+        product_name: client_id.label().into(),
+        version: None,
+        installation_source: native_installation_source(executable),
+        release_channel: "unknown",
+        package_identity: None,
+        probe_status: "unavailable",
+    };
+    if matches!(client_id, NativeClientId::Codex) {
+        let mut command = Command::new(executable);
+        command.arg("--version");
+        #[cfg(windows)]
+        if executable.extension().is_some_and(|ext| {
+            let extension = ext.to_string_lossy();
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        }) {
+            command = Command::new(powershell_executable());
+            command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+            command.arg(format!(
+                "& {} '--version'",
+                quote_powershell_arg(&executable.to_string_lossy())
+            ));
+        }
+        match run_client_probe(&mut command, CLIENT_PROBE_TIMEOUT) {
+            Ok(output) => {
+                if let Some(version) = codex_version_from_output(&output) {
+                    identity.release_channel = if version.pre.is_empty() {
+                        "stable"
+                    } else {
+                        "prerelease"
+                    };
+                    identity.version = Some(version.to_string());
+                    identity.probe_status = "detected";
+                }
+            }
+            Err(ClientProbeFailure::TimedOut) => identity.probe_status = "timed_out",
+            Err(ClientProbeFailure::Unavailable) => {}
+        }
+    } else {
+        #[cfg(windows)]
+        {
+            let powershell = windows_powershell_candidates()
+                .into_iter()
+                .find(|path| path.is_file())
+                .unwrap_or_else(powershell_executable);
+            let mut command = Command::new(powershell);
+            command
+                .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+                .arg(chatgpt_metadata_script(executable));
+            match run_client_probe(&mut command, WINDOWS_METADATA_PROBE_TIMEOUT) {
+                Ok(output) => {
+                    if let Ok(metadata) =
+                        serde_json::from_str::<WindowsClientMetadata>(output.trim())
+                    {
+                        apply_windows_client_metadata(&mut identity, metadata);
+                    }
+                }
+                Err(ClientProbeFailure::TimedOut) => identity.probe_status = "timed_out",
+                Err(ClientProbeFailure::Unavailable) => {}
+            }
+        }
+    }
+    Some(identity)
+}
+
 fn find_installed_executable(client_id: &NativeClientId) -> Option<PathBuf> {
     if !matches!(client_id, NativeClientId::ChatGpt) {
         return None;
@@ -557,20 +866,19 @@ fn run_powershell_for_chatgpt_app_id(script: &str) -> Option<String> {
     }
 
     for executable in candidates {
-        let output = match Command::new(executable)
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                script,
-            ])
-            .output()
-        {
-            Ok(output) if output.status.success() => output,
+        let mut command = Command::new(executable);
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]);
+        let output = match run_client_probe(&mut command, WINDOWS_METADATA_PROBE_TIMEOUT) {
+            Ok(output) => output,
             _ => continue,
         };
-        if let Some(app_id) = String::from_utf8_lossy(&output.stdout)
+        if let Some(app_id) = output
             .lines()
             .map(str::trim)
             .find(|line| is_valid_chatgpt_app_id(line))
@@ -654,6 +962,7 @@ fn unavailable_preview(
         environment_keys: Vec::new(),
         available: false,
         message,
+        identity: None,
     }
 }
 
@@ -694,6 +1003,7 @@ fn build_preview(request: &NativeClientLaunchRequest) -> NativeClientLaunchPrevi
                 .collect(),
             available: true,
             message: "客户端已就绪".into(),
+            identity: detect_native_client_identity(&request.client_id, &executable),
         },
         Err(error) => unavailable_preview(request, working_directory, error),
     }
@@ -827,46 +1137,61 @@ fn quote_powershell_arg(value: &str) -> String {
 }
 
 #[tauri::command]
-pub fn list_native_clients() -> Vec<NativeClientAvailability> {
-    [
-        NativeClientId::ChatGpt,
-        NativeClientId::Codex,
-        NativeClientId::ClaudeCode,
-        NativeClientId::Cursor,
-        NativeClientId::OpenCode,
-        NativeClientId::Grok,
-    ]
-    .into_iter()
-    .map(|client_id| {
-        let label = client_id.label().to_string();
-        match find_executable(&client_id) {
-            Some(path) => NativeClientAvailability {
-                client_id,
-                label,
-                executable: Some(path.display().to_string()),
-                available: true,
-                message: "客户端已就绪".into(),
-            },
-            None => {
-                let message = unavailable_message(&client_id);
-                NativeClientAvailability {
+pub async fn list_native_clients() -> Vec<NativeClientAvailability> {
+    tauri::async_runtime::spawn_blocking(|| {
+        [
+            NativeClientId::ChatGpt,
+            NativeClientId::Codex,
+            NativeClientId::ClaudeCode,
+            NativeClientId::Cursor,
+            NativeClientId::OpenCode,
+            NativeClientId::Grok,
+        ]
+        .into_iter()
+        .map(|client_id| {
+            let label = client_id.label().to_string();
+            match find_executable(&client_id) {
+                Some(path) => NativeClientAvailability {
+                    identity: detect_native_client_identity(&client_id, &path),
                     client_id,
                     label,
-                    executable: None,
-                    available: false,
-                    message,
+                    executable: Some(path.display().to_string()),
+                    available: true,
+                    message: "客户端已就绪".into(),
+                },
+                None => {
+                    let message = unavailable_message(&client_id);
+                    NativeClientAvailability {
+                        client_id,
+                        label,
+                        executable: None,
+                        available: false,
+                        message,
+                        identity: None,
+                    }
                 }
             }
-        }
+        })
+        .collect()
     })
-    .collect()
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn preview_native_client_launch(
+pub async fn preview_native_client_launch(
     request: NativeClientLaunchRequest,
 ) -> NativeClientLaunchPreview {
-    build_preview(&request)
+    let fallback = request.clone();
+    tauri::async_runtime::spawn_blocking(move || build_preview(&request))
+        .await
+        .unwrap_or_else(|_| {
+            unavailable_preview(
+                &fallback,
+                fallback.working_directory.clone(),
+                "客户端检查暂时不可用，请重试".into(),
+            )
+        })
 }
 
 #[tauri::command]
@@ -894,6 +1219,110 @@ pub fn launch_native_client(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn codex_versions_distinguish_desktop_prerelease_from_stable_cli() {
+        let stable = codex_version_from_output("codex-cli 0.167.0\n").unwrap();
+        let desktop = codex_version_from_output("codex-cli 0.167.0-alpha.3.2\r\n").unwrap();
+        assert!(stable.pre.is_empty());
+        assert_eq!(desktop.pre.as_str(), "alpha.3.2");
+        assert!(codex_version_from_output("ChatGPT 26.1103.4239.0").is_none());
+        assert!(codex_version_from_output("codex-cli not-a-version").is_none());
+    }
+
+    #[test]
+    fn installation_source_keeps_desktop_core_and_msix_distinct() {
+        assert_eq!(
+            native_installation_source(Path::new(
+                r"C:\Users\sample\AppData\Local\OpenAI\Codex\bin\build\codex.exe"
+            )),
+            "desktop_bundled"
+        );
+        assert_eq!(
+            native_installation_source(Path::new(r"C:\Users\sample\AppData\Roaming\npm\codex.cmd")),
+            "npm"
+        );
+        assert_eq!(
+            native_installation_source(Path::new(r"shell:AppsFolder\OpenAI.Codex_example!App")),
+            "windows_msix"
+        );
+        assert_eq!(
+            native_installation_source(Path::new(r"C:\tools\codex.exe")),
+            "path"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn msix_display_name_does_not_infer_product_from_codex_package_id() {
+        let mut identity = NativeClientIdentity {
+            product_name: "ChatGPT Desktop".into(),
+            version: None,
+            installation_source: "path",
+            release_channel: "unknown",
+            package_identity: None,
+            probe_status: "unavailable",
+        };
+        let metadata = serde_json::from_str::<WindowsClientMetadata>(
+            r#"{"product_name":"ChatGPT","version":"26.1103.4239.0","package_identity":"OpenAI.Codex"}"#,
+        ).unwrap();
+        apply_windows_client_metadata(&mut identity, metadata);
+        assert_eq!(identity.product_name, "ChatGPT");
+        assert_eq!(identity.version.as_deref(), Some("26.1103.4239.0"));
+        assert_eq!(identity.package_identity.as_deref(), Some("OpenAI.Codex"));
+        assert_eq!(identity.installation_source, "windows_msix");
+        assert_eq!(identity.release_channel, "unknown");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn client_probe_times_out_without_waiting_for_command_completion() {
+        let mut command = Command::new(powershell_executable());
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 30",
+        ]);
+        let started = Instant::now();
+        assert_eq!(
+            run_client_probe(&mut command, Duration::from_millis(150)),
+            Err(ClientProbeFailure::TimedOut)
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn client_probe_limits_output_and_accepts_normal_version_output() {
+        let mut command = Command::new(powershell_executable());
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::Write('x' * 20000)",
+        ]);
+        assert_eq!(
+            run_client_probe(&mut command, CLIENT_PROBE_TIMEOUT),
+            Err(ClientProbeFailure::Unavailable)
+        );
+        let mut version = Command::new(powershell_executable());
+        version.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::WriteLine('codex-cli 0.167.0')",
+        ]);
+        assert_eq!(
+            run_client_probe(&mut version, CLIENT_PROBE_TIMEOUT)
+                .unwrap()
+                .trim(),
+            "codex-cli 0.167.0"
+        );
+    }
 
     #[test]
     fn codex_launch_plan_uses_process_scoped_credentials() {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,22 +27,68 @@ func TestOfficialPickerModelsKeepDistinctUpstreamIDs(t *testing.T) {
 }
 
 func TestGPT61TerraCodexDescriptorUsesOwnOfficialCapabilities(t *testing.T) {
+	// Official Codex rust-v0.167.0, codex-rs/models-manager/models.json:
+	// these client defaults are distinct from the API model page and price card.
 	descriptor := newConfiguredCodexModelDescriptor("gpt-6.1-terra")
 	require.Equal(t, "GPT-6.1 Terra", descriptor.DisplayName)
-	require.Equal(t, "medium", *descriptor.DefaultReasoningLevel)
-	require.Equal(t, []string{"none", "low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(descriptor.SupportedReasoningLevels))
-	require.EqualValues(t, 1_050_000, descriptor.ContextWindow)
-	require.EqualValues(t, 1_050_000, descriptor.MaxContextWindow)
-	require.Nil(t, descriptor.MultiAgentReasoningEffort)
-	require.Empty(t, descriptor.MultiAgentVersion)
-	require.False(t, descriptor.UseResponsesLite)
-	require.Empty(t, descriptor.officialMetadata)
-	require.Equal(t, []configuredCodexServiceTier{{ID: OpenAIFastTierPriority, Name: "Fast", Description: "Priority processing for lower latency."}}, descriptor.ServiceTiers)
+	require.Equal(t, "low", *descriptor.DefaultReasoningLevel)
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(descriptor.SupportedReasoningLevels))
+	require.EqualValues(t, 500_000, descriptor.ContextWindow)
+	require.EqualValues(t, 872_000, descriptor.MaxContextWindow)
+	require.NotNil(t, descriptor.MultiAgentReasoningEffort)
+	require.Equal(t, "xhigh", *descriptor.MultiAgentReasoningEffort)
+	require.Equal(t, "v2", descriptor.MultiAgentVersion)
+	require.True(t, descriptor.UseResponsesLite, "raw official descriptor; route-specific API-key overrides are separate")
+	require.Equal(t, openai.CodexGPT61TerraMetadata, []byte(descriptor.officialMetadata))
+	require.Equal(t, []configuredCodexServiceTier{{ID: OpenAIFastTierPriority, Name: "Fast", Description: "1.5x speed"}}, descriptor.ServiceTiers)
 	manifest, err := BuildCodexModelsManifest([]string{"gpt-6.1-terra"})
 	require.NoError(t, err)
 	models := decodeCodexManifestModels(t, manifest)
 	// Standalone custom-provider catalogs keep the existing conservative default.
 	require.Equal(t, []any{"text"}, models[0]["input_modalities"])
+
+	apiCatalogBody, err := os.ReadFile(filepath.Join("..", "..", "resources", "model-pricing", "model_prices_and_context_window.json"))
+	require.NoError(t, err)
+	var apiCatalog map[string]map[string]any
+	require.NoError(t, json.Unmarshal(apiCatalogBody, &apiCatalog))
+	require.EqualValues(t, 1_050_000, apiCatalog["gpt-6.1-terra"]["context_window"], "API model limits must not be replaced by Codex client defaults")
+	require.EqualValues(t, 922_000, apiCatalog["gpt-6.1-terra"]["max_input_tokens"])
+	require.EqualValues(t, 128_000, apiCatalog["gpt-6.1-terra"]["max_output_tokens"])
+}
+
+func TestGPT61TerraCatalogImageInputFollowsAccountCapabilities(t *testing.T) {
+	newAccount := func(id int64, modalities []string) Account {
+		account := Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"base_url": "https://compatible.example/v1"}}
+		account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+			"gpt-6.1-terra": {ID: "gpt-6.1-terra", InputModalities: modalities},
+		}})
+		return account
+	}
+	image := newAccount(1, []string{"text", "image"})
+	text := newAccount(2, []string{"text"})
+	for _, tc := range []struct {
+		name       string
+		accounts   []Account
+		modalities []any
+	}{
+		{name: "unknown route", modalities: []any{"text"}},
+		{name: "declared image route", accounts: []Account{image}, modalities: []any{"text", "image"}},
+		{name: "declared text route", accounts: []Account{text}, modalities: []any{"text"}},
+		{name: "mixed routes", accounts: []Account{image, text}, modalities: []any{"text"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const groupID int64 = 7167
+			svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{groupID: tc.accounts}}}
+			body, err := svc.BuildCodexModelsManifestForGroup(context.Background(), &Group{ID: groupID, Platform: PlatformOpenAI}, "", []string{"gpt-6.1-terra"})
+			require.NoError(t, err)
+			models := decodeCodexManifestModels(t, body)
+			require.Len(t, models, 1)
+			require.Equal(t, tc.modalities, models[0]["input_modalities"])
+			require.EqualValues(t, 500_000, models[0]["context_window"])
+			require.EqualValues(t, 872_000, models[0]["max_context_window"])
+		})
+	}
 }
 
 func TestGPT61TerraCodexMetadataKeepsExplicitUpstreamCapabilities(t *testing.T) {

@@ -149,6 +149,32 @@ describe('OpsSystemLogTable host support', () => {
     expect((label!.find('input').element as HTMLInputElement).checked).toBe(false)
   })
 
+  it('shows measured zeroes in numeric HTTP summaries without displaying invalid values', async () => {
+    mockListSystemLogs.mockResolvedValue({
+      items: [
+        {
+          id: 1, created_at: '2026-11-07T16:00:00Z', level: 'info', component: 'http.access',
+          message: 'http request completed',
+          extra: {
+            request_body_bytes: 256, input_bytes: 0, tools_bytes: 0, instructions_bytes: 0,
+            upstream_body_bytes: 0, upstream_attempts: 0,
+          },
+        },
+        {
+          id: 2, created_at: '2026-11-07T16:00:01Z', level: 'info', component: 'http.access',
+          message: 'http request completed',
+          extra: { request_body_bytes: 'PRIVATE_TEXT', input_bytes: -1, tools_bytes: 1.5, upstream_attempts: null },
+        },
+      ], total: 2, page: 1, page_size: 20,
+    })
+    const wrapper = mount(OpsSystemLogTable, { global: { stubs: { Select: SelectStub, Pagination: PaginationStub } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('http_summary request_body_bytes=256 input_bytes=0 tools_bytes=0 instructions_bytes=0 upstream_body_bytes=0 upstream_attempts=0')
+    expect(wrapper.text()).not.toContain('PRIVATE_TEXT')
+    expect(wrapper.text()).not.toContain('input_bytes=-1')
+    expect(wrapper.text()).not.toContain('tools_bytes=1.5')
+  })
+
   it.each([
     ['zh', zhLocale],
     ['en', enLocale],

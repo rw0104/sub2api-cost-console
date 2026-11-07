@@ -562,7 +562,8 @@ func openAILongContextBillingGate(account *Account) *bool {
 }
 
 // openAISubscriptionLongContextExempt 按实际凭据和最终发送模型判断订阅豁免。
-// GPT-6.1 Sol 的订阅请求不再收取模型长上下文附加费；API Key 仍使用 API 价卡。
+// GPT-6.1 Sol 的订阅请求不收模型长上下文附加费；API Key 仍使用 API 价卡。
+// Terra 未有明确的同等订阅豁免依据，继续遵循现有账号/分组配置，不按 Sol 类推。
 // 使用发送模型，避免客户别名、渠道计费模型或响应模型计费切换改变上游订阅规则。
 func openAISubscriptionLongContextExempt(account *Account, result *OpenAIForwardResult) bool {
 	if !account.IsOpenAIOAuthLike() || result == nil {

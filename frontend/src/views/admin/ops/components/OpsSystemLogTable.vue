@@ -148,6 +148,17 @@ const formatSystemLogDetail = (row: OpsSystemLog) => {
   if (protocol) accessParts.push(`proto=${protocol}`)
   if (accessParts.length > 0) parts.push(accessParts.join(' '))
 
+  const sizeParts: string[] = []
+  for (const key of ['request_body_bytes', 'input_bytes', 'tools_bytes', 'instructions_bytes', 'upstream_body_bytes', 'upstream_attempts']) {
+    const value = extra[key]
+    // Missing is unknown; measured zero must remain visible. Never render a
+    // provider's text/object value as a numeric, content-free diagnostic.
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+      sizeParts.push(`${key}=${value}`)
+    }
+  }
+  if (sizeParts.length > 0) parts.push(`http_summary ${sizeParts.join(' ')}`)
+
   const corrParts: string[] = []
   if (row.request_id) corrParts.push(`req=${row.request_id}`)
   if (row.client_request_id) corrParts.push(`client_req=${row.client_request_id}`)

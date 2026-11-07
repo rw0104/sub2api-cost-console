@@ -216,6 +216,89 @@ describe('CostApiAccessPanel data truthfulness', () => {
     }))
   })
 
+  it('shows the actual bundled Codex version and prerelease channel after checking', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    nativeMocks.preview.mockResolvedValue({
+      available: true, message: '客户端已就绪', executable: 'C:\\OpenAI\\Codex\\bin\\build\\codex.exe',
+      working_directory: 'C:\\Users\\reki',
+      identity: {
+        product_name: 'Codex CLI', version: '0.167.0-alpha.3.2',
+        installation_source: 'desktop_bundled', release_channel: 'prerelease',
+        package_identity: null, probe_status: 'detected',
+      },
+    })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await flushPromises()
+    const identity = wrapper.get('[data-test="native-client-identity"]').text()
+    expect(identity).toContain('0.167.0-alpha.3.2')
+    expect(identity).toContain('桌面客户端随附 CLI')
+    expect(identity).toContain('预发布版')
+    expect(identity).not.toContain('稳定版')
+  })
+
+  it('uses the ChatGPT display name while showing the distinct OpenAI.Codex package identity', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100 })
+    nativeMocks.preview.mockResolvedValue({
+      available: true, message: '客户端已就绪', working_directory: 'C:\\Users\\reki',
+      identity: {
+        product_name: 'ChatGPT', version: '26.1103.4239.0',
+        installation_source: 'windows_msix', release_channel: 'unknown',
+        package_identity: 'OpenAI.Codex', probe_status: 'detected',
+      },
+    })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get('[role="tablist"] button:nth-child(1)').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await flushPromises()
+    const identity = wrapper.get('[data-test="native-client-identity"]').text()
+    expect(identity).toContain('ChatGPT')
+    expect(identity).toContain('26.1103.4239.0')
+    expect(identity).toContain('OpenAI.Codex')
+    expect(identity).toContain('未标明')
+    expect(nativeMocks.preview).toHaveBeenCalledWith(expect.objectContaining({ client_id: 'chatgpt', api_key: '' }))
+  })
+
+  it('keeps launching available when only version detection times out', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    nativeMocks.preview.mockResolvedValue({
+      available: true, message: '客户端已就绪', working_directory: 'C:\\Users\\reki',
+      identity: {
+        product_name: 'Codex CLI', version: null, installation_source: 'npm',
+        release_channel: 'unknown', package_identity: null, probe_status: 'timed_out',
+      },
+    })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="native-client-identity"]').text()).toContain('检查超时')
+    expect((wrapper.get('[data-test="native-launch"]').element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('discards a completed probe when the user has switched clients', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    let completePreview: (() => void) | undefined
+    nativeMocks.preview.mockImplementation(() => new Promise((resolve) => {
+      completePreview = () => resolve({
+        available: true, message: '旧 Codex 检查结果', executable: 'C:\\tools\\codex.exe',
+        working_directory: 'C:\\Users\\reki',
+      })
+    }))
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await wrapper.get('[role="tablist"] button:nth-child(1)').trigger('click')
+    completePreview?.()
+    await flushPromises()
+    expect(wrapper.text()).toContain('启动 ChatGPT Desktop')
+    expect(wrapper.text()).not.toContain('旧 Codex 检查结果')
+    expect(wrapper.text()).not.toContain('C:\\tools\\codex.exe')
+  })
+
   it('persists a directory typed directly into the field', async () => {
     mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
     const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })

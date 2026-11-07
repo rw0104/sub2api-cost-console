@@ -210,9 +210,13 @@ func (m *PluginManager) roundTripProtectionRoute(ctx context.Context, req *http.
 	}
 	callCtx, cancel := context.WithCancel(ctx)
 	headerTimer := time.AfterFunc(route.binding.Timeout(route.capability), cancel)
-	response, err := rt.roundTrip(callCtx, req, proxyURL, account)
+	response, err := rt.roundTrip(callCtx, req, proxyURL, account, m.upstreamDrainTimeout())
 	headerTimer.Stop()
 	if err != nil {
+		// The runtime's bounded client drain can expire independently of the
+		// plugin's header deadline. That cleanup is not a plugin health failure.
+		var drainCancellation *pluginDrainCancellation
+		attemptCancelled := errors.As(err, &drainCancellation)
 		cancel()
 		rt.finishRequest()
 		// A local policy rejection is never treated as an upstream authentication failure.
@@ -235,10 +239,14 @@ func (m *PluginManager) roundTripProtectionRoute(ctx context.Context, req *http.
 			}
 			return nil, true, policyError
 		}
-		route.calls.finish(ctx.Err() == nil)
+		route.calls.finish(ctx.Err() == nil && !attemptCancelled)
 		return nil, true, err
 	}
-	response.Body = &protectionResponseBody{ReadCloser: response.Body, done: func(failed bool) { route.calls.finish(failed && ctx.Err() == nil) }}
+	response.Body = &protectionResponseBody{ReadCloser: response.Body, done: func(err error) {
+		var drainCancellation *pluginDrainCancellation
+		failed := err != nil && !errors.Is(err, io.EOF) && !errors.As(err, &drainCancellation)
+		route.calls.finish(failed && ctx.Err() == nil && callCtx.Err() == nil)
+	}}
 	response.Body = &protectionCancelBody{ReadCloser: response.Body, cancel: cancel}
 	return response, true, nil
 }
@@ -253,18 +261,18 @@ func (b *protectionCancelBody) Close() error { b.cancel(); return b.ReadCloser.C
 type protectionResponseBody struct {
 	io.ReadCloser
 	once sync.Once
-	done func(bool)
+	done func(error)
 }
 
 func (b *protectionResponseBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if err != nil {
-		b.once.Do(func() { b.done(err != io.EOF) })
+		b.once.Do(func() { b.done(err) })
 	}
 	return n, err
 }
 func (b *protectionResponseBody) Close() error {
 	err := b.ReadCloser.Close()
-	b.once.Do(func() { b.done(err != nil) })
+	b.once.Do(func() { b.done(err) })
 	return err
 }

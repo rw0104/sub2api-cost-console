@@ -96,16 +96,20 @@ func ProvideAdminHandlers(
 	}
 }
 
-// ProvideOpenAIOAuthHandler keeps the optional referral capability out of the
-// Wire graph. The handler constructor accepts it variadically for focused
-// tests, while production wiring currently has no referral handler dependency.
+// ProvideOpenAIOAuthHandler binds the referral capability already configured on
+// the quota service without adding a separate optional dependency to Wire.
+// A missing quota service keeps referrals disabled, including a nil interface.
 func ProvideOpenAIOAuthHandler(
 	openaiOAuthService *service.OpenAIOAuthService,
 	adminService service.AdminService,
 	quotaService *service.OpenAIQuotaService,
 	rateLimitService *service.RateLimitService,
 ) *admin.OpenAIOAuthHandler {
-	return admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
+	h := admin.NewOpenAIOAuthHandler(openaiOAuthService, adminService, quotaService, rateLimitService)
+	if quotaService != nil {
+		h.SetReferralService(quotaService)
+	}
+	return h
 }
 
 func ProvideGatewayHandler(
@@ -195,6 +199,7 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 func ProvideHandlers(
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
+	mcpOAuthHandler *MCPOAuthHandler,
 	apiKeyHandler *APIKeyHandler,
 	usageHandler *UsageHandler,
 	redeemHandler *RedeemHandler,
@@ -221,6 +226,7 @@ func ProvideHandlers(
 	return &Handlers{
 		Auth:             authHandler,
 		User:             userHandler,
+		MCPOAuth:         mcpOAuthHandler,
 		APIKey:           apiKeyHandler,
 		Usage:            usageHandler,
 		Redeem:           redeemHandler,
@@ -248,6 +254,7 @@ var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
 	NewUserHandler,
+	NewMCPOAuthHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,

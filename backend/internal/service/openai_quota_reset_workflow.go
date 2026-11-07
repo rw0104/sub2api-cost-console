@@ -32,8 +32,9 @@ type OpenAIQuotaResetPostProcessResult struct {
 	WarningCode           string
 }
 
-// RunOpenAIQuotaResetPostProcess 按“解除限流、刷新额度缓存、刷新账号行”的固定顺序
-// 执行消费后恢复，避免手动和自动入口在失败语义上逐渐分叉。
+// RunOpenAIQuotaResetPostProcess shares the post-redemption workflow between
+// manual and automatic resets. Observation-aware services confirm fresh quota
+// before conditionally recovering the observed generation and display caches.
 func RunOpenAIQuotaResetPostProcess(
 	ctx context.Context,
 	accountID int64,
@@ -41,6 +42,11 @@ func RunOpenAIQuotaResetPostProcess(
 	recoverer openAIQuotaResetWorkflowRecoverer,
 	loadAccount func(context.Context, int64) (*Account, error),
 ) OpenAIQuotaResetPostProcessResult {
+	if recovery, ok := quota.(OpenAIQuotaStateRecoverer); ok {
+		return runObservedOpenAIQuotaResetPostProcess(ctx, accountID, quota, recovery, loadAccount)
+	}
+	// Compatibility for legacy quota-service implementations. The concrete
+	// OpenAIQuotaService always uses the observation-aware path above.
 	result := OpenAIQuotaResetPostProcessResult{}
 	if recoverer == nil {
 		result.WarningCode = OpenAIQuotaResetWarningAccountRecoveryFailed

@@ -432,6 +432,55 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
   })
 })
 
+describe('OpenAIQuotaResetCell 恢复未确认', () => {
+  it('保留当前账号限额并要求刷新，不把已兑换卡片提示为成功或可重试兑换', async () => {
+    const limitedAccount = makeAccount({
+      parent_account_id: null,
+      rate_limit_reset_at: FUTURE_EXPIRY_EARLY,
+    })
+    vi.mocked(resetOpenAIQuota).mockResolvedValue({
+      code: 'success',
+      windows_reset: 1,
+      cache_refreshed: true,
+      account_state_recovered: false,
+      warning_code: 'quota_recovery_not_confirmed',
+      account: limitedAccount,
+      quota: {
+        fetched_at: 123,
+        rate_limit_reset_credits: {
+          available_count: 1,
+          credits: [{ expires_at: FUTURE_EXPIRY_EARLY }],
+        },
+      },
+    })
+    const account = makeAccount({
+      parent_account_id: null,
+      extra: {
+        codex_reset_credit_snapshot: {
+          available_count: 2,
+          credits: [
+            { expires_at: FUTURE_EXPIRY_EARLY },
+            { expires_at: FUTURE_EXPIRY_LATE },
+          ],
+        },
+      },
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+    await resetButton(wrapper).trigger('click')
+    wrapper.findComponent(ConfirmDialog).vm.$emit('confirm')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.resetRecoveryNotConfirmed')
+    expect(wrapper.text()).not.toContain('admin.accounts.openaiQuotaReset.resetSuccess')
+    expect(resetButton(wrapper).attributes('disabled')).toBeDefined()
+    await resetButton(wrapper).trigger('click')
+    expect(resetOpenAIQuota).toHaveBeenCalledTimes(1)
+    expect(refreshOpenAIQuota).not.toHaveBeenCalled()
+    expect(wrapper.emitted('account-updated')).toEqual([[limitedAccount]])
+    wrapper.unmount()
+  })
+})
+
 describe('OpenAIQuotaResetCell 自动用卡运行态', () => {
   it.each([
     ['checking', 'checking'],

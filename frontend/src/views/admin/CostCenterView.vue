@@ -130,9 +130,10 @@
           </div>
 
           <div class="cost-provenance-strip" :class="{ 'has-default-warning': defaultCostProfileCount > 0 }" aria-label="成本数据口径">
-            <div><CircleCheck :size="15" /><strong>实测数据</strong><span>请求、Token 与 API 金额来自 usage_logs / Ops</span></div>
+            <div><CircleCheck :size="15" /><strong>本地调用记录</strong><span>请求与 Token 来自调用记录，API 金额按请求时的价格快照计算</span></div>
             <div :class="{ 'is-warning': exchangeRate.source === 'fallback' }"><Calculator :size="15" /><strong>确定性计算</strong><span>固定采购档案 + API 模型按量成本；1 USD = {{ exchangeRate.rate.toFixed(4) }} CNY（{{ exchangeRateLabel }}）</span></div>
             <div><TrendingUp :size="15" /><strong>预测数据</strong><span>滚动平均和剩余预期会明确标记为推导值</span></div>
+            <div><CircleCheck :size="15" /><strong>对账范围</strong><span>尚未与 OpenAI 官方组织账单对账；本页金额不代表官方账单或余额，ChatGPT/Codex 额度窗口反映订阅额度</span></div>
             <div v-if="defaultCostProfileCount" class="is-warning"><TriangleAlert :size="15" /><strong>{{ defaultCostProfileCount }} 个账号使用美国官方默认价</strong><span>Plus $20、Pro $100 起、Business/Team $25；实际账单可逐账号覆盖</span></div>
           </div>
 

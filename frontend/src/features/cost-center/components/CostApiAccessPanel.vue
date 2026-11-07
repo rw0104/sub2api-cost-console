@@ -171,6 +171,13 @@
           >
             {{ nativePreview.message }}<span v-if="nativePreview.executable"> · {{ nativePreview.executable }}</span>
           </p>
+          <dl v-if="nativePreview?.identity" class="cost-api-native-identity" data-test="native-client-identity">
+            <div><dt>产品</dt><dd>{{ nativePreview.identity.product_name }}</dd></div>
+            <div><dt>已安装版本</dt><dd>{{ nativePreview.identity.version || (nativePreview.identity.probe_status === 'timed_out' ? '检查超时' : '未读取') }}</dd></div>
+            <div><dt>来源</dt><dd>{{ nativeInstallationLabels[nativePreview.identity.installation_source] }}</dd></div>
+            <div><dt>版本通道</dt><dd>{{ nativeChannelLabels[nativePreview.identity.release_channel] }}</dd></div>
+            <div v-if="nativePreview.identity.package_identity"><dt>软件包标识</dt><dd>{{ nativePreview.identity.package_identity }}</dd></div>
+          </dl>
           <p v-if="nativeLaunchMessage" class="cost-api-native-launcher__hint is-ok" role="status">
             {{ nativeLaunchMessage }}
           </p>
@@ -267,6 +274,13 @@ const nativePreview = ref<NativeClientLaunchPreview | null>(null)
 const nativeLaunchLoading = ref(false)
 const nativeLaunchError = ref('')
 const nativeLaunchMessage = ref('')
+const nativeInstallationLabels = {
+  windows_msix: 'Windows MSIX 软件包',
+  desktop_bundled: '桌面客户端随附 CLI（按路径识别）',
+  npm: 'npm 安装路径',
+  path: '本机可执行文件路径',
+}
+const nativeChannelLabels = { stable: '稳定版', prerelease: '预发布版', unknown: '未标明' }
 
 const presets = [
   { id: 'chatgpt' as const, label: 'ChatGPT Desktop', icon: ExternalLink },
@@ -484,14 +498,18 @@ async function previewNativeClient() {
   nativeLaunchLoading.value = true
   nativeLaunchError.value = ''
   nativeLaunchMessage.value = ''
+  const requestedKeyId = selectedKeyId.value
   try {
-    nativePreview.value = await previewNativeClientLaunch(request)
+    const result = await previewNativeClientLaunch(request)
+    if (request.client_id !== nativeClientId.value || requestedKeyId !== selectedKeyId.value) return
+    nativePreview.value = result
     if (nativePreview.value.working_directory) {
       if (!nativeWorkingDirectory.value.trim() || nativeWorkingDirectory.value.trim() === '.') {
         nativeWorkingDirectory.value = nativePreview.value.working_directory
       }
     }
   } catch (error) {
+    if (request.client_id !== nativeClientId.value || requestedKeyId !== selectedKeyId.value) return
     nativePreview.value = null
     nativeLaunchError.value = nativeErrorMessage(error)
   } finally {
@@ -657,6 +675,10 @@ onMounted(loadNativeWorkingDirectory)
 .cost-api-native-launcher__hint { margin-top: 9px; }
 .cost-api-native-launcher__hint.is-ok { color: #a4e7b6; }
 .cost-api-native-launcher__hint.is-error { color: #efa18d; }
+.cost-api-native-identity { display: grid; gap: 5px; margin: 10px 0 0; font-size: 11px; line-height: 1.5; }
+.cost-api-native-identity > div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 8px; }
+.cost-api-native-identity dt { color: var(--cost-muted, #7f8b81); }
+.cost-api-native-identity dd { margin: 0; color: var(--cost-text, #e9ede6); overflow-wrap: anywhere; }
 .cost-api-test-result { display: flex; align-items: flex-start; gap: 7px; margin-top: 14px; border-radius: 9px; padding: 10px 11px; font-size: 12px; line-height: 1.45; }
 .cost-api-test-result.is-ok { color: #a4e7b6; background: rgb(85 177 109 / 12%); }
 .cost-api-test-result.is-error { color: #efa18d; background: rgb(213 132 115 / 12%); }

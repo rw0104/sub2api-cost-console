@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdiag"
 	pluginv2 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2"
 )
 
@@ -29,6 +30,9 @@ func (s *OpenAIGatewayService) withProtectionOriginal(ctx context.Context, accou
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	if request != nil {
+		requestdiag.BeginUpstream(request.Context())
+	}
 	if s.pluginManager != nil {
 		prepared, err := s.pluginManager.PreprocessOpenAI(request.Context(), request, account)
 		if err != nil {
@@ -40,8 +44,14 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		s.pluginManager.ObserveOpenAIHeaderProbe(request.Context(), request, account)
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
+			// The plugin owns its transport/retries; do not expose a partial host
+			// count as the complete request's upstream attempts.
+			requestdiag.OmitUpstream(request.Context())
 			return response, err
 		}
+	}
+	if request != nil {
+		requestdiag.RecordDispatch(request.Context(), request.ContentLength)
 	}
 	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
 }

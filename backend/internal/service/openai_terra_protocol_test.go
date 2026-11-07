@@ -28,7 +28,7 @@ func TestGPT61TerraMappedResponsesPreserveReasoningIntent(t *testing.T) {
 			require.Equal(t, effort != "none", changed)
 			require.Equal(t, effort == "none", gjson.GetBytes(out, "temperature").Exists())
 			require.Equal(t, effort == "none", gjson.GetBytes(out, "top_p").Exists())
-			require.NoError(t, validateGPT61SolCompatRequest(body, "gpt-6.1-terra"))
+			require.NoError(t, validateGPT61CompatRequest(body, "gpt-6.1-terra"))
 		})
 	}
 }

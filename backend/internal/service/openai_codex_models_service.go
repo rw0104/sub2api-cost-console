@@ -335,7 +335,6 @@ const (
 	configuredCodexGrokBuildContext    = 256_000
 	configuredCodexGPT56MaxContext     = 872_000
 	configuredCodexGPT6AstraContext    = 1_050_000
-	configuredCodexGPT61TerraContext   = 1_050_000
 	configuredCodexToolOutputMaxTokens = 10_000
 )
 
@@ -527,12 +526,6 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 				descriptor.ContextWindow = configuredCodexGPT6AstraContext
 				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
 			}
-			if openai.IsGPT61TerraModelSpelling(modelID) {
-				// Official API specifications; a live account manifest still wins.
-				// https://developers.openai.com/api/docs/models/gpt-6.1-terra
-				descriptor.ContextWindow = configuredCodexGPT61TerraContext
-				descriptor.MaxContextWindow = configuredCodexGPT61TerraContext
-			}
 		}
 		if SupportsVerbosity(modelID) {
 			defaultVerbosity := "low"
@@ -550,6 +543,15 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		// The October 12, 2026 Codex/Work default increased to 500k after
 		// the bundled official snapshot. Explicit upstream metadata still wins.
 		descriptor.ContextWindow = 500_000
+	}
+	if openai.IsGPT61TerraModelSpelling(modelID) {
+		// The Codex descriptor differs from the API model page: Codex offers
+		// low through ultra with a 500k default window. API requests keep none.
+		if err := json.Unmarshal(openai.CodexGPT61TerraMetadata, &descriptor); err != nil {
+			panic(err)
+		}
+		descriptor.Slug = modelID
+		descriptor.officialMetadata = openai.CodexGPT61TerraMetadata
 	}
 	return descriptor
 }
@@ -655,9 +657,6 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Effort:      "ultra",
 			Description: "Maximum reasoning with automatic task delegation",
 		})
-	}
-	if openai.IsGPT61TerraModelSpelling(modelID) {
-		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "No reasoning"}}, levels...)
 	}
 	return levels
 }
@@ -1000,6 +999,10 @@ func buildCodexModelsManifest(
 		if metadata, ok := modelMetadata[modelID]; ok {
 			applyUpstreamModelMetadataToCodexDescriptor(&descriptor, metadata)
 		}
+		// Official descriptors describe the model, not every configured route.
+		// Unknown or intersected text-only accounts must not inherit image input
+		// merely because a newly bundled descriptor advertises it by default.
+		descriptor.InputModalities = []string{"text"}
 		if imageInputModels[modelID] {
 			// Apply the capability-derived modality after upstream metadata so
 			// a stale official Astra snapshot cannot downgrade the catalog.

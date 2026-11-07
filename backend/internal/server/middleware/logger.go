@@ -6,6 +6,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdiag"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -18,6 +19,9 @@ func Logger() gin.HandlerFunc {
 
 		// 请求路径
 		path := c.Request.URL.Path
+		if !c.IsWebsocket() {
+			c.Request = c.Request.WithContext(requestdiag.WithContext(c.Request.Context()))
+		}
 
 		// 处理请求
 		c.Next()
@@ -77,9 +81,29 @@ func Logger() gin.HandlerFunc {
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
 		}
+		// Numeric HTTP summary only. Keep it on the existing info access event so
+		// OpsSystemLogSink continues to respect persist_access_logs.
+		diagnostic := requestdiag.Load(c.Request.Context())
+		diagnosticFields := make([]zap.Field, 0, 6)
+		if diagnostic.RequestObserved {
+			diagnosticFields = append(diagnosticFields, zap.Int64("request_body_bytes", diagnostic.RequestBodyBytes))
+		}
+		if diagnostic.JSONFieldsObserved {
+			diagnosticFields = append(diagnosticFields,
+				zap.Int64("input_bytes", diagnostic.InputBytes),
+				zap.Int64("tools_bytes", diagnostic.ToolsBytes),
+				zap.Int64("instructions_bytes", diagnostic.InstructionsBytes),
+			)
+		}
+		if diagnostic.UpstreamObserved && !diagnostic.UpstreamIncomplete {
+			diagnosticFields = append(diagnosticFields, zap.Int64("upstream_attempts", diagnostic.UpstreamAttempts))
+			if diagnostic.UpstreamBodyKnown {
+				diagnosticFields = append(diagnosticFields, zap.Int64("upstream_body_bytes", diagnostic.UpstreamBodyBytes))
+			}
+		}
 
 		l := logger.FromContext(c.Request.Context()).With(fields...)
-		l.Info("http request completed", zap.Time("completed_at", endTime))
+		l.Info("http request completed", append(diagnosticFields, zap.Time("completed_at", endTime))...)
 
 		if len(c.Errors) > 0 {
 			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
