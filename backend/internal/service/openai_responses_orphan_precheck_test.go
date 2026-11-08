@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -128,6 +132,22 @@ func TestOpenAIResponsesOrphanPrecheckCompatibilityErrors(t *testing.T) {
 func TestOpenAIResponsesOrphanPrecheckLargeEscapedContent(t *testing.T) {
 	body := []byte(`{"vendor":"` + strings.Repeat(`\n\"`, 1<<16) + `","input":[{"content":"` + strings.Repeat(`\n\"`, 1<<16) + `","type":"message"}]}`)
 	require.False(t, openAIResponsesInputMayNeedOrphanCleanup(body))
+
+	// AllocsPerRun observes process-wide Mallocs. Isolate the strict zero-copy
+	// regression from background work started by other service tests while
+	// keeping its zero-allocation requirement unchanged.
+	const childMarker = "SUB2API_ORPHAN_PRECHECK_ALLOCS_CHILD"
+	if os.Getenv(childMarker) != "1" {
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, executable, "-test.run=^TestOpenAIResponsesOrphanPrecheckLargeEscapedContent$", "-test.count=1")
+		command.Env = append(os.Environ(), childMarker+"=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "isolated orphan-precheck allocation regression: %s", output)
+		return
+	}
 	allocations := testing.AllocsPerRun(5, func() {
 		if openAIResponsesInputMayNeedOrphanCleanup(body) {
 			panic("unexpected cleanup candidate")
