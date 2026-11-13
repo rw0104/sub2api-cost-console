@@ -58,8 +58,11 @@ func TestCodex0167AccountReferencesStayRelatedAcrossTransports(t *testing.T) {
 				applyCodexAccountIdentityHeaders(headers, account, 77)
 				var headerMetadata, embedded map[string]any
 				require.NoError(t, json.Unmarshal([]byte(headers.Get("x-codex-turn-metadata")), &headerMetadata))
-				flat := body["client_metadata"].(map[string]any)
-				require.NoError(t, json.Unmarshal([]byte(flat["x-codex-turn-metadata"].(string)), &embedded))
+				flat, ok := body["client_metadata"].(map[string]any)
+				require.True(t, ok, "client_metadata must remain an object")
+				embeddedJSON, ok := flat["x-codex-turn-metadata"].(string)
+				require.True(t, ok, "embedded turn metadata must remain a JSON string")
+				require.NoError(t, json.Unmarshal([]byte(embeddedJSON), &embedded))
 				for _, key := range []string{"thread_id", "parent_thread_id", "forked_from_thread_id", "root_turn_id", "parent_turn_id", "turn_id", "context_window_id"} {
 					require.NotEqual(t, metadata[key], flat[key], key)
 					require.Equal(t, flat[key], embedded[key], key)
