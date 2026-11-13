@@ -52,7 +52,8 @@ func TestCodex0167ConvergedTurnReferencesPreserveRelationships(t *testing.T) {
 					headers := c.Request.Header.Clone()
 					applyCodexAccountIdentityHeaders(headers, account, 77)
 					applyCodexFingerprintHeaders(headers, ids)
-					flat := body["client_metadata"].(map[string]any)
+					flat, ok := body["client_metadata"].(map[string]any)
+					require.True(t, ok, "client_metadata must remain an object")
 					var canonical map[string]any
 					if source != "body-only" {
 						require.NoError(t, json.Unmarshal([]byte(headers.Get("x-codex-turn-metadata")), &canonical))
@@ -60,7 +61,9 @@ func TestCodex0167ConvergedTurnReferencesPreserveRelationships(t *testing.T) {
 					}
 					if source != "header-only" {
 						var embedded map[string]any
-						require.NoError(t, json.Unmarshal([]byte(flat["x-codex-turn-metadata"].(string)), &embedded))
+						embeddedJSON, ok := flat["x-codex-turn-metadata"].(string)
+						require.True(t, ok, "embedded turn metadata must remain a JSON string")
+						require.NoError(t, json.Unmarshal([]byte(embeddedJSON), &embedded))
 						for _, key := range []string{"turn_id", "root_turn_id", "parent_turn_id", "context_window_id"} {
 							require.Equal(t, flat[key], embedded[key], key)
 							if canonical != nil {
@@ -103,7 +106,9 @@ func TestCodex0167ConvergenceWithoutClientTurnRetainsGeneratedFallback(t *testin
 		body := map[string]any{}
 		initial := ids.turnID
 		require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-		require.Equal(t, initial, body["client_metadata"].(map[string]any)["turn_id"])
+		metadata, ok := body["client_metadata"].(map[string]any)
+		require.True(t, ok, "client_metadata must remain an object")
+		require.Equal(t, initial, metadata["turn_id"])
 	}
 	require.NotEmpty(t, first.turnID)
 	require.NotEqual(t, first.turnID, second.turnID)
