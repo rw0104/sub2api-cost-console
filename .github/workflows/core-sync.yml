@@ -92,13 +92,24 @@ jobs:
             echo "needs_update=true" >> "$GITHUB_OUTPUT"
           fi
 
+  plugin-contract:
+    name: Verify plugin host contract
+    needs: discover
+    if: needs.discover.outputs.needs_update == 'true'
+    uses: ./.github/workflows/plugin-contract.yml
+    with:
+      ref: ${{ github.sha }}
+    permissions:
+      contents: read
+
   update:
     name: Merge, verify and publish core-stable
-    needs: discover
+    needs: [discover, plugin-contract]
     if: needs.discover.outputs.needs_update == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
+      actions: read
       contents: write
       issues: write
     steps:
@@ -223,6 +234,22 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+      - name: Require a reviewed source commit and complete backend CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_EXPECTED_REF: ${{ github.ref_name }}
+        run: |
+          $source = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $source -ne $env:GITHUB_SHA) {
+            throw 'Automatic upstream merge requires review and committed-source CI before publication; publish the integrated host commit instead.'
+          }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Core source has uncommitted changes; refusing to publish a tree without matching complete CI.'
+          }
+          node frontend/scripts/backend-ci-gate.mjs --sha $source
+          if ($LASTEXITCODE -ne 0) { throw 'Complete backend CI is required before stable core publication' }
       - name: Verify integrated upstream source identity
         run: node frontend/scripts/verify-core-source.mjs "automation-${{ needs.discover.outputs.tag }}"
       - run: corepack enable
@@ -246,7 +273,7 @@ jobs:
       - name: Lint the merged backend before core publication
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13
+          version: v2.14.0
           args: --timeout=30m
           working-directory: backend
       - name: Build the web assets and managed core required by the desktop contract
@@ -317,7 +344,10 @@ jobs:
         working-directory: frontend
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_EXPECTED_REF: ${{ github.ref_name }}
         run: |
+          node scripts/backend-ci-gate.mjs --timeout-seconds 0
+          if ($LASTEXITCODE -ne 0) { throw 'Backend CI changed before stable core publication' }
           gh release view core-stable 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create core-stable --title 'Sub2API compatible core stable channel' --notes 'Automatically tested compatible core releases.' --prerelease

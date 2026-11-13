@@ -445,15 +445,35 @@ func WithOpenAIReasoningEffortPolicy(ctx context.Context, maxEffort string, mapp
 	return context.WithValue(ctx, openAIReasoningEffortPolicyContextKey{}, policy)
 }
 
+// WithOpenAIReasoningEffortPolicyForMessages preserves ordinary bridge defaults,
+// but retains ceilings and none mappings for explicitly disabled thinking.
+func WithOpenAIReasoningEffortPolicyForMessages(ctx context.Context, body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string) context.Context {
+	effort := gjson.GetBytes(body, "output_config.effort")
+	if effort.Type != gjson.String || strings.TrimSpace(effort.String()) == "" {
+		if gjson.GetBytes(body, "thinking.type").String() != "disabled" {
+			maxEffort = ""
+		}
+		noneMappings := make([]ReasoningEffortMapping, 0, len(mappings))
+		for _, mapping := range mappings {
+			if normalizeReasoningEffortMappingSource(mapping.From) == "none" {
+				noneMappings = append(noneMappings, mapping)
+			}
+		}
+		mappings = noneMappings
+	}
+	return WithOpenAIReasoningEffortPolicy(ctx, maxEffort, mappings, overLimit)
+}
+
 // ApplyOpenAIReasoningEffortPolicyFromContext applies a policy previously bound
-// to the request. An unbound request is returned byte-for-byte unchanged.
+// to the request. The Codex Ultra compatibility alias also applies without a
+// group policy; ordinary unbound requests remain byte-for-byte unchanged.
 func ApplyOpenAIReasoningEffortPolicyFromContext(ctx context.Context, body []byte) ([]byte, bool, error) {
 	if ctx == nil {
-		return body, false, nil
+		return ApplyOpenAIReasoningEffortPolicy(body, "", nil, "")
 	}
 	policy, ok := ctx.Value(openAIReasoningEffortPolicyContextKey{}).(openAIReasoningEffortPolicy)
 	if !ok {
-		return body, false, nil
+		return ApplyOpenAIReasoningEffortPolicy(body, "", nil, "")
 	}
 	return ApplyOpenAIReasoningEffortPolicy(body, policy.maxEffort, policy.mappings, policy.overLimit)
 }
@@ -552,8 +572,8 @@ func ApplyReasoningEffortPolicy(body []byte, maxEffort string, mappings []Reason
 }
 
 func applyOpenAIWSReasoningEffortPolicy(payload []byte, hooks *OpenAIWSIngressHooks) ([]byte, error) {
-	if hooks == nil || (hooks.MaxReasoningEffort == "" && len(hooks.ReasoningEffortMappings) == 0) {
-		return payload, nil
+	if hooks == nil {
+		hooks = &OpenAIWSIngressHooks{}
 	}
 	capped, changed, err := ApplyOpenAIReasoningEffortPolicy(payload, hooks.MaxReasoningEffort, hooks.ReasoningEffortMappings, hooks.MaxReasoningEffortOverLimit)
 	if err != nil {
@@ -565,7 +585,52 @@ func applyOpenAIWSReasoningEffortPolicy(payload []byte, hooks *OpenAIWSIngressHo
 	return payload, nil
 }
 
-// ApplyOpenAIReasoningEffortPolicy is retained for OpenAI forwarding callers.
+// ApplyOpenAIReasoningEffortPolicy normalizes the legacy wire spelling of Codex
+// Ultra before applying group policy. Current Sol/Terra/Astra Codex descriptors
+// use xhigh for multi-agent inference; older descriptors can select another
+// supported level. Ultra itself is a client workflow, not an API reasoning level.
+// Metadata retains the original workflow selection.
 func ApplyOpenAIReasoningEffortPolicy(body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string) ([]byte, bool, error) {
-	return ApplyReasoningEffortPolicy(body, maxEffort, mappings, overLimit)
+	normalized := body
+	aliasChanged := false
+	wireEffort := ""
+	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+		field := gjson.GetBytes(normalized, path)
+		if field.Type != gjson.String || !strings.EqualFold(strings.TrimSpace(field.String()), "ultra") {
+			continue
+		}
+		if wireEffort == "" {
+			wireEffort = codexUltraCompatibilityEffort(gjson.GetBytes(body, "model").String())
+		}
+		updated, err := sjson.SetBytes(normalized, path, wireEffort)
+		if err != nil {
+			return body, false, err
+		}
+		normalized = updated
+		aliasChanged = true
+	}
+	result, changed, err := ApplyReasoningEffortPolicy(normalized, maxEffort, mappings, overLimit)
+	if err != nil {
+		return body, false, err
+	}
+	return result, aliasChanged || changed, nil
+}
+
+func codexUltraCompatibilityEffort(model string) string {
+	descriptor := newConfiguredCodexModelDescriptor(model)
+	if descriptor.MultiAgentReasoningEffort != nil {
+		if effort := NormalizeMaxReasoningEffort(*descriptor.MultiAgentReasoningEffort); effort != "" {
+			return effort
+		}
+	}
+	for _, preferred := range []string{"max", "xhigh", "high", "medium", "low", "minimal"} {
+		for _, level := range descriptor.SupportedReasoningLevels {
+			if level.Effort == preferred {
+				return preferred
+			}
+		}
+	}
+	// Public aliases may be resolved only after account selection. Use the
+	// current Codex inference fallback when no local model levels are known.
+	return "xhigh"
 }

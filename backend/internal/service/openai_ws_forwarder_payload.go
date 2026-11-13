@@ -108,6 +108,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			"x-codex-installation-id",
 			"session-id",
 			"thread-id",
+			"x-codex-parent-thread-id",
 			"x-client-request-id",
 		} {
 			if value := c.Request.Header.Get(name); strings.TrimSpace(value) != "" {

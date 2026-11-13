@@ -50,7 +50,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Preserve tooling for releases of older tags
-        run: cp -R .github/release-tools "$RUNNER_TEMP/release-tools"
+        run: |
+          cp -R .github/release-tools "$RUNNER_TEMP/release-tools"
+          cp frontend/scripts/backend-ci-gate.mjs "$RUNNER_TEMP/release-tools/backend-ci-gate.mjs"
       - name: Checkout selected application source
         uses: actions/checkout@v6
         with:
@@ -97,12 +99,20 @@ jobs:
       actions: read
       contents: read
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: frontend/scripts
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
       - name: Require passing CI for the selected source commit
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
           RELEASE_DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
+          CI_EXPECTED_REF: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -110,20 +120,7 @@ jobs:
             echo 'Dry run does not publish artifacts; publication CI gate is deferred.'
             exit 0
           fi
-          for attempt in {1..40}; do
-            runs="$(gh run list --workflow backend-ci.yml --commit "$RELEASE_SHA" --limit 30 --json headSha,status,conclusion)"
-            matching="$(jq --arg sha "$RELEASE_SHA" '[.[] | select(.headSha == $sha)]' <<< "$runs")"
-            if jq -e 'any(.[]; .conclusion == "success")' <<< "$matching" >/dev/null; then
-              exit 0
-            fi
-            if jq -e 'length > 0 and all(.[]; .status == "completed")' <<< "$matching" >/dev/null; then
-              echo "Full backend CI failed for $RELEASE_SHA; refusing publication" >&2
-              exit 1
-            fi
-            sleep 30
-          done
-          echo "No successful full backend CI found for $RELEASE_SHA" >&2
-          exit 1
+          node frontend/scripts/backend-ci-gate.mjs --sha "$RELEASE_SHA"
 
   build-frontend:
     needs: [prepare, plugin-contract, backend-ci]
@@ -239,6 +236,7 @@ jobs:
     needs: [prepare, build-binaries]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
       packages: write
     env:
@@ -256,6 +254,9 @@ jobs:
         with:
           name: release-tooling
           path: ${{ runner.temp }}/release-tools/
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
       - uses: actions/download-artifact@v8
         with:
           pattern: release-binary-*
@@ -294,9 +295,16 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build images and publish manifests
+        # Recheck after the build matrix: another run may have started since
+        # the initial gate. No release mutation may precede this check.
         env:
+          GH_TOKEN: ${{ github.token }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
-        run: bash "$RUNNER_TEMP/release-tools/release-images.sh"
+        run: |
+          if [[ "$DRY_RUN" != true ]]; then
+            node "$RUNNER_TEMP/release-tools/backend-ci-gate.mjs" --sha "$RELEASE_SHA" --expected-ref "$RELEASE_TAG" --timeout-seconds 0
+          fi
+          bash "$RUNNER_TEMP/release-tools/release-images.sh"
       - name: Get annotated tag notes
         id: tag_message
         run: |

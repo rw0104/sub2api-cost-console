@@ -166,6 +166,7 @@ docs/*
 !docs/2026-08-16_development-native-launcher-account-operations-report.md
 !docs/2026-08-25_technical-upstream-model-detection-repair-report.md
 !docs/2026-08-29_development-core-v0.1.183-desktop-v0.2.27-release-report.md
+!docs/OPENAI_IMAGES_CODEX.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md

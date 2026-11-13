@@ -270,6 +270,8 @@ type codexFingerprintIDs struct {
 	turnID                        string
 	windowID                      string
 	turnStartedAtUnixMs           int64
+	referenceNamespace            string
+	clientTurnIDCaptured          bool
 	originalBodySessionID         string
 	originalBodySessionIDCaptured bool
 }
@@ -292,6 +294,7 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 		accountID:           account.ID,
 		mode:                mode,
 		turnStartedAtUnixMs: time.Now().UnixMilli(),
+		referenceNamespace:  deriveStableUUIDv4("sub2api:codex-references:v1:" + seed + ":" + clientSessionID),
 	}
 
 	ids.installationID = resolveConvergedInstallationID(account, seed)
@@ -352,6 +355,81 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
 }
 
+// resolveCodexFingerprintIDsFromContext snapshots the same account/API-key-scoped
+// header metadata that the outbound builder uses. The original session still
+// selects the existing convergence bucket. Capturing a header-only client turn
+// here prevents a synthesized body turn and the later header from diverging.
+func resolveCodexFingerprintIDsFromContext(c *gin.Context, account *Account) *codexFingerprintIDs {
+	var headers http.Header
+	if c != nil && c.Request != nil {
+		headers = c.Request.Header
+	}
+	ids := resolveCodexFingerprintIDsFromRequest(account, headers)
+	if ids == nil || ids.mode == codexFingerprintDevice || headers == nil {
+		return ids
+	}
+	scoped := headers.Clone()
+	applyCodexAccountIdentityHeaders(scoped, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+	captureCodexFingerprintClientTurn(ids, codexFingerprintTurnMetadata(scoped.Get(openAIWSTurnMetadataHeader)))
+	return ids
+}
+
+func codexFingerprintTurnMetadata(value any) map[string]any {
+	raw, ok := value.(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var metadata map[string]any
+	if json.Unmarshal([]byte(raw), &metadata) != nil {
+		return nil
+	}
+	return metadata
+}
+
+func convergedCodexReference(ids *codexFingerprintIDs, kind, raw string) string {
+	return deriveStableUUIDv4("sub2api:codex-reference:v1:" + ids.referenceNamespace + ":" + kind + ":" + raw)
+}
+
+func captureCodexFingerprintClientTurn(ids *codexFingerprintIDs, metadata map[string]any) {
+	if ids == nil || ids.mode == codexFingerprintDevice || ids.clientTurnIDCaptured {
+		return
+	}
+	if raw, ok := metadata["turn_id"].(string); ok && strings.TrimSpace(raw) != "" {
+		ids.turnID = convergedCodexReference(ids, "turn", raw)
+		ids.clientTurnIDCaptured = true
+	}
+}
+
+// Related turns use the same projection as the current turn, including references
+// to another request. Unknown parent threads retain their account-scoped value;
+// only a reference to the current thread can be folded into its convergence ID.
+// Context windows are independent identities and must not collapse into a thread.
+func codexFingerprintReferenceFields(metadata map[string]any, ids *codexFingerprintIDs) map[string]any {
+	fields := make(map[string]any)
+	for _, key := range []string{"root_turn_id", "parent_turn_id", "context_window_id"} {
+		raw, ok := metadata[key].(string)
+		if !ok || strings.TrimSpace(raw) == "" {
+			continue
+		}
+		kind := "turn"
+		if key == "context_window_id" {
+			kind = "context-window"
+		}
+		if kind == "turn" && raw == metadata["turn_id"] {
+			fields[key] = ids.turnID
+		} else {
+			fields[key] = convergedCodexReference(ids, kind, raw)
+		}
+	}
+	thread, _ := metadata["thread_id"].(string)
+	for _, key := range []string{"parent_thread_id", "forked_from_thread_id", "x-codex-parent-thread-id"} {
+		if raw, ok := metadata[key].(string); ok && raw != "" && raw == thread {
+			fields[key] = ids.threadID
+		}
+	}
+	return fields
+}
+
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
 // 在 buildUpstreamRequest 的白名单透传之后、enforceCodexIdentityHeaders 之前调用。
 func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
@@ -368,6 +446,12 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		})
 		return
 	}
+	metadata := codexFingerprintTurnMetadata(h.Get(openAIWSTurnMetadataHeader))
+	captureCodexFingerprintClientTurn(ids, metadata)
+	fields := codexFingerprintReferenceFields(metadata, ids)
+	if parent := h.Get("x-codex-parent-thread-id"); parent != "" && parent == h.Get("thread-id") {
+		h.Set("x-codex-parent-thread-id", ids.threadID)
+	}
 
 	// session / full 模式：改写所有相关头
 	h.Set("x-codex-window-id", ids.windowID)
@@ -377,7 +461,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("session_id", ids.sessionID)
 	h.Set("thread-id", ids.threadID)
 
-	rewriteCodexTurnMetadataFields(h, map[string]any{
+	maps.Copy(fields, map[string]any{
 		"installation_id":         ids.installationID,
 		"session_id":              ids.sessionID,
 		"thread_id":               ids.threadID,
@@ -385,6 +469,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
 	})
+	rewriteCodexTurnMetadataFields(h, fields)
 }
 
 // rewriteCodexTurnMetadataFields 解析 x-codex-turn-metadata 头中的 JSON，
@@ -454,6 +539,12 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		})
 		return modified
 	}
+	embedded := codexFingerprintTurnMetadata(existing[openAIWSTurnMetadataHeader])
+	captureCodexFingerprintClientTurn(ids, existing)
+	captureCodexFingerprintClientTurn(ids, embedded)
+	flatReferences := codexFingerprintReferenceFields(existing, ids)
+	embeddedFields := codexFingerprintReferenceFields(embedded, ids)
+	maps.Copy(existing, flatReferences)
 
 	// session / full 模式
 	existing["session_id"] = ids.sessionID
@@ -461,7 +552,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
 
-	rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
+	maps.Copy(embeddedFields, map[string]any{
 		"installation_id":         ids.installationID,
 		"session_id":              ids.sessionID,
 		"thread_id":               ids.threadID,
@@ -469,6 +560,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
 	})
+	rewriteClientMetadataEmbeddedTurnMetadata(existing, embeddedFields)
 	return true
 }
 

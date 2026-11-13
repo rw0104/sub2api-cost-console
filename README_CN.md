@@ -832,3 +832,5 @@ Copyright (c) 2026 Wesley Liddick
 **如果觉得有用，请给个 Star 支持一下！**
 
 </div>
+
+图片原生接口、输出格式与回退规则见 [Codex 图片接口说明](docs/OPENAI_IMAGES_CODEX.md)。

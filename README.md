@@ -437,3 +437,5 @@ The v0.2.12 core also includes Antigravity accounts with dedicated Claude and Ge
 | `/antigravity/v1beta/` | Gemini |
 
 Antigravity accounts can optionally participate in hybrid scheduling through the general Claude and Gemini endpoints. Keep Anthropic Claude and Antigravity Claude accounts in separate groups when a conversation must remain on one provider.
+
+See [Codex image endpoints](docs/OPENAI_IMAGES_CODEX.md) for native image routes, output formats, and fallback behavior.
