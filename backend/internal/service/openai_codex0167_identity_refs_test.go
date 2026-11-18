@@ -48,12 +48,12 @@ func TestCodex0167AccountReferencesStayRelatedAcrossTransports(t *testing.T) {
 				bodyMetadata["x-codex-turn-metadata"] = codex0167JSON(t, metadata)
 				body := map[string]any{"model": "gpt-6.1-sol", "client_metadata": bodyMetadata}
 				if rawBody {
-					raw, changed, err := applyCodexAccountIdentityClientMetadataRaw([]byte(codex0167JSON(t, body)), account, 77)
+					raw, changed, err := applyCodexAccountIdentityClientMetadataRaw([]byte(codex0167JSON(t, body)), account, 77, headers.Get("session-id"))
 					require.NoError(t, err)
 					require.True(t, changed)
 					require.NoError(t, json.Unmarshal(raw, &body))
 				} else {
-					require.True(t, applyCodexAccountIdentityClientMetadataMap(body, account, 77))
+					require.True(t, applyCodexAccountIdentityClientMetadataMap(body, account, 77, headers.Get("session-id")))
 				}
 				applyCodexAccountIdentityHeaders(headers, account, 77)
 				var headerMetadata, embedded map[string]any

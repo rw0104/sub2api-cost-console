@@ -108,7 +108,7 @@ func TestBuildGeminiServiceAccountRequest_VertexAuthAndEndpoint(t *testing.T) {
 	t.Run("unsupported_action_is_rejected_before_any_auth", func(t *testing.T) {
 		// 本调用方固定传 streamGenerateContent；这里直接校验底层拒绝非法 action，
 		// 保证将来改动 action 常量时不会静默拼出无效端点。
-		_, err := buildVertexGeminiAccountURL(vertexTestServiceAccount(), model, "rawPredict", true)
+		_, err := buildVertexGeminiAccountURL(vertexTestServiceAccount(), model, "rawPredict", true, "")
 		require.ErrorContains(t, err, "unsupported vertex gemini action")
 	})
 }

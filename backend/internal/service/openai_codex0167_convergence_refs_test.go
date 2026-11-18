@@ -38,7 +38,7 @@ func TestCodex0167ConvergedTurnReferencesPreserveRelationships(t *testing.T) {
 						cm["x-codex-turn-metadata"] = codex0167JSON(t, metadata)
 					}
 					body := map[string]any{"model": "gpt-6.1-sol", "client_metadata": cm}
-					applyCodexAccountIdentityClientMetadataMap(body, account, 77)
+					applyCodexAccountIdentityClientMetadataMap(body, account, 77, session)
 					ids := resolveCodexFingerprintIDsFromContext(c, account)
 					require.NotNil(t, ids)
 					if raw {

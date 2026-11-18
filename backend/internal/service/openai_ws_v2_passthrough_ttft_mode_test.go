@@ -71,19 +71,12 @@ func runOpenAIWSPassthroughTTFTModeCase(t *testing.T, mode string) {
 
 	const reasoningDelay = 600 * time.Millisecond
 	const tolerance = 250 * time.Millisecond
-	// The second turn's events wait so its response.create is accepted first.
 	turns := [][]openAIWSTTFTModeTestEvent{
 		openAIWSTTFTModeTestTurn("resp_ttft_1", 0, reasoningDelay),
 		openAIWSTTFTModeTestTurn("resp_ttft_2", 200*time.Millisecond, reasoningDelay),
 	}
 
-	upstreamConn := &openAIWSCaptureConn{}
-	for _, turn := range turns {
-		for _, event := range turn {
-			upstreamConn.events = append(upstreamConn.events, []byte(event.payload))
-			upstreamConn.readDelays = append(upstreamConn.readDelays, event.delay)
-		}
-	}
+	upstreamConn := newStagedPassthroughConn()
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -96,14 +89,7 @@ func runOpenAIWSPassthroughTTFTModeCase(t *testing.T, mode string) {
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	svc := &OpenAIGatewayService{
-		cfg:                       cfg,
-		httpUpstream:              &httpUpstreamRecorder{},
-		cache:                     &stubGatewayCache{},
-		openaiWSResolver:          NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:             NewCodexToolCorrector(),
-		openaiWSPassthroughDialer: &openAIWSCaptureDialer{conn: upstreamConn},
-	}
+	svc := newPassthroughLifecycleService(cfg, upstreamConn)
 	account := &Account{
 		ID: 454, Name: "openai-ws-ttft-mode", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Status: StatusActive, Schedulable: true, Concurrency: 1,
@@ -148,6 +134,19 @@ func runOpenAIWSPassthroughTTFTModeCase(t *testing.T, mode string) {
 		writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
 		require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, request))
 		cancelWrite()
+		// Measure each scripted delay from the forwarded request. The relay's
+		// upstream reader can already be waiting before the next client turn.
+		requirePassthroughUpstreamWrite(t, upstreamConn, 3*time.Second)
+		for _, event := range turn {
+			time.Sleep(event.delay)
+			select {
+			case upstreamConn.frames <- stagedPassthroughFrame{messageType: coderws.MessageText, payload: []byte(event.payload)}:
+			case <-upstreamConn.closed:
+				t.Fatalf("upstream closed during turn %d", i+1)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out sending event during turn %d", i+1)
+			}
+		}
 		for {
 			readCtx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
 			_, message, readErr := clientConn.Read(readCtx)

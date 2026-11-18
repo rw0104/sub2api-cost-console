@@ -334,7 +334,8 @@ func TestCommandCodeGatewayPassesThroughCatalogProtocols(t *testing.T) {
 	}
 	forward := func(t *testing.T, ingress routingMatrixIngress, model string, catalog map[string][]string) observation {
 		t.Helper()
-		base := fmt.Sprintf("http://cc-%s-%d.example", strings.ReplaceAll(t.Name(), "/", "-"), time.Now().UnixNano())
+		// A failed refresh retains the last good catalog, so isolate fixtures by state.
+		base := fmt.Sprintf("http://cc-%s-catalog-%t.example", strings.ReplaceAll(t.Name(), "/", "-"), catalog != nil)
 		account := commandCodeTestAccount(12)
 		account.Credentials["api_base_urls"] = map[string]any{
 			APIProtocolChatCompletions: base + "/provider/v1",

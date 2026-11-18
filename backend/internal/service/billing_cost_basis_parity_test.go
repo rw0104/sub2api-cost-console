@@ -131,7 +131,7 @@ func TestHaiku55LongContextSurchargeReachesAccountCost(t *testing.T) {
 		usageLog := &UsageLog{}
 		applyAccountStatsCost(context.Background(), usageLog, cs, bs,
 			1, groupID, model, model, tokens, 0, time.Time{},
-			accountStatsLongContextPricingEnabled(nil))
+			accountStatsLongContextPricingEnabled(nil), 1)
 
 		require.NotNil(t, usageLog.AccountStatsCost)
 		require.InDelta(t, float64(tokens.InputTokens)*rulePrice, *usageLog.AccountStatsCost, 1e-10,

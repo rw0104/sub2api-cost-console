@@ -65,7 +65,7 @@ func TestOfficialOpenAIModelsVerificationPreservesDraftAndUsesLiveSlugs(t *testi
 	fetchedAt, err := time.Parse(time.RFC3339, result.FetchedAt)
 	require.NoError(t, err)
 	require.WithinDuration(t, time.Now(), fetchedAt, 2*time.Second)
-	require.Equal(t, []string{"gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra", "gpt-6-astra", "gpt-5.6-sol"}, result.MissingModels)
+	require.Equal(t, []string{"gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra", "gpt-6-astra", "gpt-5.6-sol"}, result.MissingModels)
 	require.Equal(t, []OfficialOpenAIModelMappingCheck{
 		{From: "gpt-5.6-*", To: "gpt-5.6-luna", Available: true},
 		{From: "gpt-6.1-sol", To: "gpt-5.6-luna", Available: true},

@@ -104,6 +104,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			}
 		}
 		for _, name := range [...]string{
+			openAISubagentHeader,
 			"x-codex-window-id",
 			"x-codex-installation-id",
 			"session-id",
