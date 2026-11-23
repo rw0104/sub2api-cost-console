@@ -3689,6 +3689,7 @@ name = "sub2api-cost-console"
 version = "0.4.9"
 dependencies = [
  "hex",
+ "plist",
  "rand 0.8.7",
  "reqwest",
  "semver",
@@ -3703,6 +3704,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "windows-sys 0.61.2",
  "winreg",

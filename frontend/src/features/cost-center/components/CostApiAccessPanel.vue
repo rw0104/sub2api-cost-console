@@ -4,7 +4,7 @@
       <div>
         <span class="cost-api-access__eyebrow">LOCAL GATEWAY / AGENT ACCESS</span>
         <h2 id="api-access-title">API 接入中心</h2>
-        <p>为 ChatGPT Desktop、Codex、OpenCode、Cursor、Cline 与自定义 Agent 提供本地接口配置和启动入口。</p>
+        <p>打开本机 ChatGPT / Codex 桌面应用，或为 Codex CLI、OpenCode 等客户端配置本地接口。</p>
       </div>
       <div class="cost-api-access__heading-actions">
         <button type="button" class="cost-api-button cost-api-button--quiet" :disabled="loadingKeys" @click="loadKeys">
@@ -89,22 +89,22 @@
             <Wifi v-else :size="15" />
             {{ testing ? '测试中…' : '测试本地接口' }}
           </button>
-          <button type="button" class="cost-api-button cost-api-button--quiet" :disabled="!selectedKey" @click="copyKeyCommand">
+          <button v-if="preset !== 'chatgpt'" type="button" class="cost-api-button cost-api-button--quiet" :disabled="!selectedKey" @click="copyKeyCommand">
             <Copy :size="15" /> 复制密钥命令
           </button>
         </div>
 
         <div v-if="showNativeLauncher" class="cost-api-native-launcher">
           <div class="cost-api-card__title">
-            <div><span>03 / WINDOWS NATIVE LAUNCH</span><strong>启动本机客户端</strong></div>
+            <strong>启动本机客户端</strong>
             <Terminal :size="18" />
           </div>
           <p class="cost-api-native-launcher__description">
             <template v-if="nativeClientId === 'chatgpt'">
-              仅启动已安装的官方 ChatGPT Desktop；该客户端不读取 Sub2API API Key。
+              使用桌面应用自己的登录状态。点击“检查客户端”可查看本机安装的产品名称和版本。
             </template>
             <template v-else>
-              优先使用已安装的 PowerShell 7；未安装时自动回退到系统 Windows PowerShell 5.1。在新的窗口中、当前工作目录启动已安装的 {{ nativeClientLabel || '客户端' }}，密钥只注入该进程，不写入账号文件。
+              在所选工作目录启动 {{ nativeClientLabel || '客户端' }}，API Key 仅对启动的进程生效。
             </template>
           </p>
           <p v-if="nativeClientId === 'claude-code'" class="cost-api-native-launcher__hint cost-api-native-launcher__hint--notice">
@@ -196,11 +196,18 @@
       <div class="cost-api-card cost-api-card--code">
         <div class="cost-api-card__title">
           <div><span>02 / COPY CONFIGURATION</span><strong>{{ configTitle }}</strong></div>
-          <button type="button" class="cost-api-copy" @click="copyToClipboard(configText, '配置已复制')"><Copy :size="14" /> 复制配置</button>
+          <button v-if="preset !== 'chatgpt'" type="button" class="cost-api-copy" @click="copyToClipboard(configText, '配置已复制')"><Copy :size="14" /> 复制配置</button>
         </div>
+        <label v-if="preset === 'codex'" class="cost-api-field cost-api-config-platform">
+          <span>Codex CLI 配置适用系统</span>
+          <select v-model="codexConfigPlatform">
+            <option value="windows">Windows · PowerShell</option>
+            <option value="macos">macOS · 终端</option>
+          </select>
+        </label>
         <pre class="cost-api-code"><code>{{ configText }}</code></pre>
-        <p v-if="preset === 'chatgpt'" class="cost-api-code-note">ChatGPT Desktop 是独立的官方客户端，不读取这里的 API Key；点击左侧启动按钮即可打开本机程序。</p>
-        <p v-else class="cost-api-code-note">配置不包含明文密钥。复制左侧“密钥命令”后，在当前用户环境中设置对应的客户端环境变量，然后重启 Agent。</p>
+        <p v-if="preset === 'codex'" class="cost-api-code-note">将配置保存到上述路径，再复制“密钥命令”，在同一终端运行该命令并启动 Codex CLI。</p>
+        <p v-else-if="preset !== 'chatgpt'" class="cost-api-code-note">配置不包含明文密钥。复制左侧“密钥命令”后，在当前用户环境中设置对应的客户端环境变量，然后重启 Agent。</p>
       </div>
     </div>
 
@@ -258,6 +265,7 @@ const keyLoadState = ref<'loading' | 'measured' | 'empty' | 'unavailable'>('load
 const keyLoadError = ref('')
 const selectedKeyId = ref('')
 const preset = ref<PresetId>('codex')
+const codexConfigPlatform = ref<'windows' | 'macos'>(/Macintosh/.test(navigator.userAgent) ? 'macos' : 'windows')
 // Codex 自定义 Provider 的密钥只能通过 env_key 指向的环境变量传入（与「使用密钥」弹窗一致）。
 const codexKeyEnvName = 'SUB2API_API_KEY'
 const models = ref<string[]>([])
@@ -276,6 +284,7 @@ const nativeLaunchError = ref('')
 const nativeLaunchMessage = ref('')
 const nativeInstallationLabels = {
   windows_msix: 'Windows MSIX 软件包',
+  macos_bundle: 'macOS 应用包',
   desktop_bundled: '桌面客户端随附 CLI（按路径识别）',
   npm: 'npm 安装路径',
   path: '本机可执行文件路径',
@@ -283,7 +292,7 @@ const nativeInstallationLabels = {
 const nativeChannelLabels = { stable: '稳定版', prerelease: '预发布版', unknown: '未标明' }
 
 const presets = [
-  { id: 'chatgpt' as const, label: 'ChatGPT Desktop', icon: ExternalLink },
+  { id: 'chatgpt' as const, label: 'ChatGPT Desktop / Codex 桌面版', icon: ExternalLink },
   { id: 'codex' as const, label: 'Codex CLI', icon: Terminal },
   { id: 'claude-code' as const, label: 'Claude Code', icon: Terminal },
   { id: 'opencode' as const, label: 'OpenCode', icon: KeyRound },
@@ -328,7 +337,7 @@ const nativeLaunchUnavailableReason = computed(() =>
 const nativeClientLabel = computed(() => presets.find((item) => item.id === preset.value)?.label || '')
 const showNativeLauncher = computed(() => props.desktopMode && isDesktopRuntime())
 const configTitle = computed(() => {
-  if (preset.value === 'chatgpt') return 'ChatGPT Desktop · 官方客户端'
+  if (preset.value === 'chatgpt') return 'ChatGPT / Codex 桌面应用'
   if (preset.value === 'codex') return 'Codex CLI · config.toml'
   if (preset.value === 'claude-code') return 'Claude Code · 环境变量'
   if (preset.value === 'opencode') return 'OpenCode · opencode.json'
@@ -342,7 +351,9 @@ const configTitle = computed(() => {
 const configText = computed(() => {
   const model = selectedModel.value || '从 /v1/models 选择模型'
   if (preset.value === 'chatgpt') {
-    return 'ChatGPT Desktop 是独立的官方客户端，不支持通过 Sub2API 注入 Base URL 或 API Key。此处仅提供本机启动。'
+    return showNativeLauncher.value
+      ? '点击“检查客户端”查看已安装的官方应用，或点击“启动”打开它。要从命令行使用 Sub2API，请选择 Codex CLI。'
+      : '打开 Sub2API 桌面应用，在“API 接入中心”检查或启动本机安装的 ChatGPT / Codex。'
   }
   if (preset.value === 'claude-code') {
     return `$env:ANTHROPIC_BASE_URL = "${nativeClaudeBaseUrl.value}"\n$env:ANTHROPIC_AUTH_TOKEN = "<从 API Key 管理页复制>"\n\nclaude`
@@ -375,7 +386,28 @@ const configText = computed(() => {
   if (preset.value === 'grok') {
     return `$env:GROK_MODELS_BASE_URL = "${nativeV1BaseUrl.value}"\n$env:XAI_API_KEY = "<从 API Key 管理页复制>"\n\ngrok --model "${model}"`
   }
-  return `# %USERPROFILE%\\.codex\\config.toml\n# provider ID 与桌面「启动 Codex CLI」相同（sub2api）。Codex 0.166 起，会话只能用创建时的 provider ID 恢复。\nmodel_provider = "sub2api"\nmodel = "${model}"\nreview_model = "${model}"\nweb_search = "live"\nmodel_reasoning_effort = "xhigh"\ndisable_response_storage = true\nnetwork_access = "enabled"\nwindows_wsl_setup_acknowledged = true\n\n[model_providers.sub2api]\nname = "Sub2API Local"\nbase_url = "${gatewayBase.value}"\nmodel_catalog_url = "${gatewayBase.value}/models"\nenv_key = "${codexKeyEnvName}"\nwire_api = "responses"\nrequires_openai_auth = false\nhttp_headers = { "x-openai-actor-authorization" = "local-image-extension" }\n\n[features]\napi_key_model_discovery = true\ngoals = true\nimage_generation = true\n\n# PowerShell：启动 Codex 前先设置密钥。Codex 0.149 起，requires_openai_auth = false 的自定义 Provider\n# 不会再读取 auth.json，只认 env_key 指向的环境变量，缺少它会以 401 连不上网关。\n$env:${codexKeyEnvName} = "<从 API Key 管理页复制>"`
+  const configPath = codexConfigPlatform.value === 'windows' ? '%USERPROFILE%\\.codex\\config.toml' : '~/.codex/config.toml'
+  return `# ${configPath}
+# 保留 provider ID sub2api，以便在这里和原生启动器之间恢复会话。
+model_provider = "sub2api"
+model = ${JSON.stringify(model)}
+review_model = ${JSON.stringify(model)}
+web_search = "live"
+model_reasoning_effort = "xhigh"
+
+[model_providers.sub2api]
+name = "Sub2API Local"
+base_url = ${JSON.stringify(gatewayBase.value)}
+model_catalog_url = ${JSON.stringify(`${gatewayBase.value}/models`)}
+env_key = "${codexKeyEnvName}"
+wire_api = "responses"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "local-image-extension" }
+
+[features]
+api_key_model_discovery = true
+goals = true
+image_generation = true`
 })
 
 function maskKey(key: string): string {
@@ -453,7 +485,12 @@ async function testConnection() {
 async function copyKeyCommand() {
   if (!selectedKey.value) return
   const envName = preset.value === 'codex' ? codexKeyEnvName : 'OPENAI_API_KEY'
-  await copyToClipboard(`$env:${envName} = "${selectedKey.value.key}"`, 'PowerShell 密钥命令已复制')
+  const key = selectedKey.value.key
+  if (preset.value === 'codex' && codexConfigPlatform.value === 'macos') {
+    await copyToClipboard(`export ${envName}='${key.replace(/'/g, "'\\''")}'`, '终端密钥命令已复制')
+  } else {
+    await copyToClipboard(`$env:${envName} = '${key.replace(/'/g, "''")}'`, 'PowerShell 密钥命令已复制')
+  }
 }
 
 function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
@@ -480,7 +517,7 @@ function buildNativeLaunchRequest(): NativeClientLaunchRequest | null {
     client_id: nativeClientId.value,
     gateway_profile: profile,
     base_url: baseUrl,
-    api_key: selectedKey.value?.key || '',
+    api_key: nativeClientId.value === 'chatgpt' ? '' : selectedKey.value?.key || '',
     working_directory: nativeWorkingDirectory.value.trim() || nativeDetectedWorkingDirectory.value || '.',
   }
 }
@@ -684,6 +721,7 @@ onMounted(loadNativeWorkingDirectory)
 .cost-api-test-result.is-error { color: #efa18d; background: rgb(213 132 115 / 12%); }
 .cost-api-code { flex: 1; min-height: 330px; margin: 0; overflow: auto; border: 1px solid #2a332b; border-radius: 10px; padding: 15px; color: #d9e5d6; background: #0a0e0b; font: 12px/1.65 'Cascadia Mono', Consolas, monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
 .cost-api-code-note { margin: 12px 0 0; color: var(--cost-muted, #7f8b81); font-size: 11px; line-height: 1.55; }
+.cost-api-config-platform { margin: 0 0 12px; }
 .cost-api-code-note code { color: var(--cost-lime, #b9e55a); font-family: 'Cascadia Mono', Consolas, monospace; }
 .cost-api-diagnostics { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px 24px; margin-top: 14px; border: 1px solid #3e3827; border-radius: 15px; padding: 16px 19px; background: rgb(223 188 76 / 5%); }
 .cost-api-diagnostics strong { display: block; margin-top: 6px; font-size: 15px; }

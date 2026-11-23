@@ -59,5 +59,5 @@ export function selectCodexConfigReasoningEffort(
 
 export function formatCodexReasoningEffortTomlLine(effort: string | null): string {
   if (!effort) return ''
-  return `model_reasoning_effort = "${effort}"\n`
+  return `model_reasoning_effort = ${JSON.stringify(effort)}\n`
 }

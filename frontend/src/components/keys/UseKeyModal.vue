@@ -1033,17 +1033,14 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
 
   // config.toml content
   const configContent = `model_provider = "sub2api"
-model = "${model}"
-review_model = "${model}"
+model = ${JSON.stringify(model)}
+review_model = ${JSON.stringify(model)}
 web_search = "live"
-${reasoningEffortLine}disable_response_storage = true
-${codexLocalCatalogToml.value}network_access = "enabled"
-windows_wsl_setup_acknowledged = true
-
+${reasoningEffortLine}${codexLocalCatalogToml.value}
 [model_providers.sub2api]
 name = "Sub2API"
-base_url = "${baseUrl}"
-${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = "${escapeTomlBasicString(buildCodexModelCatalogUrl(baseUrl))}"\n` : ''}wire_api = "responses"
+base_url = ${JSON.stringify(baseUrl)}
+${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = ${JSON.stringify(buildCodexModelCatalogUrl(baseUrl))}\n` : ''}wire_api = "responses"
 ${generateCodexProviderAuthConfig(apiKey)}
 
 [features]
@@ -1086,10 +1083,6 @@ function buildOpenAICodexFileConfigs(
 function joinConfigPath(dir: string, file: string, windows: boolean): string {
   if (!windows) return `${dir}/${file}`
   return `${dir}\\${file}`
-}
-
-function escapeTomlBasicString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
 function generateGrokFiles(baseUrl: string, apiKey: string): FileConfig[] {
@@ -1266,22 +1259,19 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
 # Switch model: grok-4.5 | grok-4.3 | grok-build-0.1 | grok-4.20-multi-agent-0309 (text / web_search)
 
 model_provider = "sub2api"
-model = "${model}"
+model = ${JSON.stringify(model)}
 ${codexLocalCatalogToml.value}# Optional:
-# review_model = "${model}"
+# review_model = ${JSON.stringify(model)}
 # model_reasoning_effort = "medium"
 # model_context_window = 500000
-# disable_response_storage = true
-# network_access = "enabled"
-# windows_wsl_setup_acknowledged = true
 
 [model_providers.sub2api]
 name = "Sub2API Grok"
-base_url = "${baseUrl}"
-${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = "${escapeTomlBasicString(buildCodexModelCatalogUrl(baseUrl))}"\n` : ''}# Prefer env_key (variable NAME). Do not combine with experimental_bearer_token.
+base_url = ${JSON.stringify(baseUrl)}
+${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = ${JSON.stringify(buildCodexModelCatalogUrl(baseUrl))}\n` : ''}# Prefer env_key (variable NAME). Do not combine with experimental_bearer_token.
 env_key = "SUB2API_API_KEY"
 # Fallback only if you cannot set env (discouraged — keeps secret on disk):
-# experimental_bearer_token = "${apiKey}"
+# experimental_bearer_token = ${JSON.stringify(apiKey)}
 wire_api = "responses"
 # API-key providers: do not require ChatGPT OAuth login
 requires_openai_auth = false
@@ -1346,14 +1336,13 @@ function generateRoutedCodexFiles(
 
   const configContent = `# Codex CLI -> Sub2API ${label} group
 model_provider = "sub2api"
-model = "${model}"
-review_model = "${model}"
-disable_response_storage = true
+model = ${JSON.stringify(model)}
+review_model = ${JSON.stringify(model)}
 ${codexLocalCatalogToml.value}
 [model_providers.sub2api]
 name = "Sub2API ${label}"
-base_url = "${baseUrl}"
-${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = "${escapeTomlBasicString(buildCodexModelCatalogUrl(baseUrl))}"\n` : ''}env_key = "SUB2API_API_KEY"
+base_url = ${JSON.stringify(baseUrl)}
+${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = ${JSON.stringify(buildCodexModelCatalogUrl(baseUrl))}\n` : ''}env_key = "SUB2API_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
 supports_websockets = false${codexModelCatalogMode.value === 'remote' ? '\n\n[features]\napi_key_model_discovery = true' : ''}`
@@ -1380,17 +1369,14 @@ function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
 
   // config.toml content with WebSocket v2
   const configContent = `model_provider = "sub2api"
-model = "${model}"
-review_model = "${model}"
+model = ${JSON.stringify(model)}
+review_model = ${JSON.stringify(model)}
 web_search = "live"
-${reasoningEffortLine}disable_response_storage = true
-${codexLocalCatalogToml.value}network_access = "enabled"
-windows_wsl_setup_acknowledged = true
-
+${reasoningEffortLine}${codexLocalCatalogToml.value}
 [model_providers.sub2api]
 name = "Sub2API"
-base_url = "${baseUrl}"
-${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = "${escapeTomlBasicString(buildCodexModelCatalogUrl(baseUrl))}"\n` : ''}wire_api = "responses"
+base_url = ${JSON.stringify(baseUrl)}
+${codexModelCatalogMode.value === 'remote' ? `model_catalog_url = ${JSON.stringify(buildCodexModelCatalogUrl(baseUrl))}\n` : ''}wire_api = "responses"
 supports_websockets = true
 ${generateCodexProviderAuthConfig(apiKey)}
 

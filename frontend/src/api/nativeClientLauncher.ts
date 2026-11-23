@@ -34,7 +34,7 @@ export interface NativeClientAvailability {
 export interface NativeClientIdentity {
   product_name: string
   version: string | null
-  installation_source: 'windows_msix' | 'desktop_bundled' | 'npm' | 'path'
+  installation_source: 'windows_msix' | 'macos_bundle' | 'desktop_bundled' | 'npm' | 'path'
   release_channel: 'stable' | 'prerelease' | 'unknown'
   package_identity: string | null
   probe_status: 'detected' | 'unavailable' | 'timed_out'
@@ -95,7 +95,7 @@ export function storeNativeWorkingDirectory(clientId: NativeClientId, directory:
 
 function assertDesktop(): void {
   if (!isDesktopRuntime()) {
-    throw new Error('原生客户端启动仅在 Windows 桌面应用中可用。')
+    throw new Error('请在 Sub2API 桌面应用中启动本机客户端。')
   }
 }
 

@@ -1,7 +1,14 @@
+#[cfg(target_os = "macos")]
+mod macos_clients;
+#[cfg(target_os = "macos")]
+mod macos_terminal;
+#[cfg(any(windows, test))]
+mod windows_clients;
+
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
-    env, fs,
+    env,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -141,21 +148,22 @@ impl NativeClientId {
 }
 
 fn validate_request(request: &NativeClientLaunchRequest) -> Result<PathBuf, String> {
-    let base_url = request.base_url.trim();
-    let parsed = Url::parse(base_url).map_err(|_| "Base URL 必须是有效的 URL".to_string())?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err("Base URL 只支持带主机名的 http 或 https 地址".into());
-    }
-    if !matches!(request.client_id, NativeClientId::ChatGpt) && request.api_key.trim().is_empty() {
-        return Err("API Key 不能为空".into());
-    }
-    if !matches!(request.client_id, NativeClientId::ChatGpt)
-        && request
+    if !matches!(request.client_id, NativeClientId::ChatGpt) {
+        let parsed = Url::parse(request.base_url.trim())
+            .map_err(|_| "Base URL 必须是有效的 URL".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("Base URL 只支持带主机名的 http 或 https 地址".into());
+        }
+        if request.api_key.trim().is_empty() {
+            return Err("API Key 不能为空".into());
+        }
+        if request
             .api_key
             .chars()
             .any(|character| character.is_control())
-    {
-        return Err("API Key 不能包含控制字符".into());
+        {
+            return Err("API Key 不能包含控制字符".into());
+        }
     }
 
     let working_directory = if request.working_directory.trim().is_empty() {
@@ -233,6 +241,17 @@ fn codex_plan(
 }
 
 fn chatgpt_plan(executable: PathBuf, working_directory: PathBuf) -> LaunchPlan {
+    #[cfg(target_os = "macos")]
+    if executable.extension().is_some_and(|ext| ext == "app") {
+        return LaunchPlan {
+            program: PathBuf::from("/usr/bin/open"),
+            args: vec!["-a".into(), executable.display().to_string()],
+            environment: Vec::new(),
+            working_directory,
+            display_command: format!("open -a {}", executable.display()),
+            open_terminal: false,
+        };
+    }
     if executable
         .to_string_lossy()
         .starts_with(CHATGPT_APP_SHELL_PREFIX)
@@ -433,23 +452,53 @@ fn open_code_config(profile: &NativeGatewayProfile, base_url: &str) -> String {
 }
 
 fn find_executable(client_id: &NativeClientId) -> Option<PathBuf> {
+    // Prefer the OS-registered desktop app. For CLI tools keep the user's PATH first.
+    if matches!(client_id, NativeClientId::ChatGpt) {
+        #[cfg(target_os = "macos")]
+        return macos_clients::find_installed(client_id);
+        #[cfg(windows)]
+        if let Some(app) = windows_clients::find_packaged_client(client_id) {
+            return Some(app);
+        }
+    }
     if let Some(path_entries) = env::var_os("PATH") {
-        for directory in env::split_paths(&path_entries) {
+        for directory in env::split_paths(&path_entries).filter(|entry| entry.is_absolute()) {
             for candidate in client_id.executable_candidates() {
                 let path = directory.join(candidate);
-                // Windows cannot execute npm's extensionless #!/bin/sh shim. Prefer the
-                // adjacent .cmd/.bat launcher instead of returning a path that fails with
-                // ERROR_BAD_EXE_FORMAT (193).
-                if cfg!(windows) && Path::new(candidate).extension().is_none() {
+                // Windows npm shims use .cmd or .bat; POSIX launchers must be executable.
+                #[cfg(windows)]
+                if path.extension().is_none()
+                    || !path.is_file()
+                    || (matches!(client_id, NativeClientId::Codex)
+                        && windows_clients::is_desktop_codex_shim(&path))
+                {
                     continue;
                 }
-                if path.is_file() {
-                    return Some(path);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if Path::new(candidate).extension().is_some()
+                        || !path.metadata().is_ok_and(|meta| {
+                            meta.is_file() && meta.permissions().mode() & 0o111 != 0
+                        })
+                    {
+                        continue;
+                    }
                 }
+                return Some(path);
             }
         }
     }
-    find_installed_executable(client_id)
+    #[cfg(target_os = "macos")]
+    return macos_clients::find_installed(client_id);
+    #[cfg(windows)]
+    return match client_id {
+        NativeClientId::ChatGpt => find_classic_chatgpt(),
+        NativeClientId::Codex => windows_clients::find_packaged_client(client_id),
+        _ => None,
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    None
 }
 
 const CLIENT_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -681,6 +730,10 @@ fn detect_native_client_identity(
     if !matches!(client_id, NativeClientId::ChatGpt | NativeClientId::Codex) {
         return None;
     }
+    #[cfg(target_os = "macos")]
+    if let Some(identity) = macos_clients::identity(client_id, executable) {
+        return Some(identity);
+    }
     let mut identity = NativeClientIdentity {
         product_name: client_id.label().into(),
         version: None,
@@ -690,6 +743,11 @@ fn detect_native_client_identity(
         probe_status: "unavailable",
     };
     if matches!(client_id, NativeClientId::Codex) {
+        #[cfg(windows)]
+        if windows_clients::is_bundled_cli(executable) {
+            identity.installation_source = "desktop_bundled";
+            identity.package_identity = Some("OpenAI.Codex".into());
+        }
         let mut command = Command::new(executable);
         command.arg("--version");
         #[cfg(windows)]
@@ -746,11 +804,8 @@ fn detect_native_client_identity(
     Some(identity)
 }
 
-fn find_installed_executable(client_id: &NativeClientId) -> Option<PathBuf> {
-    if !matches!(client_id, NativeClientId::ChatGpt) {
-        return None;
-    }
-
+#[cfg(windows)]
+fn find_classic_chatgpt() -> Option<PathBuf> {
     let mut roots = Vec::new();
     for variable in ["LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"] {
         if let Some(value) = env::var_os(variable) {
@@ -762,101 +817,15 @@ fn find_installed_executable(client_id: &NativeClientId) -> Option<PathBuf> {
         Path::new("Programs/OpenAI/ChatGPT/ChatGPT.exe"),
         Path::new("ChatGPT/ChatGPT.exe"),
         Path::new("Microsoft/WindowsApps/ChatGPT.exe"),
-        Path::new("ChatGPT/ChatGPT.exe"),
     ];
-    let classic_install = roots
+    roots
         .into_iter()
         .flat_map(|root| {
             relative_paths
                 .iter()
                 .map(move |relative| root.join(relative))
         })
-        .find(|path| path.is_file());
-    classic_install
-        .or_else(find_msix_chatgpt_executable)
-        .or_else(|| {
-            find_msix_chatgpt_app_id()
-                .map(|app_id| PathBuf::from(format!("{CHATGPT_APP_SHELL_PREFIX}{app_id}")))
-        })
-}
-
-fn is_openai_chatgpt_package(name: &str) -> bool {
-    let normalized = name.to_ascii_lowercase();
-    normalized.starts_with("openai.codex_") || normalized.starts_with("openai.chatgpt")
-}
-
-fn find_msix_chatgpt_executable() -> Option<PathBuf> {
-    let roots = ["ProgramW6432", "PROGRAMFILES", "PROGRAMFILES(X86)"]
-        .into_iter()
-        .filter_map(|variable| env::var_os(variable).map(PathBuf::from));
-
-    roots
-        .flat_map(|root| {
-            let windows_apps = root.join("WindowsApps");
-            fs::read_dir(windows_apps)
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .collect::<Vec<_>>()
-        })
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            is_openai_chatgpt_package(&name).then_some(entry.path())
-        })
-        .flat_map(|package_root| {
-            [
-                Path::new("app/ChatGPT.exe"),
-                Path::new("app/Codex.exe"),
-                Path::new("ChatGPT.exe"),
-                Path::new("Codex.exe"),
-            ]
-            .into_iter()
-            .map(move |relative| package_root.join(relative))
-        })
         .find(|path| path.is_file())
-}
-
-fn is_valid_chatgpt_app_id(app_id: &str) -> bool {
-    let normalized = app_id.to_ascii_lowercase();
-    (normalized.starts_with("openai.codex_") || normalized.starts_with("openai.chatgpt"))
-        && normalized.ends_with("!app")
-        && app_id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "._-!".contains(character))
-}
-
-fn find_msix_chatgpt_app_id() -> Option<String> {
-    #[cfg(windows)]
-    {
-        // Get-StartApps is fast, but its availability differs between Windows
-        // PowerShell and PowerShell 7. Query the package manifest as the primary
-        // source so MSIX installs work even when the StartApps module is absent.
-        let script = r#"
-$packages = @(Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue; Get-AppxPackage -Name OpenAI.ChatGPT -ErrorAction SilentlyContinue)
-foreach ($package in $packages) {
-  try { $manifest = Get-AppxPackageManifest -Package $package -ErrorAction Stop } catch { continue }
-  foreach ($application in @($manifest.Package.Applications.Application)) {
-    if ($application.Id -eq 'App' -or $application.Id -match '(?i)chatgpt|codex') {
-      $appId = "$($package.PackageFamilyName)!$($application.Id)"
-      if ($appId -match '^(?i)OpenAI\.(Codex|ChatGPT)_[A-Za-z0-9._-]+![A-Za-z0-9._-]+$') { Write-Output $appId; exit 0 }
-    }
-  }
-}
-"#;
-        if let Some(app_id) = run_powershell_for_chatgpt_app_id(script) {
-            return Some(app_id);
-        }
-
-        // Older installations may be registered in the Start menu without a
-        // package query result. Keep this as a compatibility fallback.
-        let start_apps_script = r#"$app = Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' -or $_.AppID -like 'OpenAI.Codex_*!App' -or $_.AppID -like 'OpenAI.ChatGPT*!App' } | Select-Object -First 1; if ($app) { $app.AppID }"#;
-        run_powershell_for_chatgpt_app_id(start_apps_script)
-    }
-
-    #[cfg(not(windows))]
-    {
-        None
-    }
 }
 
 #[cfg(windows)]
@@ -889,7 +858,7 @@ fn run_powershell_for_chatgpt_app_id(script: &str) -> Option<String> {
         if let Some(app_id) = output
             .lines()
             .map(str::trim)
-            .find(|line| is_valid_chatgpt_app_id(line))
+            .find(|line| windows_clients::is_known_app_id(line))
         {
             return Some(app_id.to_string());
         }
@@ -950,9 +919,30 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         return Ok(Some(path.display().to_string()));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        Err("目录选择器仅在 Windows 桌面应用中可用".into())
+        let script = r#"try
+return POSIX path of (choose folder with prompt "选择客户端工作目录")
+on error number -128
+return ""
+end try"#;
+        let output = Command::new("/usr/bin/osascript")
+            .args(["-e", script])
+            .output()
+            .map_err(|error| format!("无法打开目录选择器: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "无法选择目录: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let path = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let path = path.trim_end_matches('\n');
+        Ok((!path.is_empty()).then(|| path.to_owned()))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Err("此平台没有原生目录选择器".into())
     }
 }
 
@@ -976,7 +966,10 @@ fn unavailable_preview(
 
 fn unavailable_message(client_id: &NativeClientId) -> String {
     if matches!(client_id, NativeClientId::ChatGpt) {
-        "未找到 ChatGPT Desktop，请确认已安装官方 Windows 客户端".into()
+        "未找到 ChatGPT Desktop，请确认已安装官方桌面客户端".into()
+    } else if matches!(client_id, NativeClientId::Codex) && cfg!(any(windows, target_os = "macos"))
+    {
+        "未找到 Codex CLI，请安装官方 ChatGPT 桌面客户端或将独立 Codex CLI 加入 PATH".into()
     } else {
         format!(
             "未在 PATH 中找到 {}，请确认客户端已安装并可从终端启动",
@@ -1001,7 +994,7 @@ fn build_preview(request: &NativeClientLaunchRequest) -> NativeClientLaunchPrevi
         Ok(plan) => NativeClientLaunchPreview {
             client_id: request.client_id.clone(),
             label: request.client_id.label().into(),
-            executable: Some(plan.program.display().to_string()),
+            executable: Some(executable.display().to_string()),
             working_directory: plan.working_directory.display().to_string(),
             display_command: plan.display_command,
             environment_keys: plan
@@ -1203,24 +1196,50 @@ pub async fn preview_native_client_launch(
 }
 
 #[tauri::command]
-pub fn launch_native_client(
+pub async fn launch_native_client(
     request: NativeClientLaunchRequest,
 ) -> Result<NativeClientLaunchReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || launch_client(request))
+        .await
+        .map_err(|error| format!("启动客户端失败: {error}"))?
+}
+
+fn launch_client(request: NativeClientLaunchRequest) -> Result<NativeClientLaunchReceipt, String> {
     let executable = find_executable(&request.client_id)
         .ok_or_else(|| unavailable_message(&request.client_id))?;
+    let executable_display = executable.display().to_string();
     let plan = build_launch_plan(&request, executable, cfg!(windows))?;
-    let executable_display = plan.program.display().to_string();
-    let child = command_for_plan(&plan)
-        .spawn()
+    let pid = spawn_client(&request.client_id, &plan)
         .map_err(|error| format!("启动 {} 失败: {error}", request.client_id.label()))?;
-    let pid = child.id();
-    drop(child);
     Ok(NativeClientLaunchReceipt {
         client_id: request.client_id,
         pid,
         executable: executable_display,
         message: "客户端已启动".into(),
     })
+}
+
+fn spawn_client(_client_id: &NativeClientId, plan: &LaunchPlan) -> std::io::Result<u32> {
+    #[cfg(target_os = "macos")]
+    if matches!(_client_id, NativeClientId::Codex) {
+        return macos_terminal::launch(plan);
+    }
+    let child = command_for_plan(plan).spawn()?;
+    let pid = child.id();
+    #[cfg(unix)]
+    let mut child = child;
+    #[cfg(target_os = "macos")]
+    if matches!(_client_id, NativeClientId::ChatGpt) {
+        if !child.wait()?.success() {
+            return Err(std::io::Error::other("macOS 未能打开 ChatGPT"));
+        }
+        return Ok(pid);
+    }
+    #[cfg(unix)]
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 #[cfg(test)]
@@ -1395,6 +1414,24 @@ mod tests {
             plan.program,
             PathBuf::from("C:\\Program Files\\ChatGPT\\ChatGPT.exe")
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_desktop_opens_the_discovered_bundle_without_gateway_settings() {
+        let request = NativeClientLaunchRequest {
+            client_id: NativeClientId::ChatGpt,
+            gateway_profile: NativeGatewayProfile::Composite,
+            base_url: String::new(),
+            api_key: String::new(),
+            working_directory: ".".into(),
+        };
+        let bundle = PathBuf::from("/Applications/ChatGPT.app");
+        let plan = build_launch_plan(&request, bundle, false).unwrap();
+        assert_eq!(plan.program, PathBuf::from("/usr/bin/open"));
+        assert_eq!(plan.args, ["-a", "/Applications/ChatGPT.app"]);
+        assert!(plan.environment.is_empty());
+        assert!(!plan.open_terminal);
     }
 
     #[test]
@@ -1663,48 +1700,5 @@ mod tests {
             Some("pwsh.exe") | Some("powershell.exe")
         ));
         assert!(executable.is_file() || file_name == Some("powershell.exe"));
-    }
-
-    #[test]
-    fn msix_chatgpt_package_names_cover_current_and_legacy_openai_ids() {
-        assert!(is_openai_chatgpt_package(
-            "OpenAI.Codex_26.810.7004.0_x64__2p2nqsd0c76g0"
-        ));
-        assert!(is_openai_chatgpt_package(
-            "OpenAI.ChatGPT-Desktop_1.0.0_x64__example"
-        ));
-        assert!(!is_openai_chatgpt_package(
-            "Microsoft.WindowsCalculator_1.0.0_x64__example"
-        ));
-    }
-
-    #[test]
-    fn chatgpt_app_ids_are_strictly_validated_before_shell_launch() {
-        assert!(is_valid_chatgpt_app_id("OpenAI.Codex_2p2nqsd0c76g0!App"));
-        assert!(is_valid_chatgpt_app_id("OpenAI.ChatGPT_1.0.0!App"));
-        assert!(!is_valid_chatgpt_app_id(
-            "Microsoft.WindowsCalculator_1.0!App"
-        ));
-        assert!(!is_valid_chatgpt_app_id(
-            "OpenAI.Codex_foo!App; Remove-Item"
-        ));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn installed_msix_chatgpt_path_is_valid_when_present() {
-        if let Some(path) = find_msix_chatgpt_executable() {
-            assert!(path.is_file());
-            assert!(path.ends_with("ChatGPT.exe") || path.ends_with("Codex.exe"));
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn installed_msix_chatgpt_app_id_is_valid_when_present() {
-        if let Some(app_id) = find_msix_chatgpt_app_id() {
-            assert!(is_valid_chatgpt_app_id(&app_id));
-            assert!(app_id.ends_with("!App"));
-        }
     }
 }

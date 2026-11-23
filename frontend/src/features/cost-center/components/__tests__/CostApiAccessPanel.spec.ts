@@ -127,9 +127,10 @@ describe('CostApiAccessPanel data truthfulness', () => {
 
   it('aligns the Codex image and search export while preserving the selected model and scoped key', async () => {
     mocks.listKeys.mockResolvedValue({ items: [makeKey()], total: 1, page: 1, page_size: 100 })
+    const selectedModel = 'user "selected" model'
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({ data: [{ id: 'gpt-6.1-sol' }, { id: 'user-selected-model' }] }),
+      json: async () => ({ data: [{ id: 'gpt-6.1-sol' }, { id: selectedModel }] }),
     } as Response)
     const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
     try {
@@ -138,10 +139,10 @@ describe('CostApiAccessPanel data truthfulness', () => {
       await testButton.trigger('click')
       await flushPromises()
       const modelField = wrapper.findAll('label').find((label) => label.text().includes('默认模型'))!
-      await modelField.find('select').setValue('user-selected-model')
+      await modelField.find('select').setValue(selectedModel)
       const config = wrapper.get('pre code').text()
-      expect(config.split('[model_providers.')[0]).toContain('model = "user-selected-model"')
-      expect(config.split('[model_providers.')[0]).toContain('review_model = "user-selected-model"')
+      expect(config.split('[model_providers.')[0]).toContain(`model = ${JSON.stringify(selectedModel)}`)
+      expect(config.split('[model_providers.')[0]).toContain(`review_model = ${JSON.stringify(selectedModel)}`)
       expect(config.split('[model_providers.')[0]).toContain('web_search = "live"')
       expect(config).toContain('env_key = "SUB2API_API_KEY"')
       expect(config).toContain('requires_openai_auth = false')
@@ -170,7 +171,7 @@ describe('CostApiAccessPanel data truthfulness', () => {
     const text = wrapper.text()
     expect(text).toContain('requires_openai_auth = false')
     expect(text).toContain('env_key = "SUB2API_API_KEY"')
-    expect(text).toContain('$env:SUB2API_API_KEY = "<从 API Key 管理页复制>"')
+    expect(wrapper.get('pre code').text()).not.toContain('$env:')
     expect(text).not.toContain('%USERPROFILE%\\.codex\\auth.json')
     expect(text).not.toContain('{ "OPENAI_API_KEY"')
   })
@@ -196,12 +197,39 @@ describe('CostApiAccessPanel data truthfulness', () => {
 
     const copyKeyButton = () => wrapper.findAll('button').find((button) => button.text().includes('复制密钥命令'))!
     await copyKeyButton().trigger('click')
-    expect(mocks.copy).toHaveBeenLastCalledWith('$env:SUB2API_API_KEY = "sk-test-key"', 'PowerShell 密钥命令已复制')
+    expect(mocks.copy).toHaveBeenLastCalledWith("$env:SUB2API_API_KEY = 'sk-test-key'", 'PowerShell 密钥命令已复制')
 
     const pythonPreset = wrapper.findAll('.cost-api-presets button').find((button) => button.text().includes('Python'))!
     await pythonPreset.trigger('click')
     await copyKeyButton().trigger('click')
-    expect(mocks.copy).toHaveBeenLastCalledWith('$env:OPENAI_API_KEY = "sk-test-key"', 'PowerShell 密钥命令已复制')
+    expect(mocks.copy).toHaveBeenLastCalledWith("$env:OPENAI_API_KEY = 'sk-test-key'", 'PowerShell 密钥命令已复制')
+  })
+
+  it('defaults the Codex config to the Mac host and copies a key command for the chosen system', async () => {
+    const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)')
+    const key = "sk-test$'value"
+    mocks.listKeys.mockResolvedValue({ items: [{ ...makeKey(), key }] })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    try {
+      await flushPromises()
+      const system = wrapper.get('.cost-api-config-platform select')
+      const config = () => wrapper.get('pre code').text()
+      const copyKey = () => wrapper.findAll('button').find((button) => button.text().includes('复制密钥命令'))!.trigger('click')
+      expect((system.element as HTMLSelectElement).value).toBe('macos')
+      expect(config()).toContain('# ~/.codex/config.toml')
+      expect(config()).not.toMatch(/disable_response_storage|network_access|windows_wsl_setup_acknowledged/)
+      expect(config()).not.toContain(key)
+      await copyKey()
+      expect(mocks.copy).toHaveBeenLastCalledWith("export SUB2API_API_KEY='sk-test$'\\''value'", '终端密钥命令已复制')
+      await system.setValue('windows')
+      expect(config()).toContain('# %USERPROFILE%\\.codex\\config.toml')
+      expect(config()).not.toMatch(/disable_response_storage|network_access|windows_wsl_setup_acknowledged/)
+      await copyKey()
+      expect(mocks.copy).toHaveBeenLastCalledWith("$env:SUB2API_API_KEY = 'sk-test$''value'", 'PowerShell 密钥命令已复制')
+    } finally {
+      wrapper.unmount()
+      userAgent.mockRestore()
+    }
   })
 
   it('shows the detected directory and applies a directory selected by the user', async () => {
@@ -295,6 +323,33 @@ describe('CostApiAccessPanel data truthfulness', () => {
     expect(identity).toContain('OpenAI.Codex')
     expect(identity).toContain('未标明')
     expect(nativeMocks.preview).toHaveBeenCalledWith(expect.objectContaining({ client_id: 'chatgpt', api_key: '' }))
+  })
+
+  it('shows the macOS desktop bundle identity and omits the selected gateway key from desktop requests', async () => {
+    mocks.listKeys.mockResolvedValue({ items: [makeKey()] })
+    nativeMocks.preview.mockResolvedValue({
+      available: true, message: '客户端已就绪', working_directory: '/Users/test',
+      identity: {
+        product_name: 'ChatGPT', version: '26.1117.41037',
+        installation_source: 'macos_bundle', release_channel: 'unknown',
+        package_identity: 'com.openai.codex', probe_status: 'detected',
+      },
+    })
+    const wrapper = mount(CostApiAccessPanel, { props: { desktopMode: true } })
+    await flushPromises()
+    const desktopTab = wrapper.findAll('[role="tab"]').find((button) => button.text().includes('Codex 桌面版'))!
+    await desktopTab.trigger('click')
+    await wrapper.get('[data-test="native-preview"]').trigger('click')
+    await flushPromises()
+    const identity = wrapper.get('[data-test="native-client-identity"]').text()
+    expect(identity).toContain('macOS 应用包')
+    expect(identity).toContain('com.openai.codex')
+    expect(identity).toContain('26.1117.41037')
+    expect(wrapper.text()).not.toContain('复制密钥命令')
+    await wrapper.get('[data-test="native-launch"]').trigger('click')
+    const desktopRequest = expect.objectContaining({ client_id: 'chatgpt', api_key: '' })
+    expect(nativeMocks.preview).toHaveBeenCalledWith(desktopRequest)
+    expect(nativeMocks.launch).toHaveBeenCalledWith(desktopRequest)
   })
 
   it('keeps launching available when only version detection times out', async () => {

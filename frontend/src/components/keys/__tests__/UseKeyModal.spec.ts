@@ -40,6 +40,39 @@ describe('UseKeyModal', () => {
     saveAsMock.mockClear()
   })
 
+  it.each([
+    ['openai', 'codexCli'],
+    ['openai', 'codexCliWs'],
+    ['grok', 'codexCli'],
+    ['composite', 'codexCli'],
+  ] as const)('exports current TOML fields and quotes model and endpoint values for %s %s', async (platform, tab) => {
+    const model = 'custom "preview"'
+    const baseUrl = 'https://example.test/team"example/v1'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ models: [{ slug: model }] })
+    }))
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'test-key', baseUrl, platform },
+      global: { stubs: {
+        BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+        Icon: true
+      } }
+    })
+    const clientTab = wrapper.get('nav[aria-label="Client"]').findAll('button')
+      .find((button) => button.text() === `keys.useKeyModal.cliTabs.${tab}`)
+    await clientTab!.trigger('click')
+    await wrapper.get('[data-testid="codex-model-catalog-fetch"]').trigger('click')
+    await flushPromises()
+    const config = wrapper.findAll('pre code').map((block) => block.text())
+      .find((content) => content.includes('[model_providers.sub2api]'))
+    expect(config).toContain(`model = ${JSON.stringify(model)}`)
+    expect(config).toContain(`base_url = ${JSON.stringify(baseUrl)}`)
+    expect(config).toContain(`model_catalog_url = ${JSON.stringify(baseUrl + '/models')}`)
+    expect(config).not.toMatch(/disable_response_storage|network_access|windows_wsl_setup_acknowledged/)
+    wrapper.unmount()
+  })
+
   it('shows only Claude Code for Claude Code-only groups', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -924,7 +957,7 @@ describe('UseKeyModal', () => {
     await flushPromises()
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.com/v1/models?client_version=0.167.0',
+      'https://example.com/v1/models?client_version=0.171.0',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer sk-composite-test' })
       })
