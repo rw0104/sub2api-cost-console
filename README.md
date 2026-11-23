@@ -20,9 +20,11 @@
 
 本项目是基于 [Sub2API](https://github.com/Wei-Shaw/sub2api) 的社区衍生项目，由本仓库独立维护。桌面安装包、成本功能与更新通道均来自 **rw0104/sub2api-cost-console**；上游项目为它提供网关与管理能力。
 
-**v0.4.9 基于上游 v0.2.23，适配 Codex CLI 0.170.0，内置扩展 1.3.28。**
+**v0.4.10 更新了 Windows 和 macOS 上的 ChatGPT / Codex 客户端识别与配置。Windows x64 桌面安装包内置兼容内核 v0.2.23、宿主扩展 1.3.29。**
 
-本版支持 GPT-6.2 Sol 和 Astra，补齐 Codex WebSocket 消息上限与子代理请求头。编辑 OpenAI 账号时可获取该账号的官方模型目录，将确认可用的模型补到草稿后保存。渠道可设置 Ultra Fast 倍率；账号用量分别展示用户扣款和账号成本。
+在「API 接入中心」选择 **ChatGPT Desktop / Codex 桌面版** 或 **Codex CLI**，即可分别检查桌面应用和 CLI 的安装来源与版本。在 Windows 上支持 Microsoft Store 安装，在 macOS 源码构建中支持应用包随附的 CLI。手动接入时可以选择 Windows 或 macOS，分别复制 TOML 配置和适用于所选系统的密钥命令。 [v0.4.10 更新说明](frontend/DESKTOP_RELEASE_NOTES.md)
+
+v0.4.9 已支持 GPT-6.2 Sol 和 Astra，补齐 Codex WebSocket 消息上限与子代理请求头。编辑 OpenAI 账号时可获取该账号的官方模型目录，将确认可用的模型补到草稿后保存。渠道可设置 Ultra Fast 倍率；账号用量分别展示用户扣款和账号成本。
 
 v0.4.7 起提供的功能包括：
 
@@ -47,7 +49,7 @@ gpt-6.1-sol 的 Ultrafast 继续按 6 倍标准价计算，成本算法 1.7.0 �
 
 v0.4.5 的上游 v0.2.19 同步、Codex 0.162+ 基础提示词对齐、冷模型目录缓存修复、官方模型补齐、GPT-6.1 Terra 支持、作用域管理员 API Key 和 Codex `env_key` 接入方式继续保留。
 
-管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.9 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.9) 下载配套 SDK 与示例。
+管理员可以安装、配置、启停和卸载插件；开发者可以使用公开 SDK 自行编译、签名和分发。[查看开发指南](docs/PLUGIN_DEVELOPMENT.md)，或从 [v0.4.10 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.10) 下载配套 SDK 与示例。
 
 作用域管理员 API Key 的权限目录、响应边界、轮换、IP 限制和 Codex 导入方式见 [管理员 API Key 文档](docs/admin-api-keys.md)。
 
@@ -264,7 +266,7 @@ v0.4.5 的上游 v0.2.19 同步、Codex 0.162+ 基础提示词对齐、冷模型
 | 你想做什么 | 从这里开始 |
 | --- | --- |
 | 开发第一个插件 | [插件开发指南](docs/PLUGIN_DEVELOPMENT.md)：编译、签名、公钥配置、安装、调试和分发 |
-| 下载可以直接编译的 SDK 与示例 | [v0.4.9 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.9)的开发包 ZIP：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
+| 下载可以直接编译的 SDK 与示例 | [v0.4.10 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.10)的开发包 ZIP：含 SDK、proto、清单 Schema、示例 UI、打包器及依赖源码 |
 | 限制生成参数或执行请求准入 | [v2 请求预处理示例](backend/pkg/pluginapi/examples/preprocess/README.md) |
 | 自行实现 OpenAI OAuth HTTP/TLS 传输 | [v2 保护传输接口](backend/pkg/pluginapi/docs/protection-transport.md) |
 | 添加配置界面或调用宿主服务 | [UI Bridge](backend/pkg/pluginapi/docs/ui-bridge.md)、[Host API](backend/pkg/pluginapi/docs/host-api.md) |
@@ -388,11 +390,11 @@ v0.4.5 的上游 v0.2.19 同步、Codex 0.162+ 基础提示词对齐、冷模型
 
 ### 有 macOS 或 Linux 桌面版吗？
 
-当前本仓库发布的是 Windows x64 桌面安装包。上游的服务器部署方式，与本项目的桌面安装包是不同的使用方式，下载时请以本仓库 Release 中实际提供的附件为准。
+本项目的桌面安装包适用于 Windows x64。macOS 和 Linux 用户可下载对应操作系统和处理器架构的后端服务压缩包，通过浏览器访问。macOS 上从源码运行控制台时也可以使用本机 Codex 启动器。
 
 ## 版本说明与反馈
 
-本轮更新为 **桌面 v0.4.9**，内置兼容内核基线为 **v0.2.23**、扩展 **1.3.28**，成本算法为 **1.7.0**；可下载安装的版本以 [v0.4.9 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.9) 为准。内核可以独立更新，因此你电脑上的内核版本可能更高，具体以「版本与更新」面板为准。
+桌面 v0.4.10 内置兼容内核 **v0.2.23**、宿主扩展 **1.3.29** 和成本算法 **1.7.0**。内核可独立更新，已安装版本见「版本与更新」。 [v0.4.10 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.10)
 
 - [下载最新桌面版](https://github.com/rw0104/sub2api-cost-console/releases/latest)
 - [查看更新记录](https://github.com/rw0104/sub2api-cost-console/releases)
