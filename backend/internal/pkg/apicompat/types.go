@@ -7,6 +7,9 @@ package apicompat
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -351,6 +354,38 @@ type ResponsesRequest struct {
 	// （string 或 []string），仅在降级到 Chat Completions 时透传，避免客户端设的
 	// 停止序列在转换层被静默丢弃。
 	Stop json.RawMessage `json:"stop,omitempty"`
+}
+
+// LatestResponsesInputEffort returns the selection that governs the current turn
+// and its input index. Updates that only change other settings leave it in force.
+func LatestResponsesInputEffort(input gjson.Result) (string, int) {
+	index := -1
+	latest := ""
+	if input.IsArray() {
+		input.ForEach(func(key, item gjson.Result) bool {
+			if item.Get("type").Str == "configuration_update" {
+				if effort := strings.TrimSpace(item.Get("reasoning.effort").Str); effort != "" {
+					latest, index = effort, int(key.Int())
+				}
+			}
+			return true
+		})
+	}
+	return latest, index
+}
+
+// currentReasoningEffort resolves the setting for upstream protocols with one
+// effort field and no representation of mid-conversation configuration items.
+func (r *ResponsesRequest) currentReasoningEffort() string {
+	if bytes.Contains(r.Input, []byte("configuration_update")) || bytes.Contains(r.Input, []byte(`\u`)) {
+		if effort, _ := LatestResponsesInputEffort(gjson.ParseBytes(r.Input)); effort != "" {
+			return strings.Clone(effort)
+		}
+	}
+	if r.Reasoning != nil {
+		return r.Reasoning.Effort
+	}
+	return ""
 }
 
 // ResponsesReasoning configures reasoning effort in the Responses API.

@@ -130,6 +130,35 @@ func TestBuildOpenAIResponseFailedSSE_CarriesCreatedAtAndSequenceNumber(t *testi
 	require.Positive(t, gjson.Get(event, "response.created_at").Int(), "未知 created_at 时取当前时间")
 }
 
+func TestSynthesizedResponseFailedIncludesOnlySafeRetryAdvice(t *testing.T) {
+	for _, tc := range []struct{ name, source, want string }{
+		{"nested precedence", `{"headers":{"retry-after":"9"},"error":{"headers":{"rEtRy-AfTeR":3,"Authorization":"private-marker"}}}`, "3"},
+		{"event fallback", `{"headers":{"Retry-After":"9","X-Internal":"private-marker"},"error":{"headers":{"Retry-After":"invalid"}}}`, "9"},
+		{"immediate retry", `{"error":{"headers":{"retry-after":"0"}}}`, "0"},
+		{"invalid advice", `{"headers":{"Retry-After":"private-marker"}}`, ""},
+		{"invalid type", `{"headers":{"Retry-After":{"private-marker":2}}}`, ""},
+		{"excessive delay", `{"headers":{"Retry-After":"604801"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte(tc.source)
+			frame := buildOpenAIResponseFailedSSE("resp_1", "model", 1, source, "busy")
+			sse := sseDataPayloads(frame)
+			require.Len(t, sse, 1)
+			ws := buildOpenAIWSHTTPBridgeFailedEvent("resp_1", "model", 1, source, "busy")
+			for _, event := range []string{sse[0], string(ws)} {
+				require.NotContains(t, event, "private-marker")
+				headers := gjson.Get(event, "response.error.headers")
+				if tc.want == "" {
+					require.False(t, headers.Exists())
+				} else {
+					require.Len(t, headers.Map(), 1)
+					require.Equal(t, tc.want, headers.Get("Retry-After").String())
+				}
+			}
+		})
+	}
+}
+
 func TestBuildOpenAIWSHTTPBridgeFailedEvent_CarriesCreatedAtAndSequenceNumber(t *testing.T) {
 	event := buildOpenAIWSHTTPBridgeFailedEvent("resp_1", "gpt-5.5", 1700000000,
 		[]byte(`{"type":"error","sequence_number":4,"error":{"message":"boom"}}`), "")
@@ -196,7 +225,7 @@ func TestHandleStreamingResponse_GrokKeepsUpstreamCreatedAtBytes(t *testing.T) {
 func TestHandleStreamingResponse_BareErrorSynthesizedFailedCarriesCreatedAt(t *testing.T) {
 	body := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_bare","object":"response","created_at":1700000000,"status":"in_progress","output":[]}}` + "\n\n" +
 		`data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_1","output_index":0,"content_index":0,"delta":"partial"}` + "\n\n" +
-		`data: {"type":"error","sequence_number":2,"error":{"code":"server_is_overloaded","message":"busy"}}` + "\n\n" +
+		`data: {"type":"error","sequence_number":2,"headers":{"retry-after":"7","Authorization":"private-marker"},"error":{"code":"server_is_overloaded","message":"busy"}}` + "\n\n" +
 		"data: [DONE]\n\n"
 	recorder := newOpenAIResponseFlushRecorder()
 
@@ -216,12 +245,14 @@ func TestHandleStreamingResponse_BareErrorSynthesizedFailedCarriesCreatedAt(t *t
 	require.EqualValues(t, 1700000000, gjson.Get(failed, "response.created_at").Int())
 	require.EqualValues(t, 2, gjson.Get(failed, "sequence_number").Int())
 	require.Equal(t, "resp_bare", gjson.Get(failed, "response.id").String())
+	require.Equal(t, "7", gjson.Get(failed, "response.error.headers.Retry-After").String())
+	require.NotContains(t, gotBody, "private-marker")
 }
 
 func TestHandleStreamingResponsePassthrough_BareErrorSynthesizedFailedCarriesCreatedAt(t *testing.T) {
 	upstream := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_pt","object":"response","created_at":1700000000,"status":"in_progress","output":[]}}` + "\n\n" +
 		"event: error\n" +
-		`data: {"type":"error","sequence_number":1,"error":{"code":"content_policy","message":"request blocked by policy"}}` + "\n\n" +
+		`data: {"type":"error","sequence_number":1,"error":{"code":"content_policy","message":"request blocked by policy","headers":{"Retry-After":5,"X-Private":"private-marker"}}}` + "\n\n" +
 		"data: [DONE]\n\n"
 
 	_, recorder, _, err := runPassthroughFlushTest(t, io.NopCloser(strings.NewReader(upstream)), -1)
@@ -236,6 +267,8 @@ func TestHandleStreamingResponsePassthrough_BareErrorSynthesizedFailedCarriesCre
 	require.NotEmpty(t, failed, "必须合成 response.failed: %s", recorder.Body.String())
 	require.EqualValues(t, 1700000000, gjson.Get(failed, "response.created_at").Int())
 	require.EqualValues(t, 1, gjson.Get(failed, "sequence_number").Int())
+	require.Equal(t, "5", gjson.Get(failed, "response.error.headers.Retry-After").String())
+	require.NotContains(t, recorder.Body.String(), "private-marker")
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurn_GrokStampsMissingCreatedAt(t *testing.T) {
@@ -282,7 +315,7 @@ func TestProxyOpenAIWSHTTPBridgeTurn_GrokStampsMissingCreatedAt(t *testing.T) {
 func TestProxyOpenAIWSHTTPBridgeTurn_BareErrorSynthesizedFailedCarriesCreatedAt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_eof","created_at":1700000000,"status":"in_progress"}}` + "\n\n" +
-		`data: {"type":"error","sequence_number":1,"error":{"code":"invalid_request","message":"bad request"}}` + "\n\n"
+		`data: {"type":"error","sequence_number":1,"error":{"code":"invalid_request","message":"bad request","headers":{"Retry-After":"8","X-Private":"private-marker"}}}` + "\n\n"
 	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}}
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 	account := &Account{ID: 112, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
@@ -302,6 +335,8 @@ func TestProxyOpenAIWSHTTPBridgeTurn_BareErrorSynthesizedFailedCarriesCreatedAt(
 	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
 	require.EqualValues(t, 1700000000, gjson.GetBytes(writes[1], "response.created_at").Int())
 	require.EqualValues(t, 1, gjson.GetBytes(writes[1], "sequence_number").Int())
+	require.Equal(t, "8", gjson.GetBytes(writes[1], "response.error.headers.Retry-After").String())
+	require.NotContains(t, string(writes[1]), "private-marker")
 }
 
 func TestHandleNonStreamingResponse_StampsMissingCreatedAt(t *testing.T) {

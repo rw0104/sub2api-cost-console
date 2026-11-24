@@ -14,6 +14,7 @@ import (
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
+	currentEffort := req.currentReasoningEffort()
 	isOpus55 := claude.IsOpus55(req.Model)
 	isSonnet55 := claude.IsSonnet55(req.Model)
 	isHaiku55 := claude.IsHaiku55(req.Model)
@@ -101,8 +102,8 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 				return nil, fmt.Errorf("%s does not allow temperature and top_p together; omit both", req.Model)
 			}
 		}
-		if req.Reasoning != nil && req.Reasoning.Effort != "" {
-			effort = req.Reasoning.Effort
+		if currentEffort != "" {
+			effort = currentEffort
 		}
 		if isSonnet55 && effort == "none" {
 			// OpenAI's no-reasoning request maps to Sonnet 5.5's lowest
@@ -136,8 +137,8 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	}
 
 	// reasoning.effort → output_config.effort + thinking
-	if req.Reasoning != nil && req.Reasoning.Effort != "" {
-		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
+	if currentEffort != "" {
+		effort := mapResponsesEffortToAnthropic(currentEffort)
 		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 		// Enable thinking for non-low efforts
 		if effort != "low" {

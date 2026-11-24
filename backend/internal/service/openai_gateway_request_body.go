@@ -1020,6 +1020,10 @@ func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any, requestedModel 
 		return "", false
 	}
 
+	if latest := latestResponsesInputEffortFromReqBody(reqBody); latest != "" {
+		return normalizeOpenAIReasoningEffortForModel(latest, requestedModel), true
+	}
+
 	// Primary: reasoning.effort
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
 		if effort, ok := reasoning["effort"].(string); ok {
@@ -1948,7 +1952,10 @@ func isOpenAICodexModel(model string) bool {
 // 非空候选；body 未携带 effort 时的模型后缀推导依次尝试每个候选——OAuth 的
 // normalizeCodexModel 会剥掉 upstreamModel 的 effort 后缀，只有原始模型名还留着。
 func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string) *string {
-	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+	reasoningEffort, _ := latestResponsesInputEffort(body)
+	if reasoningEffort == "" {
+		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+	}
 	if reasoningEffort == "" {
 		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	}
@@ -1971,28 +1978,19 @@ const responsesConfigurationUpdate = "configuration_update"
 
 // Responses clients can keep the top-level effort fixed for prompt caching.
 // Each input update takes effect from its position until another sets effort.
-func latestResponsesInputEffort(body []byte) string {
+func latestResponsesInputEffort(body []byte) (string, int) {
 	if !bytes.Contains(body, []byte(responsesConfigurationUpdate)) && !JSONMayEscapePlainASCII(body) {
-		return ""
+		return "", -1
 	}
-	input := parseRawJSONView(body).Get("input")
-	if !input.IsArray() {
-		return ""
+	root := parseRawJSONView(body)
+	if root.Get("messages").Exists() {
+		return "", -1
 	}
-	var latest string
-	input.ForEach(func(_, item gjson.Result) bool {
-		if item.Get("type").Str == responsesConfigurationUpdate {
-			if effort := strings.TrimSpace(item.Get("reasoning.effort").Str); effort != "" {
-				latest = effort
-			}
-		}
-		return true
-	})
-	return latest
+	return apicompat.LatestResponsesInputEffort(root.Get("input"))
 }
 
 func explicitRequestedReasoningEffortFromBody(body []byte) string {
-	if latest := latestResponsesInputEffort(body); latest != "" {
+	if latest, _ := latestResponsesInputEffort(body); latest != "" {
 		return latest
 	}
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
@@ -2011,7 +2009,7 @@ func explicitRequestedReasoningEffortFromBody(body []byte) string {
 // later persist "xhigh".
 func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *string {
 	if raw := explicitRequestedReasoningEffortFromBody(body); raw != "" {
-		return optionalTrimmedStringPtr(normalizeReasoningEffortMappingSource(raw))
+		return canonicalRequestedEffortValue(raw)
 	}
 	for _, model := range modelCandidates {
 		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
@@ -2024,6 +2022,13 @@ func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *
 		}
 	}
 	return nil
+}
+
+func canonicalRequestedEffortValue(raw string) *string {
+	if strings.EqualFold(strings.TrimSpace(raw), "ultra") {
+		return optionalTrimmedStringPtr("ultra")
+	}
+	return optionalTrimmedStringPtr(normalizeReasoningEffortMappingSource(raw))
 }
 
 func canonicalReasoningEffortFromModelSuffix(model string) string {
@@ -2835,21 +2840,30 @@ func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any, modelC
 			raw = strings.TrimSpace(effort)
 		}
 	}
+	if latest := latestResponsesInputEffortFromReqBody(reqBody); latest != "" {
+		raw = latest
+	}
+	if raw != "" {
+		return canonicalRequestedEffortValue(raw)
+	}
+	return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
+}
+
+func latestResponsesInputEffortFromReqBody(reqBody map[string]any) string {
+	if _, isMessagesRequest := reqBody["messages"]; isMessagesRequest {
+		return ""
+	}
 	items, _ := reqBody["input"].([]any)
 	for i := len(items) - 1; i >= 0; i-- {
 		item, _ := items[i].(map[string]any)
 		if item["type"] == responsesConfigurationUpdate {
 			reasoning, _ := item["reasoning"].(map[string]any)
 			if effort, _ := reasoning["effort"].(string); strings.TrimSpace(effort) != "" {
-				raw = effort
-				break
+				return strings.TrimSpace(effort)
 			}
 		}
 	}
-	if raw != "" {
-		return optionalTrimmedStringPtr(normalizeReasoningEffortMappingSource(raw))
-	}
-	return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
+	return ""
 }
 
 func normalizeOpenAIReasoningEffort(raw string) string {
@@ -2921,6 +2935,11 @@ func validateGPT61CompatRequest(body []byte, model string) error {
 func validateGPT61RawEffort(body []byte, model string) error {
 	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) && openai.GPT62ModelID(model) == "" {
 		return nil
+	}
+	if latest, _ := latestResponsesInputEffort(body); latest != "" {
+		if err := openai.ValidateGPT61ReasoningEffort(model, latest); err != nil {
+			return err
+		}
 	}
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
 		if err := openai.ValidateGPT61ReasoningEffort(model, gjson.GetBytes(body, path).String()); err != nil {

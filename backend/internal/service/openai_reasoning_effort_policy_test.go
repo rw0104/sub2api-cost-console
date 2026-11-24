@@ -82,6 +82,53 @@ func TestCanonicalRequestedReasoningEffortFromConfigurationUpdates(t *testing.T)
 	}
 }
 
+func TestResponsesConfigurationUpdateEffortPolicy(t *testing.T) {
+	const before = `{"model":"gpt-6.1-sol","reasoning":{"effort":"medium"},"input":[{"type":"configuration_update","reasoning":{"effort":"max"}},{"role":"user","content":"hello"},{"type":"configuration\u005fupdate","reasoning":{"effort":`
+	const after = `}},{"type":"configuration_update","text":{"verbosity":"high"}}],"client_metadata":{"reasoning_effort":"ultra"}}`
+	body := []byte(before + `"ultra"` + after)
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	require.Equal(t, "ultra", *CanonicalRequestedReasoningEffort(body))
+	require.Equal(t, "ultra", *CanonicalRequestedReasoningEffortFromReqBody(parsed))
+
+	// The old max is already part of the conversation. Only this
+	// turn's Ultra alias is mapped, exactly once, and then capped.
+	mappings := []ReasoningEffortMapping{{From: "xhigh", To: "high"}, {From: "high", To: "low"}}
+	got, changed, err := ApplyOpenAIReasoningEffortPolicy(body, "medium", mappings, ReasoningEffortOverLimitDowngrade)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, before+`"medium"`+after, string(got))
+	require.Equal(t, "medium", *extractOpenAIReasoningEffortFromBody(got, "gpt-6.1-sol"))
+	require.NoError(t, json.Unmarshal(got, &parsed))
+	require.Equal(t, "medium", *extractOpenAIReasoningEffort(parsed, "gpt-6.1-sol"))
+
+	_, err = applyOpenAIWSReasoningEffortPolicy(body, &OpenAIWSIngressHooks{MaxReasoningEffort: "medium", MaxReasoningEffortOverLimit: ReasoningEffortOverLimitDeny})
+	require.True(t, IsReasoningEffortPolicyDenied(err))
+	_, _, err = ApplyOpenAIReasoningEffortPolicy(body, "", []ReasoningEffortMapping{{From: "xhigh", To: "deny"}}, "")
+	require.True(t, IsReasoningEffortPolicyDenied(err))
+
+	low := []byte(before + `"low"` + after)
+	got, changed, err = ApplyOpenAIReasoningEffortPolicy(low, "medium", nil, ReasoningEffortOverLimitDeny)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, low, got)
+
+	// Alternate providers can ignore input updates. Their top-level default
+	// stays subject to the group's cap as well.
+	defaultHigh := []byte(`{"model":"gpt-6.1-sol","reasoning":{"effort":"xhigh"},"input":[{"type":"configuration_update","reasoning":{"effort":"low"}}]}`)
+	got, changed, err = ApplyOpenAIReasoningEffortPolicy(defaultHigh, "medium", nil, "")
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "medium", gjson.GetBytes(got, "reasoning.effort").Str)
+	require.Equal(t, "low", gjson.GetBytes(got, "input.0.reasoning.effort").Str)
+	require.Error(t, validateGPT61RawEffort([]byte(before+`"none"`+after), "gpt-6.2-sol"))
+	require.NoError(t, validateGPT61RawEffort([]byte(before+`"high"`+after), "gpt-6.2-sol"))
+	got, changed, err = ApplyReasoningEffortPolicy(body, "", []ReasoningEffortMapping{{From: "xhigh", To: "high"}}, "")
+	require.NoError(t, err)
+	require.False(t, changed) // Ultra aliasing applies only to OpenAI targets.
+	require.Equal(t, body, got)
+}
+
 func TestRequestedReasoningEffortContext(t *testing.T) {
 	t.Parallel()
 

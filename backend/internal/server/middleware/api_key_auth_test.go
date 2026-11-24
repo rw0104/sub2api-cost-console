@@ -1530,25 +1530,37 @@ func TestAPIKeyAuthOpenAIQuotaErrorFormat(t *testing.T) {
 
 	cfg := &config.Config{RunMode: config.RunModeStandard}
 	router := newAuthTestRouter(service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg), nil, cfg)
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	req.Header.Set("x-api-key", apiKey.Key)
-	router.ServeHTTP(w, req)
+	for _, tc := range []struct{ name, ua, code string }{
+		{"Codex exec 0.172", "codex_exec/0.172.0 (Mac OS 27.2.1; arm64) dumb (codex_exec; 0.172.0)", "api_key_spend_limit_exceeded"},
+		{"later Codex", "codex_exec/0.173.0 (macOS)", "api_key_spend_limit_exceeded"},
+		{"older Codex", "codex_cli_rs/0.171.0", "insufficient_quota"},
+		{"pre-release", "codex_cli_rs/0.172.0-alpha.1", "insufficient_quota"},
+		{"other client", "custom/2.0.0", "insufficient_quota"},
+		{"unspecified", "", "insufficient_quota"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			req.Header.Set("x-api-key", apiKey.Key)
+			req.Header.Set("User-Agent", tc.ua)
+			router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusTooManyRequests, w.Code)
-	var response struct {
-		Error struct {
-			Message string  `json:"message"`
-			Type    string  `json:"type"`
-			Param   *string `json:"param"`
-			Code    string  `json:"code"`
-		} `json:"error"`
+			require.Equal(t, http.StatusTooManyRequests, w.Code)
+			var response struct {
+				Error struct {
+					Message string  `json:"message"`
+					Type    string  `json:"type"`
+					Param   *string `json:"param"`
+					Code    string  `json:"code"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.Equal(t, "API key 额度已用完", response.Error.Message)
+			require.Equal(t, "insufficient_quota", response.Error.Type)
+			require.Nil(t, response.Error.Param)
+			require.Equal(t, tc.code, response.Error.Code)
+		})
 	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	require.Equal(t, "API key 额度已用完", response.Error.Message)
-	require.Equal(t, "insufficient_quota", response.Error.Type)
-	require.Nil(t, response.Error.Param)
-	require.Equal(t, "insufficient_quota", response.Error.Code)
 }
 
 func TestAPIKeyAuthQuotaErrorKeepsLegacyFormatOutsideResponses(t *testing.T) {

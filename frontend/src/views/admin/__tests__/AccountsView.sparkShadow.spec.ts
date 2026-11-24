@@ -341,7 +341,9 @@ describe('admin AccountsView — 账号行展示', () => {
     const tooltip = wrapper.findComponent(HelpTooltip)
     expect(tooltip.props('content')).toBe('https://relay.example.com')
     expect(tooltip.props('widthClass')).toBe('w-max max-w-sm break-all')
-    expect(tooltip.classes()).toEqual(expect.arrayContaining(['self-start']))
+    const syncButton = wrapper.get('button[aria-label="admin.accounts.upstreamBilling.saveGroup"]')
+    expect(tooltip.element.contains(link.element)).toBe(true)
+    expect(syncButton.element.parentElement).toBe(tooltip.element.parentElement)
     expect(wrapper.text()).toContain('oauth-account')
     expect(wrapper.text()).toContain('invalid-url')
 

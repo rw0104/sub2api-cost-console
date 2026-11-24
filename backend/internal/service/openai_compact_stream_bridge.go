@@ -118,14 +118,12 @@ func writeOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType
 // upstream_error。ops 侧的错误类型保持 upstream_error 不变。message 由调用方
 // 负责脱敏。
 //
-// 容量降载码（server_is_overloaded / slow_down）不得原样写进 response.failed：
-// Codex 把它们判为致命错误并直接终止会话，所有写 response.failed 的路径都改写为
-// 可重试的 openAICapacityShedRetryableClientCode（见该常量注释）。
+// 容量降载码与其他 Responses 流共用同一判定，供 Codex 按可重试错误处理。
 func writeOpenAICompactSSEFailureWithCode(c *gin.Context, statusCode int, code, message string) {
-	switch strings.ToLower(strings.TrimSpace(code)) {
-	case "":
+	switch {
+	case strings.TrimSpace(code) == "":
 		code = "upstream_error"
-	case "server_is_overloaded", "slow_down":
+	case isOpenAICapacityShedErrorCode(code):
 		code = openAICapacityShedRetryableClientCode
 	}
 	writeOpenAICompactSSEFailureEvent(c, statusCode, "upstream_error", code, message)

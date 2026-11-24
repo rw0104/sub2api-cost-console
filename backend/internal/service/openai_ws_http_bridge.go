@@ -374,28 +374,7 @@ func buildOpenAIWSHTTPBridgeErrorEvent(statusCode int, message string) []byte {
 // ended on a bare error. created_at and sequence_number are always written:
 // strict clients (grok-build, Codex) reject the frame without them.
 func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, createdAt int64, source []byte, fallbackMessage string) []byte {
-	errorType := strings.TrimSpace(gjson.GetBytes(source, "error.type").String())
-	if errorType == "" {
-		errorType = strings.TrimSpace(gjson.GetBytes(source, "response.error.type").String())
-	}
-	code := strings.TrimSpace(gjson.GetBytes(source, "error.code").String())
-	if code == "" {
-		code = strings.TrimSpace(gjson.GetBytes(source, "response.error.code").String())
-	}
-	if code == "" {
-		code = "upstream_error"
-	}
-	message := extractOpenAISSEErrorMessage(source)
-	if message == "" {
-		message = strings.TrimSpace(fallbackMessage)
-	}
-	if message == "" {
-		message = "Upstream response failed"
-	}
-	errorBody := map[string]any{"code": code, "message": message}
-	if errorType != "" {
-		errorBody["type"] = errorType
-	}
+	errorBody := openAIResponseFailedErrorBody(source, fallbackMessage)
 	if createdAt <= 0 {
 		createdAt = time.Now().Unix()
 	}

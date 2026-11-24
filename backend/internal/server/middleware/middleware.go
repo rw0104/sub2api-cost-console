@@ -6,8 +6,10 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/mod/semver"
 )
 
 // ContextKey 定义上下文键类型
@@ -82,12 +84,17 @@ func AbortWithError(c *gin.Context, statusCode int, code, message string) {
 
 // abortWithOpenAIQuotaError writes the OpenAI-compatible insufficient quota response.
 func abortWithOpenAIQuotaError(c *gin.Context, statusCode int, message string) {
+	code := "insufficient_quota"
+	ua := c.GetHeader("User-Agent")
+	if openai.IsCodexOfficialClientRequestStrict(ua) && semver.Compare("v"+openai.CodexUserAgentVersion(ua), "v0.172.0") >= 0 {
+		code = "api_key_spend_limit_exceeded"
+	}
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"message": message,
 			"type":    "insufficient_quota",
 			"param":   nil,
-			"code":    "insufficient_quota",
+			"code":    code,
 		},
 	})
 	c.Abort()

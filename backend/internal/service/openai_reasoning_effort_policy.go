@@ -522,6 +522,10 @@ func sanitizeGroupReasoningEffortPolicy(group *Group) {
 // so upstream defaults stay in control. It understands both OpenAI and
 // Anthropic request field shapes.
 func ApplyReasoningEffortPolicy(body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string) ([]byte, bool, error) {
+	return applyReasoningEffortPolicyAtPaths(body, maxEffort, mappings, overLimit, []string{"reasoning.effort", "reasoning_effort", "output_config.effort"})
+}
+
+func applyReasoningEffortPolicyAtPaths(body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string, paths []string) ([]byte, bool, error) {
 	maxRank, hasMax := reasoningEffortRank(maxEffort)
 	if len(body) == 0 || (!hasMax && len(mappings) == 0) {
 		return body, false, nil
@@ -532,7 +536,7 @@ func ApplyReasoningEffortPolicy(body []byte, maxEffort string, mappings []Reason
 	requestModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	result := body
 	changed := false
-	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
+	for _, path := range paths {
 		field := gjson.GetBytes(result, path)
 		if !field.Exists() || field.Type != gjson.String {
 			continue
@@ -596,7 +600,15 @@ func ApplyOpenAIReasoningEffortPolicy(body []byte, maxEffort string, mappings []
 	normalized := body
 	aliasChanged := false
 	wireEffort := ""
-	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+	aliasPaths := []string{"reasoning.effort", "reasoning_effort"}
+	if _, index := latestResponsesInputEffort(body); index >= 0 {
+		// Preserve historical updates for prompt caching. Apply the policy to
+		// both the active update and the default used by compatible upstreams
+		// that only read the top-level effort.
+		aliasPaths = append(aliasPaths, fmt.Sprintf("input.%d.reasoning.effort", index))
+	}
+	policyPaths := append(aliasPaths, "output_config.effort")
+	for _, path := range aliasPaths {
 		field := gjson.GetBytes(normalized, path)
 		if field.Type != gjson.String || !strings.EqualFold(strings.TrimSpace(field.String()), "ultra") {
 			continue
@@ -611,7 +623,7 @@ func ApplyOpenAIReasoningEffortPolicy(body []byte, maxEffort string, mappings []
 		normalized = updated
 		aliasChanged = true
 	}
-	result, changed, err := ApplyReasoningEffortPolicy(normalized, maxEffort, mappings, overLimit)
+	result, changed, err := applyReasoningEffortPolicyAtPaths(normalized, maxEffort, mappings, overLimit, policyPaths)
 	if err != nil {
 		return body, false, err
 	}

@@ -547,10 +547,11 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactFailedRewritesCapacityShe
 	gin.SetMode(gin.TestMode)
 
 	for upstreamCode, wantCode := range map[string]string{
-		"server_is_overloaded": openAICapacityShedRetryableClientCode,
-		"slow_down":            openAICapacityShedRetryableClientCode,
-		"SERVER_IS_OVERLOADED": openAICapacityShedRetryableClientCode,
-		"rate_limit_exceeded":  "rate_limit_exceeded",
+		"server_is_overloaded":        openAICapacityShedRetryableClientCode,
+		"slow_down":                   openAICapacityShedRetryableClientCode,
+		"policy_capacity_unavailable": openAICapacityShedRetryableClientCode,
+		"SERVER_IS_OVERLOADED":        openAICapacityShedRetryableClientCode,
+		"rate_limit_exceeded":         "rate_limit_exceeded",
 	} {
 		t.Run(upstreamCode, func(t *testing.T) {
 			rec := httptest.NewRecorder()

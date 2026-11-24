@@ -2,7 +2,9 @@ package responseheaders
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
@@ -117,4 +119,28 @@ func WriteFilteredHeaders(dst http.Header, src http.Header, filter *CompiledHead
 			dst.Add(key, value)
 		}
 	}
+}
+
+// IsSafeRetryAfter accepts only HTTP dates and nonnegative delays within the gateway's
+// seven-day retry window. It can be used for both HTTP and Responses event headers.
+func IsSafeRetryAfter(value string) bool {
+	if value == "" || len(value) > 128 || strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	digitsOnly := true
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			digitsOnly = false
+			break
+		}
+	}
+	if digitsOnly {
+		seconds, err := strconv.ParseUint(value, 10, 32)
+		return err == nil && seconds <= uint64((7*24*time.Hour)/time.Second)
+	}
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return false
+	}
+	return !retryAt.After(time.Now().Add(7 * 24 * time.Hour))
 }

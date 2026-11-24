@@ -63,9 +63,7 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 		ParallelToolCalls:   req.ParallelToolCalls,
 		Stop:                req.Stop,
 	}
-	if req.Reasoning != nil {
-		out.ReasoningEffort = req.Reasoning.Effort
-	}
+	out.ReasoningEffort = req.currentReasoningEffort()
 	effectiveTools, err := EffectiveResponsesTools(req)
 	if err != nil {
 		return nil, err

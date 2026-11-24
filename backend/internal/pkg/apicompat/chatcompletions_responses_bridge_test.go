@@ -8,6 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResponsesConfigurationUpdateReasoningEffortTranslation(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "claude-sonnet-4-5", Reasoning: &ResponsesReasoning{Effort: "low"},
+		Input: json.RawMessage(`[{"type":"configuration_update","reasoning":{"effort":"medium"}},{"role":"user","content":"hi"},{"type":"configuration\u005fupdate","reasoning":{"effort":"high"}},{"type":"configuration_update","text":{"verbosity":"low"}}]`),
+	}
+	chat, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Equal(t, "high", chat.ReasoningEffort)
+	require.Len(t, chat.Messages, 1)
+	anthropic, err := ResponsesToAnthropicRequest(req)
+	require.NoError(t, err)
+	require.Equal(t, "high", anthropic.OutputConfig.Effort)
+	require.Len(t, anthropic.Messages, 1)
+	require.Equal(t, "low", req.Reasoning.Effort)
+}
+
 func TestResponsesInputToChatMessages_DeveloperRoleMapsToSystem(t *testing.T) {
 	messages, err := responsesInputToChatMessages("", json.RawMessage(`[{"role":"developer","content":"follow project instructions"}]`))
 	require.NoError(t, err)

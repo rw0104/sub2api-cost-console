@@ -44,7 +44,7 @@ func TestCodexCatalogAudioInput(t *testing.T) {
 		{"mixed subscription and API key", sol, []Account{synced, key}, []any{"text", "image"}},
 		{"native compatible route declares audio", sol, []Account{native}, []any{"text", "image", "audio"}},
 		{"mixed native and chat bridge", sol, []Account{native, bridged}, []any{"text", "image"}},
-		{"empty group has no audio route", sol, nil, []any{"text", "image"}},
+		{"empty group advertises only text without a media route", sol, nil, []any{"text"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{1: tc.accounts}}}

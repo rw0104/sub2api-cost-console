@@ -1950,14 +1950,9 @@ func extractOpenAISSEErrorMessage(payload []byte) string {
 	return sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(payload)))
 }
 
-// buildOpenAIResponseFailedSSE synthesizes the response.failed terminal for a
-// stream that ended on a bare error. created_at and sequence_number are always
-// written: strict clients (grok-build, Codex) reject the frame without them.
-func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, source []byte, fallbackMessage string) string {
-	responseID = strings.TrimSpace(responseID)
-	if responseID == "" {
-		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	}
+// openAIResponseFailedErrorBody converts a bare error to the error object read
+// by Responses clients on SSE and WebSocket terminal events.
+func openAIResponseFailedErrorBody(source []byte, fallbackMessage string) gin.H {
 	errorType := strings.TrimSpace(gjson.GetBytes(source, "error.type").String())
 	if errorType == "" {
 		errorType = strings.TrimSpace(gjson.GetBytes(source, "response.error.type").String())
@@ -1980,6 +1975,41 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 	if errorType != "" {
 		errorBody["type"] = errorType
 	}
+	// Codex 0.172 looks first in error.headers, then in event headers. A
+	// response.failed only accepts retry advice inside response.error.headers.
+	for _, path := range []string{"error.headers", "response.error.headers", "headers"} {
+		headers := gjson.GetBytes(source, path)
+		if !headers.IsObject() {
+			continue
+		}
+		var retryAfter string
+		headers.ForEach(func(name, value gjson.Result) bool {
+			if strings.EqualFold(name.Str, "Retry-After") && (value.Type == gjson.String || value.Type == gjson.Number) {
+				raw := strings.TrimSpace(value.String())
+				if responseheaders.IsSafeRetryAfter(raw) {
+					retryAfter = raw
+					return false
+				}
+			}
+			return true
+		})
+		if retryAfter != "" {
+			errorBody["headers"] = gin.H{"Retry-After": retryAfter}
+			break
+		}
+	}
+	return errorBody
+}
+
+// buildOpenAIResponseFailedSSE synthesizes the response.failed terminal for a
+// stream that ended on a bare error. created_at and sequence_number are always
+// written: strict clients (grok-build, Codex) reject the frame without them.
+func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, source []byte, fallbackMessage string) string {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
+	errorBody := openAIResponseFailedErrorBody(source, fallbackMessage)
 	if createdAt <= 0 {
 		createdAt = time.Now().Unix()
 	}
