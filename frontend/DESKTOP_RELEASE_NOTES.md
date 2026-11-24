@@ -1,39 +1,42 @@
-# Sub2API Cost Console v0.4.10
+# Sub2API Cost Console v0.4.11
 
 ## 主要更新
 
-- Windows 原生一键启动可分别打开 Microsoft Store 安装的 ChatGPT / Codex 桌面应用和 Codex CLI。在「API 接入中心」选择对应客户端，再点「检查客户端」，即可查看本机版本和安装来源。CLI 优先使用用户已安装的独立版本，也可使用桌面包随附的版本。
-- 在 macOS 从源码运行控制台时，启动器可识别 ChatGPT.app 或 Codex.app，读取其桌面版本和内置 CLI 版本，并在所选工作目录中用“终端”打开 Codex CLI。
-- 「API 接入中心」可分别复制适用于 Windows PowerShell 和 macOS 终端的密钥命令。`config.toml` 可直接保存。使用官方桌面应用时，控制台沿用应用自己的登录状态。
+- 接入中心手动读取模型目录时使用 Codex CLI 0.172.0 的客户端版本。达到本地 API Key 额度上限时，Codex 0.172.0 及更新的稳定版可直接提示密钥已达支出上限，旧版客户端继续收到原有的配额错误码。
+- 合并 Sub2API v0.2.24 和 v0.2.25。Codex 通过 HTTP Responses 传入的 VS Code 工作区上下文和已批准的计划可随请求转发。模型目录会根据实际账号和协议显示音频输入能力。
+- Codex 压缩上下文时，流中的上游过载会转换为客户端可重试的错误。OpenAI 透传模式保留加密内容无效、上下文超长等错误的结构化字段。
+- 管理员可将上游分组名称与描述同步到账号，并在 API Key 账号的请求头覆写中引用用户、密钥、分组或请求 ID。错误详情中可查看该次请求实际上报的身份头。
 
 ## 当前兼容内核
 
 | 组件 | 版本 |
 | --- | --- |
-| Windows x64 桌面安装包 | 0.4.10 |
-| 兼容内核 | `v0.2.23` |
-| 上游源码 | `5af9afb588c4b014b3df9db7d4073af1f8ae01b6` |
-| 宿主扩展 | 1.3.29 |
+| Windows x64 桌面安装包 | 0.4.11 |
+| 兼容内核 | `v0.2.25` |
+| 上游源码 | `348997267d756eab5729bb6b78a275a15d18796a` |
+| 宿主扩展 | 1.3.30 |
 | 成本算法 | 1.7.0 |
 
 ## 技术变更
 
-Windows 启动器按当前用户的 Store 注册记录查找应用，在实际安装卷上定位内置 CLI。macOS 从应用包及其 CLI 清单读取版本和入口。桌面版本、CLI 版本及预发布标记分别按实际检测结果显示。
+网关根据上游错误生成 `response.failed` 流事件时，会在 `response.error.headers` 中传递合法的 `Retry-After`，供客户端判断重试等待时间。该处理覆盖 HTTP/SSE 与 WebSocket 转 HTTP 的 Responses 请求。
 
-成本面板和「使用密钥」导出的 Codex 配置移除了当前 CLI 配置规范未列出的三个根字段（`disable_response_storage`、`network_access`、`windows_wsl_setup_acknowledged`），并为模型名和网关地址生成正确的 TOML 字符串。手动读取模型目录时使用客户端协议的三段版本号 `0.171.0`。宿主扩展的打包版本递增至 1.3.29，以标识包含新版前端的内核。
+Codex 在对话中通过 `configuration_update` 调整推理强度时，网关按当前轮次的设置执行分组上限和映射，并分别记录请求值与转发值。转发到 Chat Completions 或 Anthropic 时，网关将当前设置转换为对应协议的推理参数。
+
+HTTP 请求和 Responses WebSocket 帧现在会拒绝含重复字段的 JSON，包括嵌套对象。接入方自行拼装请求时，应确保每个对象内的字段名唯一。文献检索返回 403 时，网关会按该次请求处理错误，避免误停可处理其他请求的 OpenAI OAuth 账号。 [上游 v0.2.24 更新](https://github.com/Wei-Shaw/sub2api/releases/tag/v0.2.24) · [上游 v0.2.25 更新](https://github.com/Wei-Shaw/sub2api/releases/tag/v0.2.25)
 
 ## 升级行为
 
-Windows 10 / 11 x64 用户可在「版本与更新」中升级，或退出控制台后运行 v0.4.10 的 `_x64-setup.exe`。桌面模式首次启动新版本时会停用已安装插件并保留配置，管理员可在检查兼容性后重新启用。已有 Codex 配置按需从「API 接入中心」或「使用密钥」重新导出。
-
-macOS 的 `darwin_arm64` 和 `darwin_amd64` 压缩包分别用于在 Apple 芯片和 Intel Mac 上运行 Sub2API 后端服务。控制台的原生启动界面可在 macOS 源码构建中使用。 [v0.4.10 下载页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.10)
+Windows 10 / 11 x64 用户可在「版本与更新」中升级，也可退出控制台后安装 v0.4.11 的 `_x64-setup.exe`。桌面模式首次启动新版本时会停用已安装插件并保留配置。管理员可在检查兼容性后重新启用插件。Windows 原生一键启动继续沿用「API 接入中心」中选定的桌面应用或 CLI。 [v0.4.11 下载页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.11)
 
 ## 验证结果
 
-核对了 Windows Store 桌面包 `26.1117.4957.0` 的元数据，并从 macOS 实机的桌面包 `26.1117.41037` 读取并运行内置 CLI `0.171.0-alpha.13`。本轮兼容性验证通过 3,499 项前端测试和 72 项 Rust 测试，并完成 Windows 目标测试程序的交叉编译。
+已核对 Tauri、Cargo 和更新说明中的桌面版本，以及上游 v0.2.25 标签指向的完整提交。内核来源、发布产物校验和后端 CI 门禁的 15 项脚本测试通过。
+
+在 Apple 芯片的 macOS 上，核对官方 SHA-256 后运行 Codex CLI 0.172.0。客户端使用「API 接入中心」的 TOML 模板和临时测试密钥访问本机模拟服务，成功读取带 `client_version=0.172.0` 的模型目录并收到 Responses 流式回复。模拟服务返回 HTTP 429 和 `api_key_spend_limit_exceeded` 后，客户端显示 “Your API key has reached its spend limit.” 并结束本轮，模拟服务仅收到一次推理请求。 [Codex 0.172.0 官方发布](https://github.com/openai/codex/releases/tag/rust-v0.172.0)
 
 ## 回滚说明
 
-如需恢复 v0.4.9 的桌面启动和配置导出行为，退出控制台后安装 v0.4.9 的 Windows x64 安装包。如只需回退内核，可在「版本与更新」选择已保留的 v0.2.23 / 扩展 1.3.28 回滚槽位。回滚后请检查插件启用状态。 [v0.4.9 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.9)
+若需回退整个桌面版本，退出控制台后安装 v0.4.10 的 Windows x64 安装包。若仅需回退内核，在「版本与更新」中选择已保留的 v0.2.23 / 扩展 1.3.29 回滚槽位。回滚后检查插件启用状态。 [v0.4.10 发布页](https://github.com/rw0104/sub2api-cost-console/releases/tag/v0.4.10)
 
-QQ 用户交流群 **960663114**。 [插件开发指南](https://github.com/rw0104/sub2api-cost-console/blob/v0.4.10/docs/PLUGIN_DEVELOPMENT.md)
+QQ 用户交流群 **960663114**。 [插件开发指南](https://github.com/rw0104/sub2api-cost-console/blob/v0.4.11/docs/PLUGIN_DEVELOPMENT.md)
